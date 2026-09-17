@@ -872,6 +872,30 @@ describe("self-service deletion guards", () => {
   });
 });
 
+describe("auth configuration", () => {
+  it("Supabase itself rejects a password shorter than 15 characters", async () => {
+    // The form enforces the minimum too, so this calls signUp directly.
+    const client = newClient();
+    const password = "abcdefghijklm1"; // 14 characters
+    expect(password).toHaveLength(MIN_PASSWORD_LENGTH - 1);
+    const { data, error } = await client.auth.signUp({
+      email: `tenant-isolation-short-${runId}@${emailDomain}`,
+      password,
+    });
+
+    // If the dashboard setting isn't saved, the user gets created; remove
+    // it so a failing run leaves nothing behind.
+    if (data.user) {
+      const cleanup = await client.rpc("delete_own_account");
+      throw new Error(
+        `a 14 character password was accepted (user ${data.user.id}; cleanup ${cleanup.error ? "failed: " + cleanup.error.message : "ok"}). The minimum password length isn't saved in the dashboard.`,
+      );
+    }
+    expect(error?.code).toBe("weak_password");
+    expect(error?.message).toMatch(/15/);
+  });
+});
+
 describe("anonymous access", () => {
   const anon = newClient();
 
