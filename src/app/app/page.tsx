@@ -1,19 +1,13 @@
 import Link from "next/link";
 import { signOut } from "@/app/auth/actions";
+import { linkClass, secondaryButtonClass } from "@/app/ui";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { CreateTenantForm } from "./create-tenant-form";
 
 type Tenant = { id: string; name: string; slug: string };
-type DocumentRow = {
-  id: string;
-  filename: string;
-  status: string;
-  size_bytes: number;
-  created_at: string;
-};
 
-export default async function AppPage({ searchParams }: PageProps<"/app">) {
+export default async function AppPage() {
   const user = await requireUser();
   const supabase = await createClient();
 
@@ -25,80 +19,40 @@ export default async function AppPage({ searchParams }: PageProps<"/app">) {
   if (tenantsError) throw tenantsError;
   const tenants = (tenantRows ?? []) as Tenant[];
 
-  const header = (
-    <header>
-      <p>
-        Signed in as {user.email}
-      </p>
-      <form action={signOut}>
-        <button type="submit">Sign out</button>
-      </form>
-    </header>
-  );
-
-  if (tenants.length === 0) {
-    return (
-      <main className="p-8">
-        {header}
-        <h1>Create your organization</h1>
-        <p>You are not a member of any organization yet.</p>
-        <CreateTenantForm />
-      </main>
-    );
-  }
-
-  const { tenant: tenantParam } = await searchParams;
-  const selected = tenants.find((t) => t.id === tenantParam) ?? tenants[0];
-
-  const { data: documentRows, error: documentsError } = await supabase
-    .from("documents")
-    .select("id, filename, status, size_bytes, created_at")
-    .eq("tenant_id", selected.id)
-    .order("created_at", { ascending: false });
-  if (documentsError) throw documentsError;
-  const documents = (documentRows ?? []) as DocumentRow[];
-
   return (
     <main className="p-8">
-      {header}
+      <header className="flex items-center justify-between gap-4">
+        <p className="text-sm text-neutral-400">Signed in as {user.email}</p>
+        <form action={signOut}>
+          <button type="submit" className={secondaryButtonClass}>
+            Sign out
+          </button>
+        </form>
+      </header>
 
-      <h2>Organizations</h2>
-      <ul>
-        {tenants.map((tenant) => (
-          <li key={tenant.id}>
-            {tenant.id === selected.id ? (
-              <strong>{tenant.name}</strong>
-            ) : (
-              <Link href={`/app?tenant=${tenant.id}`}>{tenant.name}</Link>
-            )}
-          </li>
-        ))}
-      </ul>
-
-      <h2>Documents in {selected.name}</h2>
-      {documents.length === 0 ? (
-        <p>No documents yet.</p>
+      {tenants.length === 0 ? (
+        <>
+          <h1 className="mt-8 text-2xl font-semibold">Create your organization</h1>
+          <p className="mt-2 text-neutral-400">You are not a member of any organization yet.</p>
+          <CreateTenantForm />
+        </>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Filename</th>
-              <th>Status</th>
-              <th>Size (bytes)</th>
-              <th>Uploaded</th>
-            </tr>
-          </thead>
-          <tbody>
-            {documents.map((doc) => (
-              <tr key={doc.id}>
-                <td>{doc.filename}</td>
-                <td>{doc.status}</td>
-                <td>{doc.size_bytes}</td>
-                <td>{new Date(doc.created_at).toISOString()}</td>
-              </tr>
+        <>
+          <h1 className="mt-8 text-2xl font-semibold">Organizations</h1>
+          <ul className="mt-4 space-y-2">
+            {tenants.map((tenant) => (
+              <li key={tenant.id}>
+                <Link href={`/app/${tenant.slug}`} className={linkClass}>
+                  {tenant.name}
+                </Link>
+                <span className="ml-2 text-sm text-neutral-500">/{tenant.slug}</span>
+              </li>
             ))}
-          </tbody>
-        </table>
+          </ul>
+
+          <h2 className="mt-10 text-lg font-semibold">New organization</h2>
+          <CreateTenantForm />
+        </>
       )}
     </main>
   );

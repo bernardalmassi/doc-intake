@@ -1,6 +1,8 @@
 "use client";
 
 import { useActionState } from "react";
+import { buttonClass, errorClass, inputClass, labelClass } from "@/app/ui";
+import { MIN_PASSWORD_LENGTH } from "@/lib/password";
 import type { FormState } from "./actions";
 
 type Props = {
@@ -11,30 +13,54 @@ type Props = {
 
 export function CredentialsForm({ action, submitLabel, passwordAutoComplete }: Props) {
   const [state, formAction, pending] = useActionState(action, {});
+  const isSignUp = passwordAutoComplete === "new-password";
 
   return (
-    <form action={formAction}>
-      <p>
-        <label htmlFor="email">Email</label>
-        <br />
-        <input id="email" name="email" type="email" autoComplete="email" required />
-      </p>
-      <p>
-        <label htmlFor="password">Password</label>
-        <br />
+    <form action={formAction} className="mt-6 space-y-4">
+      <div>
+        <label htmlFor="email" className={labelClass}>
+          Email
+        </label>
+        <input
+          id="email"
+          name="email"
+          type="email"
+          autoComplete="email"
+          required
+          className={inputClass}
+        />
+      </div>
+      <div>
+        <label htmlFor="password" className={labelClass}>
+          Password
+        </label>
         <input
           id="password"
           name="password"
           type="password"
           autoComplete={passwordAutoComplete}
           required
+          // The project enforces the same minimum; this just saves a round trip.
+          minLength={isSignUp ? MIN_PASSWORD_LENGTH : undefined}
+          maxLength={isSignUp ? 72 : undefined}
+          aria-describedby={isSignUp ? "password-hint" : undefined}
+          className={inputClass}
         />
-      </p>
-      <p aria-live="polite">
-        {state.error && <span role="alert">{state.error}</span>}
+        {isSignUp && (
+          <p id="password-hint" className="mt-1 text-sm text-neutral-400">
+            At least {MIN_PASSWORD_LENGTH} characters.
+          </p>
+        )}
+      </div>
+      <p aria-live="polite" className="min-h-5 text-sm">
+        {state.error && (
+          <span role="alert" className={errorClass}>
+            {state.error}
+          </span>
+        )}
         {state.message}
       </p>
-      <button type="submit" disabled={pending}>
+      <button type="submit" disabled={pending} className={buttonClass}>
         {submitLabel}
       </button>
     </form>
