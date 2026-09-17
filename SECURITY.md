@@ -275,7 +275,7 @@ The trigger applies to every role, `service_role` and `postgres` included. **Del
 
 Tests within the file are order-dependent: B is promoted to admin of C part-way through and removed at the end, and D deletes their own account.
 
-**Assertions (38 tests):**
+**Assertions (39 tests):**
 
 - **Rows.** B's select on tenant A, its memberships and documents returns nothing; B's unfiltered `tenants` query returns exactly B and C; B's insert into tenant A fails `42501`; B's update and delete of A's document affect zero rows; B can't rename tenant A; B's `delete_tenant` on A fails `42501`.
 - **Document rows.** Inserting `status`, `size_bytes`, `mime_type` or `uploaded_by` fails `42501` and `storage_path` fails `428C9`; the filename check rejects empty, blank, 256-character and control-character names (`23514`) and accepts 255; `storage_path` is exactly `<tenant_id>/<id>` and a new row starts as `uploading` with null size and type; updating `status` fails `42501` while renaming works.
@@ -286,13 +286,14 @@ Tests within the file are order-dependent: B is promoted to admin of C part-way 
 - **Admin and removal.** An admin can rename someone else's document and can delete the file, then the row (asserted through the object index); a removed member can't upload to or complete their old rows and no longer sees C's rows or files.
 - **Account deletion.** D deletes their account; the owner still sees D's document with `uploaded_by` null and can download it.
 - **Guards.** `delete_tenant` refuses while a file remains (`55000`); `delete_own_account` refuses while the caller owns a tenant (`55000`).
+- **Auth.** A direct `auth.signUp` with a 14 character password is rejected with `weak_password`; if it were accepted, the test deletes the account and fails.
 - **Anonymous.** No session can read any table (`42501`), call any of the four RPCs (`42501`), or list, download or sign in the bucket.
 
 Every "cannot" assertion is paired with a control that reads the data back as an authorized user and checks it is unchanged.
 
 **Cleanup.** `afterAll` runs even when tests fail: removes files through the Storage API as each tenant's owner, calls `delete_tenant` for each tenant, then `delete_own_account` for each user still present. It collects every error and fails the run if any step didn't succeed.
 
-**Last result.** 38 of 38 passed on two consecutive runs after `000008` and `000009` were applied (about 25 seconds each). After each run a SQL query confirmed zero test users in `auth.users`, zero test tenants, zero `documents` rows and zero objects in the bucket. The same query after an earlier failing run also showed zero leftovers.
+**Last result.** 39 of 39 passed after the password minimum was re-saved (about 24 seconds); the 38 tests that predate the password test had passed on two consecutive runs after `000008` and `000009` were applied. After each run a SQL query confirmed zero test users in `auth.users`, zero test tenants, zero `documents` rows and zero objects in the bucket. The same query after earlier failing runs also showed zero leftovers.
 
 ### How to run it
 
@@ -325,7 +326,7 @@ See the README section "Tenant isolation test" for details.
 Auth settings live in the Supabase dashboard, not in this repo. `supabase/config.toml` only configures a local stack, which isn't used. What is known about the linked project:
 
 - **Email confirmation is off** so the isolation test can get a session straight from sign-up. Anyone can create an account with an email address they don't control, and then create tenants.
-- **Minimum password length: intended to be 15, but not in effect.** The dashboard was set to 15, yet a direct `auth.signUp` with a 14 character password was accepted on 2026-09-17 (the test that checks this, `Supabase itself rejects a password shorter than 15 characters`, fails, and the user it created was removed). Until the setting is saved and that test passes, the 15 character minimum exists only in the sign-up form, which any API client can skip. Supabase caps passwords at 72 characters (bcrypt). The form shows Supabase's `weak_password` reasons when the server rejects one.
+- **Minimum password length is 15**, enforced by Supabase, not just the form: the test `Supabase itself rejects a password shorter than 15 characters` calls `auth.signUp` directly with 14 characters and expects `weak_password`. It failed on 2026-09-17 because the dashboard setting hadn't been saved (the account it created was removed by the test), and passed once the setting was re-saved the same day. Supabase caps passwords at 72 characters (bcrypt). The sign-up form enforces both before submitting and shows Supabase's `weak_password` reasons when the server rejects one.
 - **Leaked password protection is off** (security advisor warning). It requires a paid plan, so passwords are not screened against known breaches.
 - **Other auth settings haven't been reviewed.** MFA and auth rate limits on the project haven't been checked. The app implements no MFA.
 - **Tests share the production project.** The test suite and the app use one project. A dedicated test project would allow re-enabling email confirmation for real users.

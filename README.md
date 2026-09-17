@@ -41,7 +41,7 @@ Then run:
 npm test
 ```
 
-The test deletes the users, tenants, rows and files it created, and fails if any cleanup step doesn't succeed. Each run makes three sign-ups, which count toward the project's auth rate limit, so running it many times in a row may be throttled. The 38 tests take about 25 seconds.
+The test deletes the users, tenants, rows and files it created, and fails if any cleanup step doesn't succeed. Each run makes three sign-ups plus one rejected sign-up attempt, which count toward the project's auth rate limit, so running it many times in a row may be throttled. The 39 tests take about 25 seconds.
 
 ## Learn More
 

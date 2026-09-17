@@ -60,5 +60,5 @@ Uploads are **row first**. Never send file bytes through a Server Action (1 MB b
 
 ## Auth and tests
 
-- The intended **minimum password length is 15**, but as of 2026-09-17 Supabase accepted a 14 character sign-up, so the dashboard setting isn't in effect; the suite has a test for it. Supabase caps passwords at 72 characters. Test passwords are 40 characters. The sign-up form enforces both client-side and shows Supabase's `weak_password` reasons.
+- The dashboard sets the **minimum password length to 15**, and the suite proves Supabase enforces it with a direct 14 character `signUp`. Supabase caps passwords at 72 characters. Test passwords are 40 characters. The sign-up form enforces both client-side and shows Supabase's `weak_password` reasons.
 - `tests/tenant-isolation.test.ts` signs up **three users once per run** (A, B, D) and reuses them, to stay under Supabase Auth's sign-up rate limit. Tests within the file are order-dependent (B is promoted and later removed; D deletes their own account). Cleanup in `afterAll` removes files, then tenants, then accounts, and fails the run if anything is left. Only PDF blobs are uploaded because of the bucket's MIME list.
