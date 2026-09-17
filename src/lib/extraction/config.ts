@@ -10,6 +10,12 @@ export const EXTRACTION_LIMITS = {
   tenantMonthlyCeilingUsd: 1.0,
   globalMonthlyCeilingUsd: 3.0,
   hourlyRunLimit: 5,
+  // token counts reported at close are clamped to these (4 calls of at
+  // most 200k in and MAX_OUTPUT_TOKENS out), so a forged run's cost is bounded
+  maxInputTokensPerRun: 800_000,
+  maxOutputTokensPerRun: 8_192,
+  // a run still 'running' after this long is failed by the next open
+  staleRunMinutes: 10,
 } as const;
 
 // Confidence gating. A field at or above `high` is written as is; at or
@@ -56,57 +62,70 @@ export const MAX_VALIDATION_RETRIES = 1;
 // for a fixed-schema extraction.
 export const OPENAI_REASONING_EFFORT = "minimal" as const;
 
-// Prices in USD per million tokens, standard tier, no caching, no batch.
-// Checked against each provider's own pricing page on PRICING_CHECKED_ON.
-// Update the date whenever a row changes.
-export const PRICING_CHECKED_ON = "2026-09-18";
-
+// Prices in USD per million tokens, standard tier, no caching, no batch,
+// read from each provider's own pricing page on checkedOn. The database
+// computes every run's cost from public.extraction_model_prices; this is a
+// mirror of that table for the app and tests (the drift test compares
+// them). Update the date whenever a row changes, in both places.
 export type ModelPrice = {
   provider: ProviderName;
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
+  checkedOn: string;
   source: string;
 };
+
+const ANTHROPIC_PRICING_PAGE = "https://platform.claude.com/docs/en/about-claude/models/overview";
+const OPENAI_PRICING_PAGE = "https://developers.openai.com/api/docs/pricing";
 
 export const PRICING: Record<string, ModelPrice> = {
   "claude-haiku-4-5-20251001": {
     provider: "anthropic",
     inputUsdPerMillion: 1.0,
     outputUsdPerMillion: 5.0,
-    source: "https://platform.claude.com/docs/en/about-claude/models/overview",
+    checkedOn: "2026-09-18",
+    source: ANTHROPIC_PRICING_PAGE,
   },
   "claude-sonnet-5": {
     provider: "anthropic",
     inputUsdPerMillion: 2.0,
     outputUsdPerMillion: 10.0,
-    source: "https://platform.claude.com/docs/en/about-claude/models/overview",
+    checkedOn: "2026-09-18",
+    source: ANTHROPIC_PRICING_PAGE,
   },
   "gpt-5-nano": {
     provider: "openai",
     inputUsdPerMillion: 0.05,
     outputUsdPerMillion: 0.4,
-    source: "https://developers.openai.com/api/docs/pricing",
+    checkedOn: "2026-09-18",
+    source: OPENAI_PRICING_PAGE,
   },
   "gpt-5-mini": {
     provider: "openai",
     inputUsdPerMillion: 0.25,
     outputUsdPerMillion: 2.0,
-    source: "https://developers.openai.com/api/docs/pricing",
+    checkedOn: "2026-09-18",
+    source: OPENAI_PRICING_PAGE,
   },
 };
 
 // Providers report the exact snapshot they served (for example
-// gpt-5-nano-2025-08-07 for gpt-5-nano). Price by the id we asked for, and
-// accept a reported id that starts with it.
+// gpt-5-nano-2025-08-07 for gpt-5-nano). Exact match first, then the
+// longest priced id the reported id extends with a "-" suffix. Same rule
+// as private.extraction_price_for_model.
 export function priceForModel(model: string): ModelPrice {
   const exact = PRICING[model];
   if (exact) return exact;
-  const prefix = Object.keys(PRICING).find((id) => model.startsWith(id + "-"));
+  const prefix = Object.keys(PRICING)
+    .filter((id) => model.startsWith(id + "-"))
+    .sort((a, b) => b.length - a.length)[0];
   if (prefix) return PRICING[prefix];
-  throw new Error(`no price on file for model ${model}; add it to PRICING in config.ts`);
+  throw new Error(`no price on file for model ${model}; add it to PRICING in config.ts and to the migration`);
 }
 
-// Cost of one call, rounded to the numeric(12, 8) the runs table stores.
+// What close_extraction_run will record for a call: the same clamp and
+// rounding as the SQL, for display and for the drift test. The database's
+// number is the one that counts.
 export function computeCostUsd(model: string, inputTokens: number, outputTokens: number): number {
   if (!Number.isInteger(inputTokens) || inputTokens < 0) {
     throw new Error(`input token count must be a non-negative integer, got ${inputTokens}`);
@@ -115,6 +134,8 @@ export function computeCostUsd(model: string, inputTokens: number, outputTokens:
     throw new Error(`output token count must be a non-negative integer, got ${outputTokens}`);
   }
   const price = priceForModel(model);
-  const micros = inputTokens * price.inputUsdPerMillion + outputTokens * price.outputUsdPerMillion;
+  const clampedIn = Math.min(inputTokens, EXTRACTION_LIMITS.maxInputTokensPerRun);
+  const clampedOut = Math.min(outputTokens, EXTRACTION_LIMITS.maxOutputTokensPerRun);
+  const micros = clampedIn * price.inputUsdPerMillion + clampedOut * price.outputUsdPerMillion;
   return Math.round((micros / 1_000_000) * 1e8) / 1e8;
 }

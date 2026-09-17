@@ -8,9 +8,10 @@
 //   5. still invalid: the run fails and the last raw answer is kept
 //
 // Every call's tokens are counted, including failed and retried ones,
-// because every call is billed.
+// because every call is billed. The cost itself is computed by the
+// database at close from these counts and its price table.
 
-import { computeCostUsd, MAX_OUTPUT_TOKENS, MAX_VALIDATION_RETRIES, type ProviderName } from "./config";
+import { MAX_OUTPUT_TOKENS, MAX_VALIDATION_RETRIES, type ProviderName } from "./config";
 import { describeError, ProviderError, type ExtractionProvider, type ExtractionRequest } from "./providers/types";
 import { buildJsonSchema, gateFields, retryPrompt, SYSTEM_PROMPT, userPrompt, validateExtraction, type GatedField } from "./schema";
 import type { SupportedMimeType } from "./sniff";
@@ -29,7 +30,6 @@ type Usage = {
   attempts: number;
   inputTokens: number;
   outputTokens: number;
-  costUsd: number;
   latencyMs: number;
 };
 
@@ -45,7 +45,6 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
     attempts: 0,
     inputTokens: 0,
     outputTokens: 0,
-    costUsd: 0,
     latencyMs: 0,
   };
   const finish = <T extends object>(rest: T) => ({ ...usage, latencyMs: Date.now() - startedAt, ...rest });
@@ -76,7 +75,6 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
         usage.model = response.model;
         usage.inputTokens += response.inputTokens;
         usage.outputTokens += response.outputTokens;
-        usage.costUsd = round8(usage.costUsd + computeCostUsd(response.model, response.inputTokens, response.outputTokens));
         return response.text;
       } catch (error) {
         if (error instanceof ProviderError && error.fallbackEligible && input.fallback && !fallbackUsed) {
@@ -128,10 +126,6 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
   return finish({ status: "succeeded", fields: gated.fields, documentStatus: gated.documentStatus });
 }
 
-function round8(value: number): number {
-  return Math.round(value * 1e8) / 1e8;
-}
-
 // The arguments close_extraction_run takes for an outcome. Shared by the
 // Server Action and the tests so both close a run the same way.
 export function toCloseParams(runId: string, closeToken: string, outcome: RunOutcome) {
@@ -143,7 +137,6 @@ export function toCloseParams(runId: string, closeToken: string, outcome: RunOut
     p_model: outcome.model,
     p_input_tokens: outcome.inputTokens,
     p_output_tokens: outcome.outputTokens,
-    p_cost_usd: outcome.costUsd,
     p_latency_ms: outcome.latencyMs,
     p_attempts: outcome.attempts,
     p_error: outcome.status === "failed" ? outcome.error : null,

@@ -13,8 +13,10 @@
 // No model is called: the orchestrator is exercised with fake providers, and
 // the RPCs are driven directly with real signed-in sessions against the
 // project in .env.test, using only the publishable key. Runs are "forged"
-// with chosen costs to reach the ceilings; that is also a demonstration that
-// a tenant admin can do the same (see SECURITY.md).
+// with chosen token counts to reach the ceilings; that is also a
+// demonstration that a tenant admin can do the same, within the clamp (see
+// SECURITY.md). The stale-run reaper needs a run older than ten minutes, so
+// it is tested in SQL instead: supabase/tests/extraction_stale_runs.sql.
 //
 // Like tenant-isolation.test.ts, tests here are order-dependent and users
 // are signed up once per run.
@@ -28,11 +30,12 @@ import {
   EXTRACTION_LIMITS,
   MAX_OUTPUT_TOKENS,
   PRICING,
+  priceForModel,
 } from "@/lib/extraction/config";
 import type { ExtractionProvider, ExtractionRequest, ProviderResponse } from "@/lib/extraction/providers/types";
 import { ProviderError } from "@/lib/extraction/providers/types";
 import { runExtraction, toCloseParams, type RunOutcome } from "@/lib/extraction/run";
-import { FIELD_NAMES, validateExtraction } from "@/lib/extraction/schema";
+import { buildJsonSchema, FIELD_NAMES, validateExtraction } from "@/lib/extraction/schema";
 import { detectMimeType } from "@/lib/extraction/sniff";
 
 const url = process.env.SUPABASE_TEST_URL;
@@ -181,9 +184,9 @@ function close(user: TestUser, runId: string, token: string, outcome: RunOutcome
   return user.client.rpc("close_extraction_run", toCloseParams(runId, token, outcome));
 }
 
-// A closed run with a chosen cost and no fields, so a test can drive the
-// spend sums to a ceiling without calling a model.
-function failedOutcome(costUsd: number, extra: Partial<RunOutcome> = {}): RunOutcome {
+// A failed run with no fields. The database computes its cost from the
+// token counts, so a test drives spend by choosing those.
+function failedOutcome(extra: Partial<RunOutcome> = {}): RunOutcome {
   return {
     status: "failed",
     error: "forged by the test suite",
@@ -193,17 +196,27 @@ function failedOutcome(costUsd: number, extra: Partial<RunOutcome> = {}): RunOut
     attempts: 1,
     inputTokens: 1000,
     outputTokens: 10,
-    costUsd,
     latencyMs: 5,
     ...extra,
   } as RunOutcome;
 }
 
-// Opens and immediately closes a run with the given cost.
+// Token counts that cost exactly `costUsd` at Sonnet 5's input price, the
+// dearest model on file, so a whole ceiling fits inside one clamped run.
+const FORGE_MODEL = "claude-sonnet-5";
+function forgedUsage(costUsd: number) {
+  const inputTokens = Math.round((costUsd * 1_000_000) / priceForModel(FORGE_MODEL).inputUsdPerMillion);
+  if (inputTokens > EXTRACTION_LIMITS.maxInputTokensPerRun) throw new Error("can't forge that much in one run");
+  return { provider: "anthropic" as const, model: FORGE_MODEL, inputTokens, outputTokens: 0 };
+}
+
+// Opens and immediately closes a run whose recorded cost is `costUsd`.
 async function forgeRun(user: TestUser, documentId: string, costUsd: number) {
   const opened = await mustOpen(user, documentId);
-  const { error } = await close(user, opened.run_id, opened.close_token, failedOutcome(costUsd));
+  const { error } = await close(user, opened.run_id, opened.close_token, failedOutcome(forgedUsage(costUsd)));
   if (error) throw new Error(`close_extraction_run failed: ${error.code} ${error.message}`);
+  const run = await readRun(user, opened.run_id);
+  expect(Number(run?.cost_usd)).toBe(costUsd);
   return opened.run_id;
 }
 
@@ -256,12 +269,14 @@ let tenantC: string; // tenant ceiling
 let tenantG1: string; // global ceiling, with C
 let tenantG2: string;
 let tenantG3: string; // fresh tenant refused by the global ceiling
+let tenantS: string; // a run left running
 let docP: DocumentRow;
 let docQ: DocumentRow;
 let docC: DocumentRow;
 let docG1: DocumentRow;
 let docG2: DocumentRow;
 let docG3: DocumentRow;
+let docS: DocumentRow;
 
 const x = () => userX!;
 const y = () => userY!;
@@ -281,19 +296,21 @@ beforeAll(async () => {
   tenantG1 = await make("g1");
   tenantG2 = await make("g2");
   tenantG3 = await make("g3");
+  tenantS = await make("s");
 
   const join = await x().client
     .from("memberships")
     .insert({ tenant_id: tenantP, user_id: y().id, role: "member" });
   if (join.error) throw new Error(`adding Y to tenant P failed: ${join.error.message}`);
 
-  [docP, docQ, docC, docG1, docG2, docG3] = await Promise.all([
+  [docP, docQ, docC, docG1, docG2, docG3, docS] = await Promise.all([
     uploadDocument(x(), tenantP, "p.pdf"),
     uploadDocument(x(), tenantQ, "q.pdf"),
     uploadDocument(x(), tenantC, "c.pdf"),
     uploadDocument(x(), tenantG1, "g1.pdf"),
     uploadDocument(x(), tenantG2, "g2.pdf"),
     uploadDocument(x(), tenantG3, "g3.pdf"),
+    uploadDocument(x(), tenantS, "s.pdf"),
   ]);
 });
 
@@ -334,6 +351,27 @@ describe("configuration", () => {
     expect(Number(data!.tenant_monthly_ceiling_usd)).toBe(EXTRACTION_LIMITS.tenantMonthlyCeilingUsd);
     expect(Number(data!.global_monthly_ceiling_usd)).toBe(EXTRACTION_LIMITS.globalMonthlyCeilingUsd);
     expect(data!.hourly_run_limit).toBe(EXTRACTION_LIMITS.hourlyRunLimit);
+    expect(data!.max_input_tokens_per_run).toBe(EXTRACTION_LIMITS.maxInputTokensPerRun);
+    expect(data!.max_output_tokens_per_run).toBe(EXTRACTION_LIMITS.maxOutputTokensPerRun);
+    expect(data!.stale_run_minutes).toBe(EXTRACTION_LIMITS.staleRunMinutes);
+  });
+
+  it("the prices in config.ts match the prices the database charges", async () => {
+    const { data, error } = await x().client.from("extraction_model_prices").select("*").order("model");
+    expect(error).toBeNull();
+    const fromDb = Object.fromEntries(
+      (data ?? []).map((row) => [
+        row.model,
+        {
+          provider: row.provider,
+          inputUsdPerMillion: Number(row.input_usd_per_million),
+          outputUsdPerMillion: Number(row.output_usd_per_million),
+          checkedOn: row.checked_on,
+          source: row.source,
+        },
+      ]),
+    );
+    expect(fromDb).toEqual(PRICING);
   });
 
   it("cost is computed from the pricing table for a known token count", () => {
@@ -343,6 +381,10 @@ describe("configuration", () => {
     // gpt-5-nano: $0.05 in, $0.40 out; the served snapshot id carries a date
     expect(computeCostUsd("gpt-5-nano-2025-08-07", 200_000, 1_000)).toBe(0.0104);
     expect(computeCostUsd("gpt-5-nano", 0, 0)).toBe(0);
+    // clamped to the per-run maximum
+    expect(computeCostUsd("claude-haiku-4-5-20251001", 5_000_000, 100_000)).toBe(
+      computeCostUsd("claude-haiku-4-5-20251001", EXTRACTION_LIMITS.maxInputTokensPerRun, EXTRACTION_LIMITS.maxOutputTokensPerRun),
+    );
     expect(() => computeCostUsd("no-such-model", 1, 1)).toThrow(/no price on file/);
     expect(() => computeCostUsd("gpt-5-nano", -1, 1)).toThrow();
   });
@@ -374,6 +416,18 @@ describe("validation", () => {
     expect(badEnum).toMatchObject({ ok: false, error: expect.stringMatching(/document_type.*one of/) });
     const badConfidence = validateExtraction(validJson({ title: { value: "x", confidence: 1.5 } }));
     expect(badConfidence).toMatchObject({ ok: false, error: expect.stringMatching(/confidence/) });
+  });
+
+  it("treats empty strings as absent and the schema has no unions", () => {
+    const text = validJson({ title: { value: "", confidence: 0.9 }, currency: { value: "   ", confidence: 0.5 } });
+    const result = validateExtraction(text);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.fields.find((f) => f.name === "title")).toMatchObject({ value: null, source_text: null });
+      expect(result.fields.find((f) => f.name === "currency")?.value).toBeNull();
+    }
+    // Anthropic rejects schemas with more than 16 union-typed parameters
+    expect(JSON.stringify(buildJsonSchema())).not.toMatch(/anyOf|oneOf|"null"/);
   });
 
   it("accepts a well-formed answer", () => {
@@ -414,7 +468,6 @@ describe("orchestrator (fake providers)", () => {
     // both calls are paid for
     expect(outcome.inputTokens).toBe(2200);
     expect(outcome.outputTokens).toBe(150);
-    expect(outcome.costUsd).toBe(computeCostUsd("claude-haiku-4-5-20251001", 2200, 150));
     expect(outcome.provider).toBe("anthropic");
   });
 
@@ -431,7 +484,6 @@ describe("orchestrator (fake providers)", () => {
     if (outcome.status !== "succeeded") return;
     expect(outcome.attempts).toBe(1);
     expect(outcome.model).toBe("gpt-5-nano-2025-08-07");
-    expect(outcome.costUsd).toBe(computeCostUsd("gpt-5-nano", 500, 80));
     const byName = Object.fromEntries(outcome.fields.map((f) => [f.name, f]));
     expect(byName.title).toMatchObject({ band: "high", clarifying_question: null });
     expect(byName.total_amount.band).toBe("medium");
@@ -465,13 +517,14 @@ describe("orchestrator (fake providers)", () => {
     const fallback = fakeProvider("openai", "gpt-5-nano", [answer(validJson())]);
     const outcome = await runExtraction({ ...input, primary, fallback });
     expect(fallback.requests).toHaveLength(0);
-    expect(outcome).toMatchObject({ status: "failed", attempts: 1, costUsd: 0, rawResponse: null });
+    expect(outcome).toMatchObject({ status: "failed", attempts: 1, inputTokens: 0, rawResponse: null });
     if (outcome.status === "failed") expect(outcome.error).toMatch(/anthropic client 400/);
   });
 });
 
 describe("run lifecycle in the database", () => {
   let failedRun: string;
+  let clampedRun: string;
 
   it("a member cannot open a run; anon cannot either", async () => {
     const asMember = await open(y(), docP.id);
@@ -496,21 +549,35 @@ describe("run lifecycle in the database", () => {
     const again = await open(x(), docP.id);
     expect(again.error?.code).toBe("55000");
 
-    // close with a wrong token, as a member, and as anon: all refused
-    const wrongToken = await close(x(), opened.run_id, randomUUID(), failedOutcome(0.9));
+    // close with a wrong token, as someone else holding the real token, and
+    // as anon: all refused
+    const wrongToken = await close(x(), opened.run_id, randomUUID(), failedOutcome());
     expect(wrongToken.error?.code).toBe("42501");
-    const asMember = await close(y(), opened.run_id, opened.close_token, failedOutcome(0.9));
+    const asMember = await close(y(), opened.run_id, opened.close_token, failedOutcome());
     expect(asMember.error?.code).toBe("42501");
-    const anon = await newClient().rpc("close_extraction_run", toCloseParams(opened.run_id, opened.close_token, failedOutcome(0.9)));
+    const anon = await newClient().rpc("close_extraction_run", toCloseParams(opened.run_id, opened.close_token, failedOutcome()));
     expect(anon.error?.code).toBe("42501");
     expect((await readRun(x(), opened.run_id))?.status).toBe("running");
 
-    // the real close
-    const closed = await close(x(), opened.run_id, opened.close_token, failedOutcome(0, { error: "first failure" }));
+    // the real close: a run that never reached a model records no usage
+    const closed = await close(
+      x(),
+      opened.run_id,
+      opened.close_token,
+      failedOutcome({ error: "first failure", provider: null, model: null, inputTokens: 0, outputTokens: 0, attempts: 0 }),
+    );
     expect(closed.error).toBeNull();
     expect((await readDocument(x(), docP.id))?.status).toBe("pending");
+    expect(await readRun(x(), opened.run_id)).toMatchObject({
+      status: "failed",
+      provider: null,
+      model: null,
+      input_tokens: null,
+      cost_usd: null,
+      error: "first failure",
+    });
 
-    const twice = await close(x(), opened.run_id, opened.close_token, failedOutcome(0));
+    const twice = await close(x(), opened.run_id, opened.close_token, failedOutcome());
     expect(twice.error?.code).toBe("42501");
     failedRun = opened.run_id;
   });
@@ -547,6 +614,8 @@ describe("run lifecycle in the database", () => {
       raw_response: '{"document_type": 1}',
     });
     expect(run?.error).toMatch(/failed validation/);
+    // the database priced it from its own table: 1900 in, 140 out at Haiku rates
+    expect(Number(run?.cost_usd)).toBe(0.0026);
     expect(Number(run?.cost_usd)).toBe(computeCostUsd("claude-haiku-4-5-20251001", 1900, 140));
     expect(run?.finished_at).not.toBeNull();
 
@@ -556,18 +625,52 @@ describe("run lifecycle in the database", () => {
     expect(await readFields(x(), docP.id)).toEqual([]);
   });
 
-  it("a failed close cannot carry fields", async () => {
+  it("a close cannot carry fields on failure, a cost, an unknown model, or a mismatched provider", async () => {
     const opened = await mustOpen(x(), docP.id);
+    const base = toCloseParams(opened.run_id, opened.close_token, failedOutcome());
+
     const withFields = await x().client.rpc("close_extraction_run", {
-      ...toCloseParams(opened.run_id, opened.close_token, failedOutcome(0)),
+      ...base,
       p_fields: [{ name: "title", value: "x", confidence: 0.9, band: "high", source_text: null, clarifying_question: null }],
     });
     expect(withFields.error?.code).toBe("22023");
+
+    // there is no cost parameter any more
+    const withCost = await x().client.rpc("close_extraction_run", { ...base, p_cost_usd: 0 });
+    expect(withCost.error?.code).toBe("PGRST202");
+
+    const unknownModel = await x().client.rpc("close_extraction_run", { ...base, p_model: "gpt-9-ultra" });
+    expect(unknownModel.error?.code).toBe("22023");
+    expect(unknownModel.error?.message).toMatch(/no price on file/);
+
+    const wrongProvider = await x().client.rpc("close_extraction_run", { ...base, p_provider: "openai" });
+    expect(wrongProvider.error?.code).toBe("22023");
+
+    const tokensNoModel = await x().client.rpc("close_extraction_run", { ...base, p_model: null, p_provider: null });
+    expect(tokensNoModel.error?.code).toBe("22023");
+
     expect((await readRun(x(), opened.run_id))?.status).toBe("running");
     expect(await readFields(x(), docP.id)).toEqual([]);
-    // tidy up so the document is usable again
-    const closed = await close(x(), opened.run_id, opened.close_token, failedOutcome(0));
-    expect(closed.error).toBeNull();
+
+    // absurd token counts are clamped, so the recorded cost is bounded
+    const clamped = await x().client.rpc("close_extraction_run", {
+      ...base,
+      p_input_tokens: 2_000_000_000,
+      p_output_tokens: 2_000_000_000,
+    });
+    expect(clamped.error).toBeNull();
+    const run = await readRun(x(), opened.run_id);
+    expect(run).toMatchObject({
+      status: "failed",
+      input_tokens: EXTRACTION_LIMITS.maxInputTokensPerRun,
+      output_tokens: EXTRACTION_LIMITS.maxOutputTokensPerRun,
+    });
+    expect(Number(run?.cost_usd)).toBe(
+      computeCostUsd("claude-haiku-4-5-20251001", EXTRACTION_LIMITS.maxInputTokensPerRun, EXTRACTION_LIMITS.maxOutputTokensPerRun),
+    );
+    // that one forged run, at the clamp, is worth about 84 cents at Haiku rates
+    expect(Number(run?.cost_usd)).toBe(0.84096);
+    clampedRun = opened.run_id;
   });
 
   it("a successful run writes gated fields; a low field sends the document to review", async () => {
@@ -606,6 +709,7 @@ describe("run lifecycle in the database", () => {
 
     const run = await readRun(x(), opened.run_id);
     expect(run).toMatchObject({ status: "succeeded", provider: "openai", model: "gpt-5-nano-2025-08-07", attempts: 1 });
+    // priced by the snapshot's prefix, gpt-5-nano
     expect(Number(run?.cost_usd)).toBe(computeCostUsd("gpt-5-nano", 500, 80));
   });
 
@@ -634,7 +738,28 @@ describe("run lifecycle in the database", () => {
     // every run so far is still there
     const runs = await x().client.from("extraction_runs").select("id").eq("tenant_id", tenantP);
     expect(runs.data?.map((r) => r.id)).toContain(failedRun);
+    expect(runs.data?.map((r) => r.id)).toContain(clampedRun);
     expect(runs.data).toHaveLength(5);
+  });
+
+  it("a fresh running run is not reaped by the next open", async () => {
+    // The reaper only fails runs older than stale_run_minutes; a run opened
+    // seconds ago just blocks the next open. Reaping itself is tested in
+    // supabase/tests/extraction_stale_runs.sql, where started_at can be set.
+    const opened = await mustOpen(x(), docS.id);
+    const again = await open(x(), docS.id);
+    expect(again.error?.code).toBe("55000");
+    expect(again.error?.message).toMatch(/already running/);
+    expect((await readRun(x(), opened.run_id))?.status).toBe("running");
+    expect((await readDocument(x(), docS.id))?.status).toBe("processing");
+    const closed = await close(
+      x(),
+      opened.run_id,
+      opened.close_token,
+      failedOutcome({ provider: null, model: null, inputTokens: 0, outputTokens: 0, attempts: 0 }),
+    );
+    expect(closed.error).toBeNull();
+    expect((await readDocument(x(), docS.id))?.status).toBe("pending");
   });
 
   it("nobody can write runs or fields directly", async () => {
@@ -652,8 +777,18 @@ describe("run lifecycle in the database", () => {
     const deleteFields = await x().client.from("extracted_fields").delete().eq("document_id", docP.id);
     expect(deleteFields.error?.code).toBe("42501");
 
-    const updateLimits = await x().client.from("extraction_limits").update({ hourly_run_limit: 1000 });
+    // (PostgREST refuses an unfiltered update before the database sees it)
+    const updateLimits = await x().client
+      .from("extraction_limits")
+      .update({ hourly_run_limit: 1000 })
+      .eq("singleton", true);
     expect(updateLimits.error?.code).toBe("42501");
+
+    const updatePrices = await x().client
+      .from("extraction_model_prices")
+      .update({ input_usd_per_million: 0 })
+      .eq("model", "gpt-5-nano");
+    expect(updatePrices.error?.code).toBe("42501");
 
     expect(await readFields(x(), docP.id)).toHaveLength(FIELD_NAMES.length);
   });
@@ -734,14 +869,14 @@ describe("reading runs and fields", () => {
 
   it("anon is refused everywhere", async () => {
     const anon = newClient();
-    for (const table of ["extraction_runs", "extracted_fields", "extraction_limits"]) {
+    for (const table of ["extraction_runs", "extracted_fields", "extraction_limits", "extraction_model_prices"]) {
       const { data, error } = await anon.from(table).select("*").limit(1);
       expect(data, table).toBeNull();
       expect(error?.code, table).toBe("42501");
     }
     const opened = await anon.rpc("open_extraction_run", { p_document_id: docP.id });
     expect(opened.error?.code).toBe("42501");
-    const closed = await anon.rpc("close_extraction_run", toCloseParams(randomUUID(), randomUUID(), failedOutcome(0)));
+    const closed = await anon.rpc("close_extraction_run", toCloseParams(randomUUID(), randomUUID(), failedOutcome()));
     expect(closed.error?.code).toBe("42501");
   });
 });

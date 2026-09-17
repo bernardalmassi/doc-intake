@@ -8,12 +8,16 @@
 --      a close token that only the server ever holds.
 --   2. the server calls the model (outside the database)
 --   3. close_extraction_run(run_id, token, ...) -> one transaction: records
---      real token counts, cost, latency and status; on success replaces the
---      document's extracted fields and sets it to 'extracted' or
---      'needs_review'; on failure puts the document back exactly as it was.
+--      real token counts, latency and status, computes the cost itself from
+--      public.extraction_model_prices; on success replaces the document's
+--      extracted fields and sets it to 'extracted' or 'needs_review'; on
+--      failure puts the document back exactly as it was.
 --
 -- No client writes anything in these tables directly: runs and fields are
--- readable by tenant members and written only by the two RPCs.
+-- readable by tenant members and written only by the two RPCs. The caller
+-- never supplies a cost: any admin can call these RPCs over PostgREST, so
+-- the cost is derived in the database from token counts clamped to a
+-- per-run maximum.
 
 -- Limits ------------------------------------------------------------------
 
@@ -24,12 +28,22 @@ create table public.extraction_limits (
   singleton                  boolean primary key default true check (singleton),
   tenant_monthly_ceiling_usd numeric(12, 6) not null check (tenant_monthly_ceiling_usd >= 0),
   global_monthly_ceiling_usd numeric(12, 6) not null check (global_monthly_ceiling_usd >= 0),
-  hourly_run_limit           integer        not null check (hourly_run_limit >= 0)
+  hourly_run_limit           integer        not null check (hourly_run_limit >= 0),
+  -- Token counts reported at close are clamped to these, so one forged run
+  -- can't record an absurd cost. A run makes at most four calls; Haiku 4.5
+  -- takes at most 200k input tokens per call, and the app caps output at
+  -- 2048 per call.
+  max_input_tokens_per_run   integer        not null check (max_input_tokens_per_run  >= 0),
+  max_output_tokens_per_run  integer        not null check (max_output_tokens_per_run >= 0),
+  -- a run still 'running' after this long is failed by the next open for
+  -- its document, and the document is released
+  stale_run_minutes          integer        not null check (stale_run_minutes > 0)
 );
 
 insert into public.extraction_limits
-  (tenant_monthly_ceiling_usd, global_monthly_ceiling_usd, hourly_run_limit)
-values (1.00, 3.00, 5);
+  (tenant_monthly_ceiling_usd, global_monthly_ceiling_usd, hourly_run_limit,
+   max_input_tokens_per_run, max_output_tokens_per_run, stale_run_minutes)
+values (1.00, 3.00, 5, 800000, 8192, 10);
 
 alter table public.extraction_limits enable row level security;
 
@@ -37,6 +51,54 @@ create policy extraction_limits_select_authenticated on public.extraction_limits
   for select to authenticated using (true);
 
 grant select on public.extraction_limits to authenticated;
+
+-- Prices ------------------------------------------------------------------
+
+-- USD per million tokens, standard tier, no caching or batch discounts, as
+-- read from each provider's own pricing page on checked_on. close uses this
+-- to compute every run's cost; a model with no row here can't be recorded.
+-- src/lib/extraction/config.ts mirrors this table and a test asserts they
+-- agree. Update the date whenever a row changes.
+create table public.extraction_model_prices (
+  model                  text primary key check (length(model) between 1 and 100),
+  provider               text not null check (provider in ('anthropic', 'openai')),
+  input_usd_per_million  numeric(12, 6) not null check (input_usd_per_million  >= 0),
+  output_usd_per_million numeric(12, 6) not null check (output_usd_per_million >= 0),
+  checked_on             date not null,
+  source                 text not null
+);
+
+insert into public.extraction_model_prices
+  (model, provider, input_usd_per_million, output_usd_per_million, checked_on, source)
+values
+  ('claude-haiku-4-5-20251001', 'anthropic', 1.00, 5.00, '2026-09-18',
+   'https://platform.claude.com/docs/en/about-claude/models/overview'),
+  ('claude-sonnet-5',           'anthropic', 2.00, 10.00, '2026-09-18',
+   'https://platform.claude.com/docs/en/about-claude/models/overview'),
+  ('gpt-5-nano',                'openai',    0.05, 0.40, '2026-09-18',
+   'https://developers.openai.com/api/docs/pricing'),
+  ('gpt-5-mini',                'openai',    0.25, 2.00, '2026-09-18',
+   'https://developers.openai.com/api/docs/pricing');
+
+alter table public.extraction_model_prices enable row level security;
+
+create policy extraction_model_prices_select_authenticated on public.extraction_model_prices
+  for select to authenticated using (true);
+
+grant select on public.extraction_model_prices to authenticated;
+
+-- Providers report the snapshot they served, for example
+-- gpt-5-nano-2025-08-07 for gpt-5-nano. Exact match first, then the longest
+-- priced id the reported id extends with a '-' suffix. Null when unknown.
+create or replace function private.extraction_price_for_model(p_model text)
+returns public.extraction_model_prices language sql stable security definer set search_path = '' as $$
+  select p.* from public.extraction_model_prices p
+  where p.model = p_model or p_model like p.model || '-%'
+  order by (p.model = p_model) desc, length(p.model) desc
+  limit 1;
+$$;
+
+revoke execute on function private.extraction_price_for_model(text) from public, anon, authenticated;
 
 -- Runs --------------------------------------------------------------------
 
@@ -150,6 +212,8 @@ declare
   v_recent_runs  integer;
   v_run_id       uuid;
   v_token        uuid := gen_random_uuid();
+  v_previous     public.document_status;
+  v_stale_id     uuid;
 begin
   if v_user_id is null then
     raise exception 'authentication required' using errcode = '42501';
@@ -170,6 +234,34 @@ begin
     raise exception 'the document has no file yet' using errcode = '55000';
   end if;
 
+  select l.* into v_limits from public.extraction_limits l;
+
+  -- A run whose server died never closes. Fail any run for this document
+  -- that has been 'running' longer than stale_run_minutes, put the document
+  -- back where that run found it, and drop its close token so a late close
+  -- is refused. Its cost is unknown and recorded as null.
+  -- (at most one run per document is ever 'running': open refuses while the
+  -- document is 'processing')
+  select r.id, r.previous_document_status into v_stale_id, v_previous
+  from public.extraction_runs r
+  where r.document_id = v_doc.id
+    and r.status = 'running'
+    and r.started_at < now() - make_interval(mins => v_limits.stale_run_minutes)
+  order by r.started_at
+  limit 1;
+
+  if found then
+    update public.extraction_runs
+    set status      = 'failed',
+        error       = format('abandoned: still running after %s minutes; failed by a later open',
+                             v_limits.stale_run_minutes),
+        finished_at = now()
+    where id = v_stale_id;
+    delete from private.extraction_run_tokens t where t.run_id = v_stale_id;
+    update public.documents set status = v_previous where id = v_doc.id
+    returning * into v_doc;
+  end if;
+
   if v_doc.status = 'processing' then
     raise exception 'an extraction is already running for this document'
       using errcode = '55000';
@@ -177,8 +269,6 @@ begin
 
   -- one open at a time, project wide, so the sums below are consistent
   perform pg_advisory_xact_lock(hashtext('public.extraction_runs'));
-
-  select l.* into v_limits from public.extraction_limits l;
 
   select coalesce(sum(r.cost_usd), 0) into v_tenant_spend
   from public.extraction_runs r
@@ -235,6 +325,10 @@ grant  execute on function public.open_extraction_run(uuid) to authenticated;
 --   {name, value, confidence, band, source_text, clarifying_question}
 -- and is only accepted with p_status = 'succeeded'. The document goes to
 -- 'needs_review' if any field is 'low', otherwise 'extracted'.
+--
+-- The cost is never supplied. It is computed here from the token counts,
+-- clamped to extraction_limits.max_*_tokens_per_run, at the price on file
+-- for p_model. A run that made no call (p_model null) records no usage.
 create or replace function public.close_extraction_run(
   p_run_id        uuid,
   p_close_token   uuid,
@@ -243,7 +337,6 @@ create or replace function public.close_extraction_run(
   p_model         text,
   p_input_tokens  integer,
   p_output_tokens integer,
-  p_cost_usd      numeric,
   p_latency_ms    integer,
   p_attempts      integer,
   p_error         text default null,
@@ -259,6 +352,11 @@ declare
   v_field    jsonb;
   v_any_low  boolean := false;
   v_doc_id   uuid;
+  v_limits   public.extraction_limits;
+  v_price    public.extraction_model_prices;
+  v_in       integer;
+  v_out      integer;
+  v_cost     numeric(12, 8);
 begin
   if v_user_id is null then
     raise exception 'authentication required' using errcode = '42501';
@@ -296,6 +394,31 @@ begin
   end if;
 
   v_doc_id := v_run.document_id;
+
+  -- usage and cost
+  if p_model is null then
+    if p_status = 'succeeded' then
+      raise exception 'a successful run must name its model' using errcode = '22023';
+    end if;
+    if coalesce(p_input_tokens, 0) <> 0 or coalesce(p_output_tokens, 0) <> 0 then
+      raise exception 'token counts without a model' using errcode = '22023';
+    end if;
+    v_in := null; v_out := null; v_cost := null;
+  else
+    v_price := private.extraction_price_for_model(p_model);
+    if v_price.model is null then
+      raise exception 'no price on file for model %', p_model using errcode = '22023';
+    end if;
+    if p_provider is distinct from v_price.provider then
+      raise exception 'model % belongs to provider %', p_model, v_price.provider using errcode = '22023';
+    end if;
+    select l.* into v_limits from public.extraction_limits l;
+    v_in   := least(greatest(coalesce(p_input_tokens, 0), 0),  v_limits.max_input_tokens_per_run);
+    v_out  := least(greatest(coalesce(p_output_tokens, 0), 0), v_limits.max_output_tokens_per_run);
+    v_cost := round(
+      (v_in * v_price.input_usd_per_million + v_out * v_price.output_usd_per_million) / 1000000,
+      8);
+  end if;
 
   if p_status = 'succeeded' then
     if p_fields is null or jsonb_typeof(p_fields) <> 'array' then
@@ -354,9 +477,9 @@ begin
       provider      = p_provider,
       model         = p_model,
       attempts      = p_attempts,
-      input_tokens  = p_input_tokens,
-      output_tokens = p_output_tokens,
-      cost_usd      = p_cost_usd,
+      input_tokens  = v_in,
+      output_tokens = v_out,
+      cost_usd      = v_cost,
       latency_ms    = p_latency_ms,
       error         = p_error,
       raw_response  = p_raw_response,
@@ -371,8 +494,8 @@ end;
 $$;
 
 revoke execute on function public.close_extraction_run(
-  uuid, uuid, text, text, text, integer, integer, numeric, integer, integer, text, text, jsonb
+  uuid, uuid, text, text, text, integer, integer, integer, integer, text, text, jsonb
 ) from public, anon;
 grant  execute on function public.close_extraction_run(
-  uuid, uuid, text, text, text, integer, integer, numeric, integer, integer, text, text, jsonb
+  uuid, uuid, text, text, text, integer, integer, integer, integer, text, text, jsonb
 ) to authenticated;

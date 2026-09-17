@@ -54,7 +54,6 @@ export async function extractDocument(_prev: FormState, formData: FormData): Pro
     attempts: 0,
     inputTokens: 0,
     outputTokens: 0,
-    costUsd: 0,
     latencyMs: Date.now() - startedAt,
   });
 
@@ -88,7 +87,8 @@ export async function extractDocument(_prev: FormState, formData: FormData): Pro
     outcome = failed(describeError(error));
   }
 
-  // 5. close the run: usage, status and fields in one transaction
+  // 5. close the run: usage, cost (computed there), status and fields in
+  //    one transaction
   const closed = await supabase.rpc("close_extraction_run", toCloseParams(runId, closeToken, outcome));
   if (closed.error) {
     return { error: `The run could not be recorded: ${closed.error.message}` };
