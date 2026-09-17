@@ -32,7 +32,8 @@ There is no test runner configured yet.
 The core design lives in `supabase/migrations/20260917000001_tenants_and_memberships.sql`, and every future table is expected to follow it:
 
 - `tenants` + `memberships` (user ↔ tenant with `tenant_role` enum: `owner` / `admin` / `member`).
-- **Every new table carries `tenant_id`** and enables RLS with policies built on the helper functions `public.is_tenant_member(tenant_id)` and `public.is_tenant_admin(tenant_id)` (admin = owner or admin).
+- **Every new table carries `tenant_id`** and enables RLS with policies built on the helper functions `private.is_tenant_member(tenant_id)` and `private.is_tenant_admin(tenant_id)` (admin = owner or admin). They were created in `public` and moved to `private` by `20260917000003`, so older migrations still say `public.`. New code must use `private.`
+- **Security definer functions go in `private`**, a schema the API doesn't expose, with `execute` revoked from `public, anon`. The only exception is a function meant to be called as an RPC, such as `create_tenant`. Otherwise the security advisor flags it (lints 0028/0029).
 - Those helpers are `security definer` with `set search_path = ''` on purpose: a membership check inside a policy would otherwise re-enter RLS on `memberships` and recurse. Keep new security-definer functions the same way and fully schema-qualify names inside them.
 - Tenants are created only via the `public.create_tenant(name, slug)` RPC, which atomically inserts the tenant and the caller's `owner` membership. There is deliberately no INSERT policy/grant on `tenants`.
 - Table auto-exposure is off, so a new table is invisible to the API until you add explicit `grant ... to authenticated` statements (and `revoke execute ... from public, anon` / `grant execute ... to authenticated` for new RPCs), mirroring the end of that migration.
