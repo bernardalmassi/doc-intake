@@ -55,10 +55,10 @@ Uploads are **row first**. Never send file bytes through a Server Action (1 MB b
 - **Delete is admin only** for both the object and the row, file first: a `before delete` trigger refuses a row while its object exists (`55000`). Because no file can exist without a row, every file is reachable through a row an admin can delete, so `delete_tenant` is never blocked by an orphan.
 - **Documents belong to the tenant.** `uploaded_by` is nullable with `on delete set null`; deleting the uploader's account leaves the row.
 - **Bucket:** 10 MB, `application/pdf`, `image/png`, `image/jpeg`. This checks the declared `Content-Type` only; the extraction unit must verify magic bytes before anything reaches a model.
-- **Download** is a signed URL created on click with a 60 second expiry, never rendered into the page. Don't assert deletion through the authenticated download endpoint: Supabase's CDN can serve a deleted object to the same session for a short while. Use the object index (list, signed URL) instead.
+- **Download** is a signed URL created on click with a 60 second expiry, never rendered into the page. Don't assert deletion through the authenticated download endpoint: Supabase's CDN serves a deleted object to the same session for a while, and an already-fetched signed URL for the rest of its lifetime. Use the object index (list, minting a signed URL) instead.
 - A row in `'uploading'` whose upload never finishes just stays there. Nothing sweeps them yet.
 
 ## Auth and tests
 
-- The dashboard sets the **minimum password length to 15**; Supabase also caps passwords at 72 characters. Test passwords are 40 characters. The sign-up form enforces both client-side and shows Supabase's `weak_password` reasons.
+- The intended **minimum password length is 15**, but as of 2026-09-17 Supabase accepted a 14 character sign-up, so the dashboard setting isn't in effect; the suite has a test for it. Supabase caps passwords at 72 characters. Test passwords are 40 characters. The sign-up form enforces both client-side and shows Supabase's `weak_password` reasons.
 - `tests/tenant-isolation.test.ts` signs up **three users once per run** (A, B, D) and reuses them, to stay under Supabase Auth's sign-up rate limit. Tests within the file are order-dependent (B is promoted and later removed; D deletes their own account). Cleanup in `afterAll` removes files, then tenants, then accounts, and fails the run if anything is left. Only PDF blobs are uploaded because of the bucket's MIME list.
