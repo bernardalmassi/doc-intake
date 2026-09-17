@@ -390,6 +390,34 @@ describe("membership role escalation", () => {
     expect(owner.data?.role).toBe("owner");
   });
 
+  it("the last owner cannot remove or demote themselves", async () => {
+    // A is tenant A's only owner. Self-demotion is refused by the update
+    // policy (zero rows); self-removal passes the delete policy and is
+    // refused by the memberships_keep_an_owner trigger.
+    const demote = await a().client
+      .from("memberships")
+      .update({ role: "admin" })
+      .eq("tenant_id", tenantA)
+      .eq("user_id", a().id)
+      .select("id");
+    expect(demote.data ?? []).toEqual([]);
+
+    const remove = await a().client
+      .from("memberships")
+      .delete()
+      .eq("tenant_id", tenantA)
+      .eq("user_id", a().id)
+      .select("id");
+    expect(remove.data).toBeNull();
+    expect(remove.error?.code).toBe("23514");
+
+    const own = await a().client
+      .from("memberships")
+      .select("user_id, role")
+      .eq("tenant_id", tenantA);
+    expect(own.data).toEqual([{ user_id: a().id, role: "owner" }]);
+  });
+
   it("an admin cannot grant the owner role by inserting a membership", async () => {
     // B is an admin of C and already has a row there. Postgres checks the RLS
     // with-check clause before unique indexes, so a 42501 here means the

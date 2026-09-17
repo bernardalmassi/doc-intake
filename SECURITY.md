@@ -1,6 +1,6 @@
 # Security model
 
-This document describes how doc-intake keeps tenants apart, why the database is set up the way it is, what has been tested and what hasn't. It reflects the schema as of migration `20260917000005` and the checks run when that migration was applied. Anything described as "verified" below was checked against the linked Supabase project at that time; anything not marked that way is design intent, not a tested guarantee.
+This document describes how doc-intake keeps tenants apart, why the database is set up the way it is, what has been tested and what hasn't. It reflects the schema as of migration `20260917000007` and the checks run when that migration was applied. Anything described as "verified" below was checked against the linked Supabase project at that time; anything not marked that way is design intent, not a tested guarantee.
 
 No vulnerability disclosure process exists yet.
 
@@ -26,7 +26,8 @@ The authoritative enforcement point is therefore the database, not the Next.js a
 | Layer | What it does | Is it a security boundary? |
 |---|---|---|
 | Postgres RLS policies on `tenants`, `memberships`, `documents` | Decide which rows a user can see or change | **Yes** |
-| Table and column grants (API auto-exposure is off) | Decide which tables and columns the Data API can read or write | **Yes**, with leftover default privileges noted under [Grants](#grants) |
+| Table and column grants (API auto-exposure is off) | Decide which tables and columns the Data API can read or write | **Yes** |
+| `memberships_keep_an_owner` trigger | Stops any change that would leave a tenant with no owner, from any role or path | **Yes**, as an invariant guard |
 | RLS policies on `storage.objects` for the `documents` bucket | Decide which files a user can read or write | **Yes** |
 | Check constraint on `documents.storage_path` | Keeps a document row pointing into its own tenant's folder | Yes, as a data integrity guard |
 | `requireUser()` in pages and Server Actions (`src/lib/auth.ts`) | Redirects unauthenticated users; verifies the JWT with `getClaims()` | Authentication only. The app never filters by tenant for security; `/app` queries `tenants` with no filter and relies on RLS |
@@ -99,7 +100,7 @@ These are RPCs the app or test calls. Each performs its own authorization check,
 | `public.delete_tenant(tenant_id)` | Caller must be an owner; refuses while files exist under the tenant's storage prefix | No user has delete rights on `tenants` |
 | `public.delete_own_account()` | Caller must be signed in and must not own any tenant | Deleting from `auth.users` needs owner privileges |
 
-As of `000005` the security advisor reports four warnings: 0029 for each of these three functions, which is expected and accepted, and **leaked password protection disabled** (see [Auth configuration](#auth-configuration)).
+As of `000007` the security advisor reports four warnings: 0029 for each of these three functions, which is expected and accepted, and **leaked password protection disabled** (see [Auth configuration](#auth-configuration)).
 
 Two other functions in `public` keep the default `PUBLIC` execute grant:
 
@@ -147,16 +148,22 @@ API auto-exposure is off for this project, so `select`, `insert`, `update` and `
 | `memberships` | `select`, `insert`, `delete`, `update (role)` |
 | `documents` | `select`, `insert`, `delete`, `update (filename, status)` |
 
-`anon` has none of those four privileges on any table (verified from the table ACLs).
+`anon` has no privileges of any kind on these tables, and `authenticated` holds only the privileges in the table above (verified from the table ACLs after `000007`).
 
-**Leftover default privileges.** Supabase's default privileges still give `anon`, `authenticated` and `service_role` `TRUNCATE`, `REFERENCES`, `TRIGGER` and `MAINTAIN` on all three tables (verified: `anon=Dxtm`). Turning off auto-expose didn't remove these, and no migration revokes them.
+**Leftover default privileges (revoked in `000006`).** Turning off auto-expose removed `select`/`insert`/`update`/`delete` from Supabase's default privileges but left `TRUNCATE`, `REFERENCES`, `TRIGGER` and `MAINTAIN` for `anon`, `authenticated` and `service_role` on every table. PostgREST can't issue those statements, so nothing could reach them, but `TRUNCATE` ignores RLS and `MAINTAIN` includes `LOCK TABLE`. They would have become reachable if anything ever let these roles run arbitrary SQL.
 
-PostgREST can't issue any of those statements, and no function in this repo runs dynamic SQL, so no path reaches them today. It's still a defense-in-depth gap:
+Migration `000006`:
 
-- `TRUNCATE` is not subject to RLS.
-- `MAINTAIN` includes `LOCK TABLE`.
+- revokes all four from `anon` and `authenticated` on `tenants`, `memberships` and `documents`
+- changes `postgres`'s default privileges for new tables in `public` so future tables don't get them. Migrations run as `postgres`, and before this change every new table picked them up again.
 
-If anything ever lets these roles run arbitrary SQL (an invoker function with dynamic SQL, a new API surface), they become reachable. A migration revoking them from `anon` and `authenticated` would close it; that hasn't been done.
+Verified after applying: `postgres`'s default table privileges in `public` now grant nothing to `anon` or `authenticated`.
+
+What `000006` doesn't cover:
+
+- **`service_role` keeps the four privileges.** It already bypasses RLS and isn't used by the app or tests.
+- **Supabase's `supabase_admin` default privileges are unchanged.** A migration can't alter them. They still grant everything to `anon` and `authenticated`, but only for tables that `supabase_admin` creates, not for tables created by these migrations.
+- **Other schemas are untouched,** such as the `postgres` default privileges in `storage`.
 
 **Why updates are column-scoped.** RLS `WITH CHECK` validates the row after an update, but it validates it against the policy, not against the row's previous values. With a whole-table update grant:
 
@@ -217,6 +224,33 @@ Any `admin` could update any membership row in their tenant, including their own
 - owner-to-owner operations
 - admins managing other admins, which is allowed by design
 
+### Last-owner guard (migration `000007`)
+
+`000004` stopped anyone from changing their own role, but a tenant could still end up with no owner:
+
+- a sole owner could delete their own membership, which passes the delete policy
+- two owners could remove or demote each other in concurrent transactions
+- a non-API path could do the same: the dashboard, `service_role`, or deleting a user in `auth.users`, which cascades to their memberships
+
+Policies can't prevent this. They evaluate one row at a time and can't see what concurrent transactions are doing.
+
+`000007` adds a `before update or delete` trigger on `memberships`, `memberships_keep_an_owner`, backed by `private.enforce_tenant_has_owner()`. It is `SECURITY DEFINER` with an empty `search_path`, and `EXECUTE` is revoked from everyone but `postgres`.
+
+1. It ignores any change that doesn't take an `owner` row out of its tenant.
+2. For one that does, it locks the tenant row with `select ... for update`. Owner changes in the same tenant therefore run one at a time, and under `READ COMMITTED` each check sees removals already committed by the transaction that held the lock first.
+3. If the tenant row no longer exists, the tenant is being deleted by `delete_tenant`'s cascade and the change is allowed.
+4. Otherwise, if no other owner row remains, it raises `23514` "a tenant must keep at least one owner".
+
+The trigger applies to every role, `service_role` and `postgres` included. **Deleting a user who is the sole owner of a tenant now fails, including from the Supabase dashboard.** Transfer ownership or delete the tenant first. `delete_own_account` already refused this case with its own error.
+
+**Test coverage.** One test (below) checks that a sole owner can't demote themselves (refused by the update policy, zero rows) or delete their own membership (refused by the trigger with `23514`). The allowed cascade is exercised on every run, because cleanup's `delete_tenant` calls remove tenants whose only owner row goes with them.
+
+**Not tested:**
+
+- the concurrent case: two owners removing each other at the same moment. The locking argument above has been reasoned through, not exercised.
+- an owner leaving when another owner remains, which should be allowed
+- the trigger blocking a dashboard or `service_role` user deletion
+
 ## Isolation test
 
 `tests/tenant-isolation.test.ts` (Vitest, `npm test`) runs against a real Supabase project using only the publishable key and real signed-in sessions.
@@ -227,7 +261,7 @@ Any `admin` could update any membership row in their tenant, including their own
 - A uploads a file to `<tenantA>/` and inserts a matching `documents` row.
 - A adds B to tenant C as a `member`.
 
-**Assertions (14 tests):**
+**Assertions (15 tests):**
 
 - **Rows.**
   - B's select on tenant A, its memberships and its documents returns nothing.
@@ -240,7 +274,7 @@ Any `admin` could update any membership row in their tenant, including their own
   - B can't list, download or create a signed URL.
   - B can't upload a new file.
   - B can't overwrite A's file (upload with `upsert`), move it into tenant B, or delete it.
-- **Roles.** The five tests listed in the previous section.
+- **Roles.** The five tests listed under the escalation fix, plus the last-owner test under [Last-owner guard](#last-owner-guard-migration-000007).
 
 Every "cannot" assertion is paired with a control that reads the data back as A and checks it is unchanged. The test can't pass just because setup silently failed or the data was never there. Storage deletes by an unauthorized user return success with nothing removed, so the control read is the real assertion there.
 
@@ -252,7 +286,7 @@ Every "cannot" assertion is paired with a control that reads the data back as A 
 
 It collects every cleanup error and fails the run if any step didn't succeed.
 
-**Last result.** 14 of 14 passed on two consecutive runs after migrations `000004` and `000005` were applied. After each run a SQL query confirmed none of these remained: test users in `auth.users`, test tenants, test memberships, test documents, or objects in the `documents` bucket.
+**Last result.** 15 of 15 passed after migrations `000006` and `000007` were applied. The 14 tests that predate the last-owner test had also passed on two consecutive runs after `000004` and `000005`. After each run a SQL query confirmed none of these remained: test users in `auth.users`, test tenants, test memberships, test documents, or objects in the `documents` bucket.
 
 ### How to run it
 
@@ -265,7 +299,7 @@ See the README section "Tenant isolation test" for details.
 
 ### What the test does not prove
 
-- **Unauthenticated access.** No test uses the `anon` role against tables, RPCs or storage. The protection there rests on `anon` lacking `select`/`insert`/`update`/`delete` grants (it does still hold `TRUNCATE`, `REFERENCES`, `TRIGGER` and `MAINTAIN`, see [Grants](#grants)), all policies being `to authenticated`, and `EXECUTE` revoked from `anon` on the definer functions. That has been read, not tested.
+- **Unauthenticated access.** No test uses the `anon` role against tables, RPCs or storage. The protection there rests on `anon` holding no privileges on the tables (verified from the ACLs), all policies being `to authenticated`, and `EXECUTE` revoked from `anon` on the definer functions. That has been read, not tested.
 - **Anything outside the listed operations.** Specifically untested:
   - a plain member updating their own tenant
   - a member deleting memberships
@@ -298,10 +332,8 @@ Auth settings live in the Supabase dashboard, not in this repo. `supabase/config
 
 These are flaws or sharp edges in what exists today, as distinct from the unbuilt features in the next section.
 
-- **Tenants can become ownerless.** An owner can delete their own owner membership, and owners can remove each other. Nothing prevents removing the last owner. After that, no one can grant `owner`, call `delete_tenant`, or modify owner-level settings.
 - **Deletion is hard and irreversible.** `delete_tenant` cascades to memberships and documents immediately, with no soft delete or grace period. `delete_own_account` deletes the `auth.users` row. Recovery depends on whatever backups the Supabase plan provides. Both functions were added so the test could clean up without the service role, and they are now live features.
 - **Slug collisions reveal that a slug exists.** `create_tenant` returns a unique violation for a slug already taken by any tenant, including ones the caller can't see.
-- **Default `TRUNCATE`/`REFERENCES`/`TRIGGER`/`MAINTAIN` grants remain on `anon` and `authenticated`.** They aren't reachable through PostgREST today; see [Grants](#grants).
 - **Members see other members' user ids.** Every member of a tenant can list all memberships in it, including other users' `user_id`s. Emails are not exposed, since `auth.users` isn't readable.
 
 ## Deliberately not yet implemented
