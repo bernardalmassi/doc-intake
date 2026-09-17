@@ -20,6 +20,24 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Tenant isolation test
+
+`tests/tenant-isolation.test.ts` checks that row-level security keeps tenants apart. It signs up two throwaway users, gives each their own tenant, and asserts that user B can't read or write tenant A's rows or storage files, and can't escalate their membership role. It uses only the publishable key and real signed-in sessions, never the service role.
+
+It runs against a real Supabase project, so:
+
+1. The project needs every migration in `supabase/migrations/` applied (`npx supabase db push`). Cleanup uses `delete_tenant` and `delete_own_account` from `20260917000005_self_service_deletion.sql`.
+2. Email confirmation must be off (Authentication → Sign In / Providers → Email → Confirm email), since the test needs a session straight from sign-up.
+3. Copy `.env.test.example` to `.env.test` and fill in the project URL and publishable key.
+
+Then run:
+
+```bash
+npm test
+```
+
+The test deletes the users, tenants, rows and files it created, and fails if any cleanup step doesn't succeed. Sign-ups count toward the project's auth rate limits, so running it many times in a row may be throttled.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
