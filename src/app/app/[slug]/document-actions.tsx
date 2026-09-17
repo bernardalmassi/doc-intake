@@ -2,7 +2,8 @@
 
 import { useActionState, useState } from "react";
 import { deleteDocument } from "@/app/app/actions";
-import { dangerButtonClass, errorClass, secondaryButtonClass } from "@/app/ui";
+import { extractDocument } from "@/app/app/extract-action";
+import { buttonClass, dangerButtonClass, errorClass, secondaryButtonClass } from "@/app/ui";
 import { createClient } from "@/lib/supabase/client";
 
 type Props = {
@@ -10,13 +11,25 @@ type Props = {
   slug: string;
   filename: string;
   storagePath: string;
+  status: string;
   uploaded: boolean;
   canDelete: boolean;
+  canExtract: boolean;
 };
 
-export function DocumentActions({ id, slug, filename, storagePath, uploaded, canDelete }: Props) {
+export function DocumentActions({
+  id,
+  slug,
+  filename,
+  storagePath,
+  status,
+  uploaded,
+  canDelete,
+  canExtract,
+}: Props) {
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [deleteState, deleteAction, deleting] = useActionState(deleteDocument, {});
+  const [extractState, extractAction, extracting] = useActionState(extractDocument, {});
 
   // The signed URL is minted on click and used at once, so it never sits in
   // the page's HTML. It is a bearer token valid for 60 seconds.
@@ -35,6 +48,10 @@ export function DocumentActions({ id, slug, filename, storagePath, uploaded, can
     window.location.assign(data.signedUrl);
   }
 
+  const processing = status === "processing";
+  const message = downloadError ?? deleteState.error ?? extractState.error ?? extractState.message;
+  const isError = Boolean(downloadError ?? deleteState.error ?? extractState.error);
+
   return (
     <div className="flex flex-wrap items-center gap-2">
       <button
@@ -46,6 +63,20 @@ export function DocumentActions({ id, slug, filename, storagePath, uploaded, can
       >
         Download
       </button>
+      {canExtract && (
+        <form action={extractAction}>
+          <input type="hidden" name="id" value={id} />
+          <input type="hidden" name="slug" value={slug} />
+          <button
+            type="submit"
+            disabled={!uploaded || extracting || processing}
+            title={processing ? "An extraction is running" : undefined}
+            className={buttonClass}
+          >
+            {extracting || processing ? "Extracting…" : "Extract"}
+          </button>
+        </form>
+      )}
       {canDelete && (
         <form action={deleteAction}>
           <input type="hidden" name="id" value={id} />
@@ -55,9 +86,9 @@ export function DocumentActions({ id, slug, filename, storagePath, uploaded, can
           </button>
         </form>
       )}
-      {(downloadError || deleteState.error) && (
-        <span role="alert" className={errorClass}>
-          {downloadError ?? deleteState.error}
+      {message && (
+        <span role={isError ? "alert" : "status"} className={isError ? errorClass : "text-sm text-neutral-400"}>
+          {message}
         </span>
       )}
     </div>
