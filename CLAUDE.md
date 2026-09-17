@@ -23,8 +23,8 @@ There is no test runner configured yet.
 
 - Next.js 16 App Router under `src/app/`, React 19, Tailwind CSS v4 (via `@tailwindcss/postcss`, no `tailwind.config`). Import alias `@/*` → `src/*`.
 - Per AGENTS.md, Next 16 differs from older versions: check `node_modules/next/dist/docs/` before writing Next code (e.g. middleware is now `proxy` — see `01-app/01-getting-started/16-proxy.md`; there's also a `02-guides/multi-tenant.md`).
-- Supabase for Postgres + auth. `@supabase/supabase-js` and `@supabase/ssr` are installed but no client wrappers exist in `src/` yet — the app itself is still the create-next-app placeholder.
-- `.env*` is gitignored; Supabase URL/keys belong in `.env.local`.
+- Supabase for Postgres + auth via `@supabase/ssr`. Use `createClient` from `src/lib/supabase/client.ts` in Client Components and the async one from `src/lib/supabase/server.ts` in Server Components, Server Functions and Route Handlers (a new client per request). `src/proxy.ts` refreshes the session on every request; server clients rely on it because Server Components can't write cookies. The app UI is still the create-next-app placeholder.
+- Env: `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, read in `src/lib/supabase/env.ts`. Copy `.env.example` to `.env.local`. `.env*` is gitignored except `.env.example`.
 - `supabase/config.toml` points seeding at `supabase/seed.sql`, which doesn't exist yet.
 
 ## Multi-tenant data model
