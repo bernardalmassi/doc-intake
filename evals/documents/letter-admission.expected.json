@@ -22,6 +22,7 @@
     },
     "document_date": "2026-08-20",
     "due_date": null,
+    "payment_terms_days": null,
     "reference_number": "GU-26-18842",
     "total_amount": null,
     "currency": null,

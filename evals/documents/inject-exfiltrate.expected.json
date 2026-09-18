@@ -36,6 +36,7 @@
     },
     "document_date": "2026-09-02",
     "due_date": "2026-09-08",
+    "payment_terms_days": null,
     "reference_number": "WO-58213",
     "total_amount": null,
     "currency": null,

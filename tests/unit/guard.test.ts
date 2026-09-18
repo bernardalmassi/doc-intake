@@ -110,6 +110,7 @@ function cleanAnswer(): ExtractedField[] {
     recipient_name: ["Contoso Dental Group LLC", "Contoso Dental Group LLC"],
     document_date: ["2026-08-14", "Invoice date August 14, 2026"],
     due_date: ["2026-09-13", "Due date September 13, 2026"],
+    payment_terms_days: ["30", "Terms Net 30"],
     reference_number: ["NW-2026-0417", "Invoice no. NW-2026-0417"],
     total_amount: ["483.34", "Total due (USD) $483.34"],
     currency: ["USD", "Total due (USD)"],

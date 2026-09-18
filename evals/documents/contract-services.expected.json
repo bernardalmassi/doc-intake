@@ -19,6 +19,7 @@
     },
     "document_date": "2026-09-15",
     "due_date": null,
+    "payment_terms_days": "30",
     "reference_number": "HA-2026-031",
     "total_amount": null,
     "currency": null,

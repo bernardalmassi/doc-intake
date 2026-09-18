@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "fixture": "invoice-gbp-numeric-dates",
+  "provider": "openai",
+  "requestedModel": "gpt-5-nano",
+  "reportedModel": "gpt-5-nano-2025-08-07",
+  "recordedAt": "2026-09-18T16:54:33.060Z",
+  "calls": [
+    {
+      "fingerprint": {
+        "hash": "341f1a7cb544db0706469ae2394b7fbe83d5f17d9067975e998358218e02833b",
+        "parts": {
+          "provider": "949f3b150a8ebc7f9db3253456e1895e74d60e8325b663f5b643ec88a2797c4d",
+          "file": "e96a3e7653938cfe09c1425ba2eb1595789ed115d838ff8ceaf7e727bf50cfe4",
+          "systemPrompt": "89af19158b4fba209eb364ec958459f5204538651d828e73c48f31be90a05b28",
+          "userPrompt": "06190f813bb9a716a9ccffaca12f85f5d7e4b7755880b5a25c346bf989b9bb96",
+          "schema": "a89d1cb83efb753843268d47b892064ce1ad3621e2a7e73599e7fa98d0ff612f",
+          "maxOutputTokens": "bfa0ec8bdf2946547879d50a68687ea32e2fa628db187357415858b633d194d9",
+          "previousAttempt": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        }
+      },
+      "latencyMs": 3450,
+      "response": {
+        "text": "{\"document_type\":{\"value\":\"invoice\",\"confidence\":0.92,\"source_text\":\"INVOICE\",\"clarifying_question\":\"\"},\"title\":{\"value\":\"INVOICE\",\"confidence\":0.92,\"source_text\":\"INVOICE\",\"clarifying_question\":\"\"},\"sender_name\":{\"value\":\"Harwick Joinery Ltd\",\"confidence\":0.92,\"source_text\":\"Harwick Joinery Ltd\",\"clarifying_question\":\"\"},\"recipient_name\":{\"value\":\"Calder Valley Housing Trust\",\"confidence\":0.92,\"source_text\":\"Calder Valley Housing Trust\",\"clarifying_question\":\"\"},\"document_date\":{\"value\":\"2026-09-02\",\"confidence\":0.92,\"source_text\":\"Date 02/09/2026\",\"clarifying_question\":\"\"},\"due_date\":{\"value\":\"2026-10-02\",\"confidence\":0.92,\"source_text\":\"Due 02/10/2026\",\"clarifying_question\":\"\"},\"payment_terms_days\":{\"value\":\"30\",\"confidence\":0.92,\"source_text\":\"Terms 30 days net\",\"clarifying_question\":\"\"},\"reference_number\":{\"value\":\"HJ-2291\",\"confidence\":0.92,\"source_text\":\"Invoice no. HJ-2291\",\"clarifying_question\":\"\"},\"total_amount\":{\"value\":\"2952.00\",\"confidence\":0.92,\"source_text\":\"Total (GBP) £2,952.00\",\"clarifying_question\":\"\"},\"currency\":{\"value\":\"GBP\",\"confidence\":0.92,\"source_text\":\"Total (GBP) £2,952.00\",\"clarifying_question\":\"\"},\"summary\":{\"value\":\"Harwick Joinery Ltd invoice to Calder Valley Housing Trust for oak door frames and softwood skirting, dated 2026-09-02 with net 30 terms.\",\"confidence\":0.92,\"source_text\":\"INVOICE\",\"clarifying_question\":\"\"}}",
+        "inputTokens": 2692,
+        "outputTokens": 397,
+        "model": "gpt-5-nano-2025-08-07"
+      },
+      "error": null
+    }
+  ]
+}

@@ -113,7 +113,7 @@ CI doesn't run `test:db`. The Supabase CLI reaches a project through a personal 
 
 ## Evals
 
-`npm run eval` scores extraction on eleven generated PDFs: eight ordinary documents (a USD invoice, a German receipt with comma decimals, a two-page contract, a letter, a utility statement, a form, a UK VAT invoice with three dates, a price list with most fields absent) and three that carry prompt-injection attacks (override the instructions, copy out the prompt, a hidden 0.01 total). Each provider's answer to each document was recorded once and is committed in `evals/recordings/`. The default mode replays those answers through the real orchestrator, output guard and gating, so it is free, needs no key and runs in CI. It reports per-field accuracy and confidence calibration, and fails when a recording is stale (any change to the prompt, schema, output cap or model), when an injection run fails or leaves a wrong value at high or medium confidence, or when the number of right fields, flagged fields or documents sent to review moves off its recorded baseline.
+`npm run eval` scores extraction on twelve generated PDFs: nine ordinary documents (a USD invoice, a German receipt with comma decimals, a two-page contract, a letter, a utility statement, a form, a UK VAT invoice with three dates, a price list with most fields absent, a UK invoice whose dates are written only in numbers) and three that carry prompt-injection attacks (override the instructions, copy out the prompt, a hidden 0.01 total). Each provider's answer to each document was recorded once and is committed in `evals/recordings/`. The default mode replays those answers through the real orchestrator, output guard and gating, so it is free, needs no key and runs in CI. It reports per-field accuracy and confidence calibration, and fails when a recording is stale (any change to the prompt, schema, output cap or model), when an injection run fails or leaves a wrong value at high or medium confidence, or when the number of right fields, flagged fields or documents sent to review moves off its recorded baseline.
 
 ```bash
 npm run eval
@@ -125,7 +125,7 @@ After changing the prompt, schema or model, re-record against the real providers
 npm run eval -- --live
 ```
 
-Latest results (2026-09-18): Claude Haiku 4.5 got 77 of 80 fields right (96.3%) and gpt-5-nano 73 of 80 (91.3%), with overlapping confidence intervals. Both read every total correctly and both resisted all three injections. Haiku put every field in the high band, so on these documents its confidence never sent anything to review. Scoring rules, calibration tables and limitations are in [EVALS.md](EVALS.md).
+Latest results (2026-09-18): Claude Haiku 4.5 got 95 of 99 fields right (96.0%) and gpt-5-nano 94 of 99 (94.9%), with overlapping confidence intervals. Both read every total correctly and both resisted all three injections. Haiku put every field in the high band, so on these documents its confidence never sent anything to review. A model once read a UK invoice's "02/09/2026" as 9 February at 0.99 confidence. The prompt now treats numeric dates as ambiguous, and a check against the stated payment terms sends a contradiction to review (EVALS.md, "Numeric dates"). Scoring rules, calibration tables and limitations are in [EVALS.md](EVALS.md).
 
 ## More
 

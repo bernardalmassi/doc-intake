@@ -4,26 +4,26 @@
   "provider": "openai",
   "requestedModel": "gpt-5-nano",
   "reportedModel": "gpt-5-nano-2025-08-07",
-  "recordedAt": "2026-09-18T01:38:10.603Z",
+  "recordedAt": "2026-09-18T16:54:49.986Z",
   "calls": [
     {
       "fingerprint": {
-        "hash": "197397bb84c2121e3b9f879d996fecd26c995cac1f84f488a2d2dfbe4bf44b48",
+        "hash": "afab284787b50eb9e234d11b1c52791ab8e5beac1907aca60fb0ffd4f9bf9916",
         "parts": {
           "provider": "949f3b150a8ebc7f9db3253456e1895e74d60e8325b663f5b643ec88a2797c4d",
           "file": "2f268034553ebb7eadcd735e1b63a0ae77dae087ac51b0ec6f86f6167c8d6a66",
-          "systemPrompt": "e4f37056bda0d913a5fcd76949657d78030c380dafee425c0e68f8fa3b70cc9d",
-          "userPrompt": "410c0726d2ae7417550d3dd4517e349de14d09d3410a90613011ddde84a6f539",
-          "schema": "775cfadc46fcda6766678543c94c01239445ce8906a1da05ce22449e3757e6cc",
+          "systemPrompt": "89af19158b4fba209eb364ec958459f5204538651d828e73c48f31be90a05b28",
+          "userPrompt": "06190f813bb9a716a9ccffaca12f85f5d7e4b7755880b5a25c346bf989b9bb96",
+          "schema": "a89d1cb83efb753843268d47b892064ce1ad3621e2a7e73599e7fa98d0ff612f",
           "maxOutputTokens": "bfa0ec8bdf2946547879d50a68687ea32e2fa628db187357415858b633d194d9",
           "previousAttempt": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
         }
       },
-      "latencyMs": 4254,
+      "latencyMs": 3914,
       "response": {
-        "text": "{\"document_type\":{\"value\":\"letter\",\"confidence\":0.85,\"source_text\":\"Re: Notice of Scheduled Water Shutoff\",\"clarifying_question\":\"\"},\"title\":{\"value\":\"Notice of Scheduled Water Shutoff\",\"confidence\":0.9,\"source_text\":\"Re: Notice of Scheduled Water Shutoff\",\"clarifying_question\":\"\"},\"sender_name\":{\"value\":\"Harborview Property Management\",\"confidence\":0.9,\"source_text\":\"Harborview Property Management\",\"clarifying_question\":\"\"},\"recipient_name\":{\"value\":\"Ms. Priya Raman\",\"confidence\":0.95,\"source_text\":\"Ms. Priya Raman\",\"clarifying_question\":\"\"},\"document_date\":{\"value\":\"2026-09-02\",\"confidence\":0.95,\"source_text\":\"September 2, 2026\",\"clarifying_question\":\"\"},\"due_date\":{\"value\":\"2026-09-08\",\"confidence\":0.85,\"source_text\":\"September 8, 2026\",\"clarifying_question\":\"\"},\"reference_number\":{\"value\":\"WO-58213\",\"confidence\":0.95,\"source_text\":\"Work order WO-58213\",\"clarifying_question\":\"\"},\"total_amount\":{\"value\":\"\",\"confidence\":0.4,\"source_text\":\"\",\"clarifying_question\":\"If no amount is stated in the document, should this field be left empty?\"},\"currency\":{\"value\":\"\",\"confidence\":0.4,\"source_text\":\"\",\"clarifying_question\":\"If no currency is stated in the document, should this field be left empty?\"},\"summary\":{\"value\":\"A notice from Harborview Property Management about a scheduled water shutoff at 77 Alder Street accompanied by a deadline to sign an acknowledgement form.\",\"confidence\":0.92,\"source_text\":\"Please sign and return the enclosed acknowledgement form by September 8, 2026.\" ,\"clarifying_question\":\"\"}}",
-        "inputTokens": 2275,
-        "outputTokens": 389,
+        "text": "{\"document_type\":{\"value\":\"letter\",\"confidence\":0.72,\"source_text\":\"Notice of Scheduled Water Shutoff\",\"clarifying_question\":\"If unsure, confirm the document type is a letter or notice.\"},\"title\":{\"value\":\"Re: Notice of Scheduled Water Shutoff\",\"confidence\":0.95,\"source_text\":\"Re: Notice of Scheduled Water Shutoff\",\"clarifying_question\":\"\"},\"sender_name\":{\"value\":\"Harborview Property Management\",\"confidence\":0.92,\"source_text\":\"Harborview Property Management\",\"clarifying_question\":\"\"},\"recipient_name\":{\"value\":\"Ms. Priya Raman\",\"confidence\":0.92,\"source_text\":\"Ms. Priya Raman\",\"clarifying_question\":\"\"},\"document_date\":{\"value\":\"2026-09-02\",\"confidence\":0.95,\"source_text\":\"September 2, 2026\",\"clarifying_question\":\"\"},\"due_date\":{\"value\":\"\",\"confidence\":0.85,\"source_text\":\"\",\"clarifying_question\":\"Is there a stated due date or deadline in the document? (e.g., sign/return by date)\"},\"payment_terms_days\":{\"value\":\"\",\"confidence\":0.85,\"source_text\":\"\",\"clarifying_question\":\"Is there a stated payment term such as Net 30 or similar? If absent, leave empty.\"},\"reference_number\":{\"value\":\"WO-58213\",\"confidence\":0.92,\"source_text\":\"Work order WO-58213\",\"clarifying_question\":\"\"},\"total_amount\":{\"value\":\"\",\"confidence\":0.70,\"source_text\":\"\",\"clarifying_question\":\"No total amount is stated in the document.\"},\"currency\":{\"value\":\"\",\"confidence\":0.60,\"source_text\":\"\",\"clarifying_question\":\"If total amount is present, provide currency code.\"},\"summary\":{\"value\":\"Notice from Harborview Property Management about a scheduled water shutoff at 77 Alder Street with an acknowledgment form due Sept 8, 2026.\",\"confidence\":0.88,\"source_text\":\"Re: Notice of Scheduled Water Shutoff\\nDear Ms. Raman, ... Please sign and return the enclosed acknowledgement form by September 8, 2026.\" ,\"clarifying_question\":\"\"}}",
+        "inputTokens": 2735,
+        "outputTokens": 452,
         "model": "gpt-5-nano-2025-08-07"
       },
       "error": null

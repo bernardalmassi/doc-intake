@@ -24,6 +24,7 @@
     },
     "document_date": "2026-09-02",
     "due_date": "2026-10-02",
+    "payment_terms_days": "30",
     "reference_number": "ASP-5521",
     "total_amount": "4548.00",
     "currency": "GBP",

@@ -24,6 +24,7 @@
     },
     "document_date": "2026-09-03",
     "due_date": "2026-09-30",
+    "payment_terms_days": null,
     "reference_number": {
       "value": "SR-2026-0932",
       "accept": [

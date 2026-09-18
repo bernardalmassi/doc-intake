@@ -4,26 +4,26 @@
   "provider": "openai",
   "requestedModel": "gpt-5-nano",
   "reportedModel": "gpt-5-nano-2025-08-07",
-  "recordedAt": "2026-09-18T01:49:22.134Z",
+  "recordedAt": "2026-09-18T16:54:24.680Z",
   "calls": [
     {
       "fingerprint": {
-        "hash": "83ff512afec34a361d67ff789f6a058e564857ae7a204b63d8dc0ac0782809de",
+        "hash": "775477a18b2e23264bdabfc38ae0c4dde15c30afd1567566ca79325d259db1a5",
         "parts": {
           "provider": "949f3b150a8ebc7f9db3253456e1895e74d60e8325b663f5b643ec88a2797c4d",
           "file": "cc9d4f15d8a8e38dbd2601b4145bda28f98916e158ed6a19f499b504ec6af936",
-          "systemPrompt": "e4f37056bda0d913a5fcd76949657d78030c380dafee425c0e68f8fa3b70cc9d",
-          "userPrompt": "410c0726d2ae7417550d3dd4517e349de14d09d3410a90613011ddde84a6f539",
-          "schema": "775cfadc46fcda6766678543c94c01239445ce8906a1da05ce22449e3757e6cc",
+          "systemPrompt": "89af19158b4fba209eb364ec958459f5204538651d828e73c48f31be90a05b28",
+          "userPrompt": "06190f813bb9a716a9ccffaca12f85f5d7e4b7755880b5a25c346bf989b9bb96",
+          "schema": "a89d1cb83efb753843268d47b892064ce1ad3621e2a7e73599e7fa98d0ff612f",
           "maxOutputTokens": "bfa0ec8bdf2946547879d50a68687ea32e2fa628db187357415858b633d194d9",
           "previousAttempt": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
         }
       },
-      "latencyMs": 4156,
+      "latencyMs": 3798,
       "response": {
-        "text": "{\"document_type\":{\"value\":\"invoice\",\"confidence\":0.60,\"source_text\":\"Wholesale Price List\",\"clarifying_question\":\"Is this document a price list or an invoice?\"},\"title\":{\"value\":\"\",\"confidence\":0.40,\"source_text\":\"\",\"clarifying_question\":\"Does the document have a title beyond the header?\"},\"sender_name\":{\"value\":\"Hillside Bakery Co-op\",\"confidence\":0.92,\"source_text\":\"Hillside Bakery Co-op\",\"clarifying_question\":\"\"},\"recipient_name\":{\"value\":\"\",\"confidence\":0.40,\"source_text\":\"\",\"clarifying_question\":\"Who is the intended recipient of this document?\"},\"document_date\":{\"value\":\"\",\"confidence\":0.40,\"source_text\":\"\",\"clarifying_question\":\"What is the issue date of this document, if any?\"},\"due_date\":{\"value\":\"\",\"confidence\":0.40,\"source_text\":\"\",\"clarifying_question\":\"Is there a payment or response due date mentioned?\"},\"reference_number\":{\"value\":\"\",\"confidence\":0.40,\"source_text\":\"\",\"clarifying_question\":\"Is there an invoice or order reference number on the document?\"},\"total_amount\":{\"value\":\"\",\"confidence\":0.40,\"source_text\":\"\",\"clarifying_question\":\"What is the final total amount if present?\"},\"currency\":{\"value\":\"\",\"confidence\":0.40,\"source_text\":\"\",\"clarifying_question\":\"What is the currency code for the total, if stated?\"},\"summary\":{\"value\":\"Wholesale price list for bakery items with delivery terms and minimum order.\",\"confidence\":0.70,\"source_text\":\"Wholesale Price List\\nPrices per unit shown, before delivery. Prices may change without notice.\\nProduct Unit Price\\n... Orders placed by 2 p.m. are baked overnight and delivered the next morning, Tuesday to Saturday.\\nMinimum order three cases. Delivery is free within 15 miles.\",\"clarifying_question\":\"\"}}",
-        "inputTokens": 2180,
-        "outputTokens": 388,
+        "text": "{\"document_type\":{\"value\":\"invoice\",\"confidence\":0.60,\"source_text\":\"Wholesale Price List\",\"clarifying_question\":\"\"},\"title\":{\"value\":\"Wholesale Price List\",\"confidence\":0.92,\"source_text\":\"Wholesale Price List\",\"clarifying_question\":\"\"},\"sender_name\":{\"value\":\"Hillside Bakery Co-op\",\"confidence\":0.95,\"source_text\":\"Hillside Bakery Co-op\",\"clarifying_question\":\"\"},\"recipient_name\":{\"value\":\"\",\"confidence\":0.40,\"source_text\":\"\",\"clarifying_question\":\"To whom is this document addressed?\"},\"document_date\":{\"value\":\"\",\"confidence\":0.40,\"source_text\":\"\",\"clarifying_question\":\"Document date not clearly stated on the page.\"},\"due_date\":{\"value\":\"\",\"confidence\":0.40,\"source_text\":\"\",\"clarifying_question\":\"Is there a due date on this document?\"},\"payment_terms_days\":{\"value\":\"\",\"confidence\":0.40,\"source_text\":\"\",\"clarifying_question\":\"What are the payment terms in days?\"},\"reference_number\":{\"value\":\"\",\"confidence\":0.40,\"source_text\":\"\",\"clarifying_question\":\"Is there any reference/invoice/order number on the document?\"},\"total_amount\":{\"value\":\"\",\"confidence\":0.40,\"source_text\":\"\",\"clarifying_question\":\"What is the total amount due?\"},\"currency\":{\"value\":\"\",\"confidence\":0.40,\"source_text\":\"\",\"clarifying_question\":\"What currency is used for the total amount?\"},\"summary\":{\"value\":\"Wholesale price list from Hillside Bakery Co-op detailing unit prices and delivery terms.\",\"confidence\":0.80,\"source_text\":\"Wholesale Price List\\nPrices per unit shown, before delivery. Prices may change without notice.\\nProduct Unit Price\\nSourdough loaf, 800 g case of 6 $27.00\\nSeeded rye, 750 g case of 6 $25.50\\nButter croissant tray of 24 $38.40\\nCinnamon roll tray of 12 $21.60\\nBaguette case of 10 $22.00\\nFocaccia, rosemary sheet (12 portions) $19.80\\nOrders placed by 2 p.m. are baked overnight and delivered the next morning, Tuesday to Saturday.\\nMinimum order three cases. Delivery is free within 15 miles.\" ,\"clarifying_question\":\"\"}}",
+        "inputTokens": 2640,
+        "outputTokens": 482,
         "model": "gpt-5-nano-2025-08-07"
       },
       "error": null

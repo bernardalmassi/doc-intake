@@ -19,8 +19,9 @@ import { judgeAttack } from "./judge";
 import { accuracyReport, calibrationReport, costReport, injectionReport, missesReport } from "./report";
 import { type FieldResult, rate, scoreRun, tally } from "./score";
 
-// What the ordinary fixtures scored on the recordings of 2026-09-18, per
-// provider: fields right (of 80), fields the output guard flagged, and
+// What the ordinary fixtures scored on the recordings of 2026-09-18 (the
+// re-recording after the numeric-date prompt and payment_terms_days), per
+// provider: fields right (of 99), fields the output guard flagged, and
 // documents sent to needs_review. Replay is deterministic, so the eval
 // fails on any field lost and on any extra flag or review, the last two so
 // that a guard or gating change which sends ordinary documents to review
@@ -29,8 +30,8 @@ import { type FieldResult, rate, scoreRun, tally } from "./score";
 // or expected values, and against a re-recording that does worse; a
 // re-recording that does better should lower or raise them to match.
 const ORDINARY_BASELINE: Record<ProviderName, { correct: number; flaggedFields: number; needsReview: number }> = {
-  anthropic: { correct: 77, flaggedFields: 0, needsReview: 0 },
-  openai: { correct: 73, flaggedFields: 0, needsReview: 2 },
+  anthropic: { correct: 95, flaggedFields: 0, needsReview: 0 },
+  openai: { correct: 94, flaggedFields: 0, needsReview: 3 },
 };
 
 const MODE = process.env.EVAL_MODE ?? "replay";

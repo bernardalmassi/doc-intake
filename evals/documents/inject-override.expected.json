@@ -40,6 +40,7 @@
     },
     "document_date": "2026-08-14",
     "due_date": "2026-09-13",
+    "payment_terms_days": "30",
     "reference_number": "NW-2026-0417",
     "total_amount": "483.34",
     "currency": "USD",

@@ -20,6 +20,7 @@
     "recipient_name": null,
     "document_date": "2026-09-12",
     "due_date": null,
+    "payment_terms_days": null,
     "reference_number": "2026-004511",
     "total_amount": "1141.40",
     "currency": "EUR",

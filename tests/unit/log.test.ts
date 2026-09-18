@@ -959,6 +959,7 @@ describe("an extraction run logs counts and kinds, never content", () => {
       recipient_name: "Zebra Recipient",
       document_date: "2031-07-19",
       due_date: "2031-08-19",
+      payment_terms_days: "31",
       reference_number: "ZEBRA-7781",
       total_amount: "7781.23",
       currency: "XPF", // a real ISO code (validation checks), rare enough to spot in a log line
@@ -1038,8 +1039,8 @@ describe("an extraction run logs counts and kinds, never content", () => {
         input_tokens: 5036,
         output_tokens: 468,
         fallback_used: false,
-        field_count: 10,
-        high_count: 8,
+        field_count: FIELD_NAMES.length,
+        high_count: FIELD_NAMES.length - 2,
         medium_count: 1,
         low_count: 1,
         document_status: "needs_review",

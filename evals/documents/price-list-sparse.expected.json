@@ -9,6 +9,7 @@
     "recipient_name": null,
     "document_date": null,
     "due_date": null,
+    "payment_terms_days": null,
     "reference_number": null,
     "total_amount": null,
     "currency": null,

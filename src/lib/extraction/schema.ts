@@ -10,10 +10,10 @@
 // empty strings into null.
 
 import { type ConfidenceBand, CONFIDENCE_THRESHOLDS, confidenceBand } from "./config";
-import { containsContactInQuestion, createOutputGuard, flagField, type GuardFlag } from "./guard";
+import { containsContactInQuestion, createOutputGuard, FLAGGED_CONFIDENCE_CAP, flagField, type GuardFlag } from "./guard";
 import { canonicalize, cleanModelText, sliceWellFormed } from "./text";
 
-export type FieldKind = "text" | "date" | "amount" | "currency" | "enum";
+export type FieldKind = "text" | "date" | "days" | "amount" | "currency" | "enum";
 
 export type FieldDefinition = {
   name: string;
@@ -61,6 +61,13 @@ export const FIELDS: readonly FieldDefinition[] = [
     kind: "date",
   },
   { name: "due_date", label: "Due date", description: "Any payment or response deadline, as YYYY-MM-DD.", kind: "date" },
+  {
+    name: "payment_terms_days",
+    label: "Payment terms (days)",
+    description:
+      "The number of days in payment terms the document states, such as 30 for \"Net 30\" or \"30 days net\", as a whole number; empty if it states none.",
+    kind: "days",
+  },
   {
     name: "reference_number",
     label: "Reference number",
@@ -159,7 +166,13 @@ export const SYSTEM_PROMPT = [
   "- confidence: a number from 0 to 1 for how sure you are that value is correct and complete (for an absent value, how sure you are the field is absent).",
   "- source_text: the exact text in the document the value was read from, or an empty string if value is absent.",
   `- clarifying_question: if confidence is below ${HIGH}, one short question a human reviewer could answer to confirm the value; otherwise an empty string.`,
-  "Formats: dates as YYYY-MM-DD; amounts as plain decimal numbers with a dot and no currency symbol or thousands separators; currency as a three-letter ISO 4217 code.",
+  "Formats: dates as YYYY-MM-DD; amounts as plain decimal numbers with a dot and no currency symbol or thousands separators; currency as a three-letter ISO 4217 code; payment terms as a whole number of days.",
+  "",
+  "Dates written only in numbers:",
+  "- A numeric date such as 02/09/2026 or 2.9.26 is ambiguous: day first it is 2 September, month first it is 9 February. Never assume either order, and never let the format feel familiar decide it.",
+  "- Decide the order from evidence in the document: a date on it that only reads one way (a first number above 12), a written-out month elsewhere, stated payment terms (the due date is usually the document date plus the terms, and only one reading makes the days add up), the country of the addresses, postcodes and phone numbers, a VAT or tax number (GB, DE, FR and most countries write the day first; the US writes the month first), the currency and the spelling.",
+  "- For every numeric date, source_text must quote the date and then the evidence that decided its order, for example \"Date 02/09/2026; Terms 30 days net; VAT Reg. No. GB 402 7719 36\".",
+  `- If the evidence does not settle the order, or points both ways, give the date a confidence below ${MEDIUM} and ask which reading is meant.`,
 ].join("\n");
 
 // Fixed text, identical for every document. It takes no arguments on
@@ -200,6 +213,9 @@ const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 // the database's numeric handling.
 const AMOUNT_PATTERN = /^-?\d{1,15}(\.\d{1,4})?$/;
 const CURRENCY_PATTERN = /^[A-Z]{3}$/;
+// payment terms: a whole number of days, at most ten years
+const DAYS_PATTERN = /^\d{1,4}$/;
+const MAX_TERMS_DAYS = 3650;
 // The ISO 4217 codes the runtime's ICU data lists as currencies in use
 // (Intl.supportedValuesOf): it excludes the placeholder codes XXX and XTS
 // and the precious metals. 162 codes on Node 26.
@@ -231,6 +247,10 @@ function checkValueFormat(field: FieldDefinition, value: string): string | null 
       return CURRENCY_PATTERN.test(value) && CURRENCY_CODES.has(value)
         ? null
         : `${field.name}.value must be a three-letter ISO 4217 currency code`;
+    case "days":
+      return DAYS_PATTERN.test(value) && Number(value) <= MAX_TERMS_DAYS
+        ? null
+        : `${field.name}.value must be a whole number of days from 0 to ${MAX_TERMS_DAYS}`;
     case "enum":
       return field.values?.includes(value) ? null : `${field.name}.value must be one of ${field.values?.join(", ")}`;
     case "text":
@@ -401,6 +421,50 @@ export function gateFields(fields: ExtractedField[]): GatedExtraction {
     if (flags.length > 0) return flagField(field, flags, labelOf(field.name));
     return { ...field, band, clarifying_question: question, flags: [] };
   });
-  const anyLow = gated.some((f) => f.band === "low");
-  return { fields: gated, documentStatus: anyLow ? "needs_review" : "extracted" };
+  const checked = checkDatesAgainstTerms(gated);
+  const anyLow = checked.some((f) => f.band === "low");
+  return { fields: checked, documentStatus: anyLow ? "needs_review" : "extracted" };
+}
+
+// A numeric date is ambiguous (02/09/2026 is 2 September day first, 9
+// February month first), and a model can read one the wrong way round at
+// 0.99 confidence. When the document states payment terms in days, the due
+// date should be the document date plus those days. If it isn't, a date is
+// misread (or the terms count from something else, such as delivery), so
+// both dates drop to the low band with a fixed question and the document
+// goes to review. The question is built from validated numbers only, never
+// from the model's text. A date the guard already flagged keeps the
+// guard's question; it is low already.
+export const TERMS_MISMATCH_CONFIDENCE_CAP = FLAGGED_CONFIDENCE_CAP;
+
+function checkDatesAgainstTerms(fields: GatedField[]): GatedField[] {
+  const valueOf = (name: string) => fields.find((f) => f.name === name)?.value ?? null;
+  const issued = valueOf("document_date");
+  const due = valueOf("due_date");
+  const terms = valueOf("payment_terms_days");
+  if (issued === null || due === null || terms === null) return fields;
+  const days = daysBetween(issued, due);
+  if (days === Number(terms)) return fields;
+  const question =
+    `The payment terms are ${plural(Number(terms), "day")}, but the due date is ` +
+    (days < 0 ? `${plural(-days, "day")} before the document date. ` : `${plural(days, "day")} after the document date. `) +
+    "Check both dates against the document: a date written in numbers may have been read with the day and month swapped.";
+  return fields.map((field) => {
+    if ((field.name !== "document_date" && field.name !== "due_date") || field.flags.length > 0) return field;
+    const confidence = Math.min(field.confidence, TERMS_MISMATCH_CONFIDENCE_CAP);
+    return { ...field, confidence, band: confidenceBand(confidence), clarifying_question: question };
+  });
+}
+
+function plural(count: number, unit: string): string {
+  return `${count} ${unit}${count === 1 ? "" : "s"}`;
+}
+
+// whole days from one validated YYYY-MM-DD date to another
+function daysBetween(from: string, to: string): number {
+  const utc = (date: string) => {
+    const [y, m, d] = date.split("-").map(Number);
+    return Date.UTC(y, m - 1, d);
+  };
+  return Math.round((utc(to) - utc(from)) / 86_400_000);
 }

@@ -14,6 +14,7 @@
     "recipient_name": "Maple Court Homeowners Association",
     "document_date": "2026-07-31",
     "due_date": "2026-08-30",
+    "payment_terms_days": "30",
     "reference_number": "INV-20417",
     "total_amount": "2145.00",
     "currency": "USD",

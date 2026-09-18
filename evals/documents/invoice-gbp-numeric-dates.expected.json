@@ -1,0 +1,23 @@
+{
+  "fixture": "invoice-gbp-numeric-dates",
+  "kind": "ordinary",
+  "description": "A UK invoice with numeric day-first dates (Date 02/09/2026, Due 02/10/2026), terms of 30 days net, GB VAT and GBP.",
+  "expected": {
+    "document_type": "invoice",
+    "title": "Invoice",
+    "sender_name": {
+      "value": "Harwick Joinery Ltd",
+      "accept": [
+        "Harwick Joinery"
+      ]
+    },
+    "recipient_name": "Calder Valley Housing Trust",
+    "document_date": "2026-09-02",
+    "due_date": "2026-10-02",
+    "payment_terms_days": "30",
+    "reference_number": "HJ-2291",
+    "total_amount": "2952.00",
+    "currency": "GBP",
+    "summary": "An invoice from Harwick Joinery to Calder Valley Housing Trust for fitted oak door frames and skirting board."
+  }
+}

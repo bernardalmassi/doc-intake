@@ -1,4 +1,4 @@
-// Eight ordinary business documents with known true values, for scoring
+// Nine ordinary business documents with known true values, for scoring
 // per-field accuracy and confidence calibration. Chosen to cover the shapes
 // and traps the extractor meets:
 //
@@ -17,6 +17,12 @@
 //                            date and a delivery date that is neither
 //   price-list-sparse        a price list: prices but no total, no date, no
 //                            recipient, no reference; most fields absent
+//   invoice-gbp-numeric-dates  a UK invoice whose dates are numbers only,
+//                            day first: "Date 02/09/2026" is 2 September.
+//                            The GB VAT number, GBP and "Terms 30 days net"
+//                            (02/09 to 02/10 is 30 days only day first) are
+//                            the evidence. Added after a model read it as
+//                            2026-02-09 and 2026-02-10 at 0.99 confidence
 
 import { GREY, LIGHT, MARGIN, RIGHT, flow, labelled, letterhead, rule, stack, text } from "../layout";
 import type { PdfItem } from "../pdf";
@@ -59,6 +65,7 @@ const invoiceUsd: Fixture = {
     recipient_name: "Maple Court Homeowners Association",
     document_date: "2026-07-31",
     due_date: "2026-08-30",
+    payment_terms_days: "30",
     reference_number: "INV-20417",
     total_amount: "2145.00",
     currency: "USD",
@@ -117,6 +124,7 @@ const receiptEur: Fixture = {
     recipient_name: null,
     document_date: "2026-09-12",
     due_date: null,
+    payment_terms_days: null,
     reference_number: "2026-004511",
     total_amount: "1141.40",
     currency: "EUR",
@@ -199,6 +207,7 @@ const contractServices: Fixture = {
     recipient_name: { value: "Brightwater Foods Inc.", accept: ["Brightwater Foods"] },
     document_date: "2026-09-15",
     due_date: null,
+    payment_terms_days: "30",
     reference_number: "HA-2026-031",
     total_amount: null,
     currency: null,
@@ -246,6 +255,7 @@ const letterAdmission: Fixture = {
     recipient_name: { value: "Amara Okonkwo", accept: ["Ms. Amara Okonkwo"] },
     document_date: "2026-08-20",
     due_date: null,
+    payment_terms_days: null,
     reference_number: "GU-26-18842",
     total_amount: null,
     currency: null,
@@ -316,6 +326,7 @@ const statementUtility: Fixture = {
     recipient_name: "Jordan Ellis",
     document_date: "2026-09-05",
     due_date: "2026-09-25",
+    payment_terms_days: null,
     reference_number: "4402-118-2093",
     total_amount: "142.87",
     currency: "USD",
@@ -378,6 +389,7 @@ const formSupplier: Fixture = {
     },
     document_date: "2026-09-03",
     due_date: "2026-09-30",
+    payment_terms_days: null,
     reference_number: { value: "SR-2026-0932", accept: ["PRC-7"] },
     total_amount: null,
     currency: null,
@@ -422,10 +434,56 @@ const invoiceVatGbp: Fixture = {
     recipient_name: { value: "Meridian Events Ltd", accept: ["Meridian Events"] },
     document_date: "2026-09-02",
     due_date: "2026-10-02",
+    payment_terms_days: "30",
     reference_number: "ASP-5521",
     total_amount: "4548.00",
     currency: "GBP",
     summary: "A tax invoice from Ashdown Print Studio to Meridian Events for banners, programmes and design work.",
+  },
+};
+
+const invoiceGbpNumericDates: Fixture = {
+  id: "invoice-gbp-numeric-dates",
+  kind: "ordinary",
+  description:
+    "A UK invoice with numeric day-first dates (Date 02/09/2026, Due 02/10/2026), terms of 30 days net, GB VAT and GBP.",
+  pages: [
+    invoicePage({
+      seller: "Harwick Joinery Ltd",
+      sellerLines: ["Unit 4, Mill Lane Industrial Estate, Hebden Bridge HX7 8AP", "VAT Reg. No. GB 402 7719 36"],
+      title: "INVOICE",
+      meta: [
+        ["Invoice no.", "HJ-2291"],
+        ["Date", "02/09/2026"],
+        ["Due", "02/10/2026"],
+        ["Terms", "30 days net"],
+      ],
+      billTo: ["Calder Valley Housing Trust", "Maintenance Office", "8 Station Road", "Todmorden OL14 5AB"],
+      items: [
+        { description: "Oak door frames, supplied and fitted", quantity: 6, unitPrice: 285 },
+        { description: "Softwood skirting board, per metre", quantity: 150, unitPrice: 5 },
+      ],
+      totals: [
+        ["Subtotal", "£2,460.00"],
+        ["VAT at 20%", "£492.00"],
+        ["Total (GBP)", "£2,952.00", true],
+      ],
+      notes: ["Payment by BACS to sort code 40-11-62, account 7715 0293. Please quote the invoice number."],
+      footer: ["Harwick Joinery Ltd, registered in England and Wales no. 11820475."],
+    }),
+  ],
+  expected: {
+    document_type: "invoice",
+    title: "Invoice",
+    sender_name: { value: "Harwick Joinery Ltd", accept: ["Harwick Joinery"] },
+    recipient_name: "Calder Valley Housing Trust",
+    document_date: "2026-09-02",
+    due_date: "2026-10-02",
+    payment_terms_days: "30",
+    reference_number: "HJ-2291",
+    total_amount: "2952.00",
+    currency: "GBP",
+    summary: "An invoice from Harwick Joinery to Calder Valley Housing Trust for fitted oak door frames and skirting board.",
   },
 };
 
@@ -478,6 +536,7 @@ const priceListSparse: Fixture = {
     recipient_name: null,
     document_date: null,
     due_date: null,
+    payment_terms_days: null,
     reference_number: null,
     total_amount: null,
     currency: null,
@@ -494,4 +553,5 @@ export const ORDINARY_FIXTURES: readonly Fixture[] = [
   formSupplier,
   invoiceVatGbp,
   priceListSparse,
+  invoiceGbpNumericDates,
 ];
