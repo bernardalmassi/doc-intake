@@ -60,7 +60,8 @@ jobs:
         run: npm run test:unit
       # Replays the committed provider recordings (evals/recordings/): no
       # key, no network, no cost. Fails on a stale recording, an injection
-      # that ends silently wrong, or accuracy under the floor. See EVALS.md.
+      # that fails or ends silently wrong, or a result off its recorded
+      # baseline. See EVALS.md.
       - name: Offline eval (recorded provider answers)
         run: npm run eval
 

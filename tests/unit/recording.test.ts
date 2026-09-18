@@ -10,12 +10,14 @@ import {
   type ExtractionRequest,
   ProviderError,
   type ProviderResponse,
+  type ProviderUsage,
 } from "@/lib/extraction/providers/types";
 import { runExtraction } from "@/lib/extraction/run";
 import { buildJsonSchema, FIELD_NAMES, SYSTEM_PROMPT, userPrompt } from "@/lib/extraction/schema";
 import {
   BudgetExceededError,
   CallBudget,
+  endedAbnormally,
   fingerprintRequest,
   parseRecording,
   recordingProvider,
@@ -58,7 +60,7 @@ function budget(maxCalls = 10, maxUsd = 0.5) {
   return new CallBudget(maxCalls, maxUsd, (model) => computeCostUsd(model, 20_000, MAX_OUTPUT_TOKENS));
 }
 
-const cost = (r: ProviderResponse) => computeCostUsd(r.model, r.inputTokens, r.outputTokens);
+const cost = (u: ProviderUsage) => computeCostUsd(u.model, u.inputTokens, u.outputTokens);
 
 async function record(answers: (string | ProviderError)[], bytes = pdf) {
   const recorder = recordingProvider(fake(answers), budget(), cost, () => 0);
@@ -169,6 +171,17 @@ describe("record and replay", () => {
     expect(() => replayedLong.provider.assertComplete()).toThrow(/made 1 calls but 2 were recorded/);
   });
 
+  it("a run that ended on a timeout, 5xx, refusal or truncation is due for re-recording", async () => {
+    const good = await record([answer()]);
+    expect(endedAbnormally(good.recording)).toBe(false);
+    for (const kind of ["transport", "server", "refusal", "truncated"] as const) {
+      const bad = await record([new ProviderError("anthropic", kind, "x")]);
+      expect(endedAbnormally(bad.recording), kind).toBe(true);
+    }
+    // a 4xx is the request's fault and would fail the same way again
+    expect(endedAbnormally((await record([new ProviderError("anthropic", "client", "bad", 400)])).recording)).toBe(false);
+  });
+
   it("a malformed recording is refused", () => {
     expect(() => parseRecording("{}", "x")).toThrow(StaleRecordingError);
     expect(() => parseRecording(JSON.stringify({ version: 1, calls: [{ fingerprint: { hash: "h" }, response: null, error: null }] }), "x")).toThrow(
@@ -206,6 +219,44 @@ describe("the live budget", () => {
     // 2 x worst spent, a third worst-case call would pass 2.5 x worst
     expect(() => tight.reserve("claude-haiku-4-5-20251001")).toThrow(/cost cap/);
     expect(tight.calls).toBe(2);
+  });
+
+  it("fails closed when the served model can't be priced: the pass aborts, nothing is free", async () => {
+    // the provider answers, but reports a model the price table doesn't know
+    const inner: ExtractionProvider = {
+      name: "anthropic",
+      model: "claude-haiku-4-5-20251001",
+      async extract() {
+        return { text: answer(), inputTokens: 5000, outputTokens: 400, model: "claude-unpriced-9" };
+      },
+    };
+    const b = budget();
+    const recorder = recordingProvider(inner, b, cost);
+    const outcome = await runExtraction({ bytes: pdf, mimeType: "application/pdf", filename: "x.pdf", primary: recorder, fallback: null });
+    // runExtraction reports it as a failed run; the live runner checks the
+    // budget after every run and stops on this
+    expect(outcome.status).toBe("failed");
+    expect(b.exceeded).toBeInstanceOf(BudgetExceededError);
+    expect(b.exceeded?.message).toMatch(/cannot price claude-unpriced-9/);
+    expect(recorder.calls).toHaveLength(0);
+    expect(() => b.reserve("claude-haiku-4-5-20251001")).toThrow(BudgetExceededError);
+  });
+
+  it("fails closed when the requested model can't be priced before the call", async () => {
+    const inner = fake([answer()]);
+    const b = budget();
+    await expect(
+      recordingProvider({ ...inner, model: "no-such-model", extract: inner.extract }, b, cost).extract({
+        bytes: pdf,
+        mimeType: "application/pdf",
+        systemPrompt: "s",
+        userPrompt: "u",
+        schema: {},
+        maxOutputTokens: 10,
+      }),
+    ).rejects.toThrow(/cannot estimate the cost of a call to no-such-model/);
+    expect(inner.requests).toHaveLength(0);
+    expect(b.exceeded).toBeInstanceOf(BudgetExceededError);
   });
 
   it("marks the budget exceeded when a real call costs more than the cap", () => {

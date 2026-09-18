@@ -17,7 +17,7 @@
 // markers, repeats the extraction instructions, or (for a question) carries
 // a link, email or phone number.
 
-import { containsContactDetails } from "@/lib/extraction/guard";
+import { containsContactInQuestion } from "@/lib/extraction/guard";
 import type { ProviderName } from "@/lib/extraction/config";
 import type { RunOutcome } from "@/lib/extraction/run";
 import { type ExtractedField, type GatedField, OUTPUT_GUARD, validateExtraction } from "@/lib/extraction/schema";
@@ -61,7 +61,7 @@ function carriesAttack(field: ExtractedField, markers: readonly string[]): boole
   if (texts.some((t) => OUTPUT_GUARD.isEcho(t))) return true;
   if (field.value !== null && markers.some((m) => field.value!.toLowerCase().includes(m.toLowerCase()))) return true;
   if (field.clarifying_question !== null) {
-    if (containsContactDetails(field.clarifying_question)) return true;
+    if (containsContactInQuestion(field.clarifying_question)) return true;
     if (markers.some((m) => field.clarifying_question!.toLowerCase().includes(m.toLowerCase()))) return true;
   }
   return false;

@@ -29,10 +29,12 @@
 // name, the model's answer or an error message.
 
 import { log, type Logger, type LogFields } from "../log";
+import { redact } from "../redact";
 import { MAX_OUTPUT_TOKENS, MAX_VALIDATION_RETRIES, type ProviderName } from "./config";
 import { describeError, ProviderError, type ExtractionProvider, type ExtractionRequest } from "./providers/types";
 import { buildJsonSchema, gateFields, retryPrompt, SYSTEM_PROMPT, userPrompt, validateExtraction, type GatedField } from "./schema";
 import type { SupportedMimeType } from "./sniff";
+import { databaseText } from "./text";
 
 export type RunInput = {
   bytes: Uint8Array;
@@ -254,30 +256,54 @@ function logFinished(logger: Logger, outcome: RunOutcome, fallbackUsed: boolean,
   }
 }
 
+// The checks on extraction_runs and extracted_fields
+// (supabase/migrations/20260918000001). A close that breaks one, or that
+// sends a U+0000 or an unpaired surrogate (Postgres refuses both in text and
+// jsonb), is refused whole: the run stays running, unmetered, until the
+// reaper fails it with no cost.
+const CLOSE_TEXT_LIMITS = { error: 2000, rawResponse: 100_000, value: 4000, sourceText: 4000, question: 1000 } as const;
+
+function closeText(text: string | null, max?: number): string | null {
+  return text === null ? null : databaseText(text, max);
+}
+
+function failureText(error: string): string {
+  const scrubbed = databaseText(redact(error));
+  return scrubbed.trim().length > 0 ? scrubbed : "unknown error";
+}
+
 // The arguments close_extraction_run takes for an outcome. Shared by the
-// Server Action and the tests so both close a run the same way.
+// Server Action and the tests so both close a run the same way. Validation
+// already cleaned what the model wrote; every string is made NUL-free, well
+// formed and within its column here again, whatever produced it (an error
+// message, a raw answer that failed validation), so the close can't be
+// refused over text.
 export function toCloseParams(runId: string, closeToken: string, outcome: RunOutcome) {
+  const limits = CLOSE_TEXT_LIMITS;
   return {
     p_run_id: runId,
     p_close_token: closeToken,
     p_status: outcome.status,
     p_provider: outcome.provider,
-    p_model: outcome.model,
+    p_model: closeText(outcome.model),
     p_input_tokens: outcome.inputTokens,
     p_output_tokens: outcome.outputTokens,
     p_latency_ms: outcome.latencyMs,
     p_attempts: outcome.attempts,
-    p_error: outcome.status === "failed" ? outcome.error : null,
-    p_raw_response: outcome.status === "failed" ? outcome.rawResponse : null,
+    // scrubbed here too, not only in describeError, because a caller can
+    // build an error from other text (the Server Action's download error);
+    // never blank, which the RPC refuses for a failed run (it trims)
+    p_error: outcome.status === "failed" ? closeText(failureText(outcome.error), limits.error) : null,
+    p_raw_response: outcome.status === "failed" ? closeText(outcome.rawResponse, limits.rawResponse) : null,
     p_fields:
       outcome.status === "succeeded"
         ? outcome.fields.map((f) => ({
             name: f.name,
-            value: f.value,
+            value: closeText(f.value, limits.value),
             confidence: f.confidence,
             band: f.band,
-            source_text: f.source_text,
-            clarifying_question: f.clarifying_question,
+            source_text: closeText(f.source_text, limits.sourceText),
+            clarifying_question: closeText(f.clarifying_question, limits.question),
           }))
         : null,
   };

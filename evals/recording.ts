@@ -219,7 +219,10 @@ export class BudgetExceededError extends Error {
 // The only guard on live spend: these calls go straight to the providers
 // and bypass the database's ceilings. Every call must reserve first; a
 // reservation fails once the call count is reached or once the spend so far
-// plus a worst-case call would pass the cap.
+// plus a worst-case call would pass the cap. It fails closed: a model it
+// can't price (before or after the call) aborts the pass instead of
+// counting as free. Once exceeded is set, every later reservation fails and
+// the live runner stops.
 export class CallBudget {
   calls = 0;
   spentUsd = 0;
@@ -232,8 +235,20 @@ export class CallBudget {
     private readonly worstCaseUsd: (model: string) => number,
   ) {}
 
+  // Records why the pass must stop and returns the error to throw.
+  abort(reason: string): BudgetExceededError {
+    this.exceeded ??= new BudgetExceededError(reason);
+    return this.exceeded;
+  }
+
   reserve(model: string): void {
-    const worst = this.worstCaseUsd(model);
+    if (this.exceeded) throw this.exceeded;
+    let worst: number;
+    try {
+      worst = this.worstCaseUsd(model);
+    } catch (error) {
+      throw this.abort(`cannot estimate the cost of a call to ${model}: ${error instanceof Error ? error.message : String(error)}`);
+    }
     if (this.calls >= this.maxCalls) {
       this.exceeded = new BudgetExceededError(`call cap reached: ${this.calls} of ${this.maxCalls} calls made`);
     } else if (this.spentUsd + worst > this.maxUsd) {
@@ -255,15 +270,29 @@ export class CallBudget {
 
 export type RecordingProvider = ExtractionProvider & { readonly calls: RecordedCall[] };
 
-// Wraps a real provider: reserves budget, forwards the request, and keeps
-// the answer or the classified error with the request's fingerprint.
+// Wraps a real provider: reserves budget, forwards the request, charges
+// what the provider reports it billed, and keeps the answer or the
+// classified error with the request's fingerprint. Charging happens outside
+// the provider's try, so a pricing failure can't be mistaken for a provider
+// error and recorded at zero cost; it aborts the pass.
 export function recordingProvider(
   inner: ExtractionProvider,
   budget: CallBudget,
-  costOf: (response: ProviderResponse) => number,
+  costOf: (usage: ProviderUsage) => number,
   now: () => number = Date.now,
 ): RecordingProvider {
   const calls: RecordedCall[] = [];
+
+  function charge(usage: ProviderUsage): void {
+    let usd: number;
+    try {
+      usd = costOf(usage);
+    } catch (error) {
+      throw budget.abort(`cannot price ${usage.model}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    budget.spend(usd);
+  }
+
   return {
     name: inner.name,
     model: inner.model,
@@ -272,23 +301,34 @@ export function recordingProvider(
       const fingerprint = fingerprintRequest(inner.name, inner.model, request);
       budget.reserve(inner.model);
       const started = now();
+      let response: ProviderResponse;
       try {
-        const response = await inner.extract(request);
-        budget.spend(costOf(response));
-        calls.push({ fingerprint, latencyMs: now() - started, response: { ...response }, error: null });
-        return response;
+        response = await inner.extract(request);
       } catch (error) {
         const classified: RecordedError =
           error instanceof ProviderError
             ? { kind: error.kind, status: error.status ?? null, message: error.message, usage: error.usage ?? null }
             : { kind: "client", status: null, message: error instanceof Error ? error.message : String(error), usage: null };
-        // an unusable answer is billed like any other
-        if (classified.usage) budget.spend(costOf({ text: "", ...classified.usage }));
         calls.push({ fingerprint, latencyMs: now() - started, response: null, error: classified });
+        // an unusable answer is billed like any other
+        if (classified.usage) charge(classified.usage);
         throw error;
       }
+      const latencyMs = now() - started;
+      charge(response);
+      calls.push({ fingerprint, latencyMs, response: { ...response }, error: null });
+      return response;
     },
   };
+}
+
+// A recording whose run ended on a timeout, a 5xx, a refusal or a
+// truncated answer says more about that moment than about the model; the
+// live recorder treats it as stale so it is recorded again.
+const TRANSIENT_ENDINGS: readonly ProviderErrorKind[] = ["transport", "server", "refusal", "truncated"];
+
+export function endedAbnormally(recording: Recording): boolean {
+  return recording.calls.some((call) => call.error !== null && TRANSIENT_ENDINGS.includes(call.error.kind));
 }
 
 export function toRecording(

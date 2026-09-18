@@ -25,7 +25,7 @@ import type { ExtractionProvider } from "@/lib/extraction/providers/types";
 import { runExtraction } from "@/lib/extraction/run";
 import type { Fixture } from "./fixtures";
 import { committedPdf, PROVIDERS, recordingPath, replayFixture } from "./harness";
-import { CallBudget, recordingProvider, serializeRecording, StaleRecordingError, toRecording } from "./recording";
+import { CallBudget, endedAbnormally, recordingProvider, serializeRecording, StaleRecordingError, toRecording } from "./recording";
 
 export const LIVE_MAX_USD = 0.5;
 
@@ -38,10 +38,12 @@ const ABSOLUTE_MAX_CALLS = 60;
 
 export type LiveResult = { recorded: string[]; skipped: string[]; calls: number; spentUsd: number };
 
+// Fresh: replays cleanly and didn't end on a timeout, 5xx, refusal or
+// truncation (endedAbnormally), which are worth another try.
 async function isFresh(fixture: Fixture, provider: ProviderName): Promise<boolean> {
   try {
-    await replayFixture(fixture, provider);
-    return true;
+    const { recording } = await replayFixture(fixture, provider);
+    return !endedAbnormally(recording);
   } catch (error) {
     if (error instanceof StaleRecordingError) return false;
     throw error;
@@ -85,8 +87,8 @@ export async function recordLive(
 
   const recorded: string[] = [];
   for (const [fixture, provider] of todo) {
-    const recorder = recordingProvider(providers[provider], budget, (response) =>
-      computeCostUsd(response.model, response.inputTokens, response.outputTokens),
+    const recorder = recordingProvider(providers[provider], budget, (usage) =>
+      computeCostUsd(usage.model, usage.inputTokens, usage.outputTokens),
     );
     const recordedAt = new Date();
     const outcome = await runExtraction({

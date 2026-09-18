@@ -932,10 +932,11 @@ function runCode(error: string | null | undefined): ErrorCode {
   if (error.startsWith(RUN_ERROR_MARKERS.abandoned)) return "extraction.abandoned";
   if (error.startsWith(RUN_ERROR_MARKERS.downloadFailed)) return "extraction.download_failed";
   if (error.startsWith(RUN_ERROR_MARKERS.typeMismatch)) return "extraction.file_type_mismatch";
-  // The validation error quotes the model's answer (an unexpected field is
-  // named by its key), and a document can steer the model. So nothing past
-  // these prefixes is searched: text inside a document must not be able to
-  // pick the message.
+  // The validation error is built from the validator's own wording, but a
+  // stored error can come from anywhere (an admin can close a run with any
+  // text), and a document can steer the model. So nothing past these
+  // prefixes is searched: text inside a document must not be able to pick
+  // the message.
   if (error.startsWith(RUN_ERROR_MARKERS.invalidAfterRetry)) return "extraction.invalid_answer";
   if (error.startsWith(RUN_ERROR_MARKERS.retryFailed)) {
     // "retry after invalid response (<validation error>) failed: <provider

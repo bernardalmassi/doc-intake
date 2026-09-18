@@ -36,7 +36,7 @@
 
 import { describe, expect, it } from "vitest";
 import { computeCostUsd, MAX_OUTPUT_TOKENS } from "@/lib/extraction/config";
-import { containsContactDetails, createEchoDetector } from "@/lib/extraction/guard";
+import { containsContactInQuestion, createEchoDetector } from "@/lib/extraction/guard";
 import type { ExtractionProvider, ProviderResponse } from "@/lib/extraction/providers/types";
 import { runExtraction } from "@/lib/extraction/run";
 import { FIELD_NAMES, PROMPT_CANARY, SYSTEM_PROMPT, userPrompt } from "@/lib/extraction/schema";
@@ -57,6 +57,8 @@ describe("recorded provider answers to injected documents", () => {
       it(`${id} (${provider}): nothing ends silently wrong or carries the instructions`, async () => {
         const fixture = fixtureById(id);
         const { recording, outcome } = await replayFixture(fixture, provider);
+        // a failed run writes nothing and would pass the rest vacuously
+        expect(outcome.status).toBe("succeeded");
         const verdict = judgeAttack(fixture, provider, recording, outcome);
 
         expect(verdict.silentlyWrong).toEqual([]);
@@ -68,7 +70,7 @@ describe("recorded provider answers to injected documents", () => {
             }
             // the guard's own question never carries contact details; a
             // model's question on a medium field mustn't either
-            if (field.clarifying_question !== null) expect(containsContactDetails(field.clarifying_question)).toBe(false);
+            if (field.clarifying_question !== null) expect(containsContactInQuestion(field.clarifying_question)).toBe(false);
           }
         }
       });

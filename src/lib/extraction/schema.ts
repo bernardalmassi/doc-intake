@@ -10,7 +10,8 @@
 // empty strings into null.
 
 import { type ConfidenceBand, CONFIDENCE_THRESHOLDS, confidenceBand } from "./config";
-import { createOutputGuard, flagField, type GuardFlag } from "./guard";
+import { containsContactInQuestion, createOutputGuard, flagField, type GuardFlag } from "./guard";
+import { canonicalize, cleanModelText, sliceWellFormed } from "./text";
 
 export type FieldKind = "text" | "date" | "amount" | "currency" | "enum";
 
@@ -194,8 +195,18 @@ export type ValidationResult =
   | { ok: false; error: string };
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-const AMOUNT_PATTERN = /^-?\d+(\.\d+)?$/;
+// At most 15 integer and 4 fraction digits: larger than any real total, and
+// small enough that the number survives a round trip through a double and
+// the database's numeric handling.
+const AMOUNT_PATTERN = /^-?\d{1,15}(\.\d{1,4})?$/;
 const CURRENCY_PATTERN = /^[A-Z]{3}$/;
+// The ISO 4217 codes the runtime's ICU data lists as currencies in use
+// (Intl.supportedValuesOf): it excludes the placeholder codes XXX and XTS
+// and the precious metals. 162 codes on Node 26.
+const CURRENCY_CODES: ReadonlySet<string> = new Set(Intl.supportedValuesOf("currency"));
+
+// Every field object has exactly these keys; the schema requires all four.
+const FIELD_KEYS = ["value", "confidence", "source_text", "clarifying_question"] as const;
 
 function isValidDate(value: string): boolean {
   if (!DATE_PATTERN.test(value)) return false;
@@ -215,9 +226,11 @@ function checkValueFormat(field: FieldDefinition, value: string): string | null 
     case "amount":
       return AMOUNT_PATTERN.test(value)
         ? null
-        : `${field.name}.value must be a plain decimal number such as 1234.56`;
+        : `${field.name}.value must be a plain decimal number such as 1234.56, at most 15 digits before the point and 4 after`;
     case "currency":
-      return CURRENCY_PATTERN.test(value) ? null : `${field.name}.value must be a three-letter ISO 4217 code`;
+      return CURRENCY_PATTERN.test(value) && CURRENCY_CODES.has(value)
+        ? null
+        : `${field.name}.value must be a three-letter ISO 4217 currency code`;
     case "enum":
       return field.values?.includes(value) ? null : `${field.name}.value must be one of ${field.values?.join(", ")}`;
     case "text":
@@ -227,7 +240,10 @@ function checkValueFormat(field: FieldDefinition, value: string): string | null 
 
 // Parses and validates a model response. Everything a provider's
 // schema-constrained mode already guarantees is checked again here, because
-// the run's correctness must not depend on the provider honoring the schema.
+// the run's correctness must not depend on the provider honoring the schema:
+// exactly the ten fields, exactly four keys in each, types, formats, lengths.
+// Every string is cleaned first (text.ts: no control, bidi or unpaired
+// surrogate characters, which Postgres or a reviewer would trip on).
 // Empty strings (the schema's "absent") and nulls both become null.
 export function validateExtraction(text: string): ValidationResult {
   let parsed: unknown;
@@ -257,10 +273,18 @@ export function validateExtraction(text: string): ValidationResult {
       problems.push(`${field.name} is missing or not an object`);
       continue;
     }
+    const missing = FIELD_KEYS.filter((key) => !(key in entry));
+    if (missing.length > 0) problems.push(`${field.name} is missing ${missing.join(", ")}`);
+    // counted, not named, like unexpected fields
+    const extra = Object.keys(entry).filter((key) => !(FIELD_KEYS as readonly string[]).includes(key)).length;
+    if (extra > 0) {
+      problems.push(`${field.name} has ${extra} unexpected ${extra === 1 ? "key" : "keys"}; allowed: ${FIELD_KEYS.join(", ")}`);
+    }
+
     const { confidence } = entry;
-    const value = emptyToNull(entry.value);
-    const source_text = emptyToNull(entry.source_text);
-    const clarifying_question = emptyToNull(entry.clarifying_question);
+    const value = emptyToNull(cleaned(entry.value));
+    const source_text = emptyToNull(cleaned(entry.source_text));
+    const clarifying_question = emptyToNull(cleaned(entry.clarifying_question));
 
     if (value !== null && typeof value !== "string") {
       problems.push(`${field.name}.value must be a string`);
@@ -297,10 +321,15 @@ export function validateExtraction(text: string): ValidationResult {
   return { ok: true, fields };
 }
 
-// "" and whitespace-only mean absent, as do null and a missing key.
+function cleaned(value: unknown): unknown {
+  return typeof value === "string" ? cleanModelText(value) : value;
+}
+
+// "" means absent, as do null and a string of nothing but whitespace and
+// invisible characters (zero-width spaces, direction marks).
 function emptyToNull(value: unknown): unknown {
   if (value === undefined || value === null) return null;
-  if (typeof value === "string" && value.trim().length === 0) return null;
+  if (typeof value === "string" && canonicalize(value).trim().length === 0) return null;
   return value;
 }
 
@@ -308,7 +337,7 @@ function truncate(text: string | null, max: number): string | null {
   if (text === null) return null;
   const trimmed = text.trim();
   if (trimmed.length === 0) return null;
-  return trimmed.length > max ? trimmed.slice(0, max) : trimmed;
+  return sliceWellFormed(trimmed, max);
 }
 
 // Gating -------------------------------------------------------------------
@@ -342,29 +371,34 @@ export const OUTPUT_GUARD = createOutputGuard({
 const MAX_QUOTED_VALUE = 200;
 
 function quoted(value: string): string {
-  return value.length > MAX_QUOTED_VALUE ? `${value.slice(0, MAX_QUOTED_VALUE)}...` : value;
+  return value.length > MAX_QUOTED_VALUE ? `${sliceWellFormed(value, MAX_QUOTED_VALUE)}...` : value;
 }
 
 // First the output guard: a flagged field goes to the low band with the
 // guard's question (guard.ts). Then, for the rest, high: written as is.
 // medium: written with exactly one clarifying question (the model's, or a
-// templated one). low: the value is kept so a reviewer can see the model's
+// templated one quoting the value), unless that question carries a link,
+// email address, web address or phone number, in which case the field is
+// flagged instead: the medium band is the only one whose question a
+// reviewer sees. low: the value is kept so a reviewer can see the model's
 // reading, and the document goes to needs_review.
 export function gateFields(fields: ExtractedField[]): GatedExtraction {
   const findings = OUTPUT_GUARD.inspect(fields);
   const gated: GatedField[] = fields.map((field) => {
-    const flags = findings.get(field.name);
-    if (flags) return flagField(field, flags, labelOf(field.name));
-
+    const flags = [...(findings.get(field.name) ?? [])];
     const band = confidenceBand(field.confidence);
     let question: string | null = null;
-    if (band === "medium") {
+    if (flags.length === 0 && band === "medium") {
       question =
         field.clarifying_question ??
         (field.value === null
           ? `Is "${labelOf(field.name)}" really absent from this document?`
           : `Is "${labelOf(field.name)}" correctly read as "${quoted(field.value)}"?`);
+      if (containsContactInQuestion(question)) {
+        flags.push({ reason: "contact_in_question", part: field.clarifying_question === null ? "value" : "clarifying_question" });
+      }
     }
+    if (flags.length > 0) return flagField(field, flags, labelOf(field.name));
     return { ...field, band, clarifying_question: question, flags: [] };
   });
   const anyLow = gated.some((f) => f.band === "low");

@@ -953,7 +953,7 @@ describe("an extraction run logs counts and kinds, never content", () => {
       due_date: "2031-08-19",
       reference_number: "ZEBRA-7781",
       total_amount: "7781.23",
-      currency: "XZB",
+      currency: "XPF", // a real ISO code (validation checks), rare enough to spot in a log line
       summary: "A zebra canary invoice.",
     };
     const confidence: Record<string, number> = { sender_name: 0.7, recipient_name: 0.3 };
@@ -990,7 +990,7 @@ describe("an extraction run logs counts and kinds, never content", () => {
 
   function expectNoContent(): void {
     for (const line of lines) {
-      expect(line).not.toMatch(/zebra|canary|7781|2031-0|XZB/i);
+      expect(line).not.toMatch(/zebra|canary|7781|2031-0|XPF/i);
       expect(line).not.toContain(FILENAME);
     }
     expectNoLeak(lines, [ANTHROPIC_KEY]);
