@@ -13,9 +13,13 @@
 //     a real orchestrator run (fake providers) logs counts and kinds, never
 //     a field value, the file name, the model's answer or an error message
 //   - logging never throws, whatever it is handed
+//   - the closed fields (error_code, model) take only their listed values,
+//     counts hold at most ten digits, and a secret cut into short pieces
+//     finds no closed field to hide in
 //   - describeError, whose output is stored in extraction_runs.error, gets
-//     the same scrubbing and otherwise reads as before
-//   - ESLint makes console.* an error in src/lib outside the logger
+//     the same scrubbing (including OpenAI organization ids) and otherwise
+//     reads as before
+//   - every known route around the logger is a lint error in src/lib
 //
 // "Contains a secret" is checked here independently of redact.ts: the raw
 // value, or any 12-character slice of it. The fake keys are generated at
@@ -33,9 +37,11 @@ import {
 } from "@/lib/extraction/providers/types";
 import { runExtraction } from "@/lib/extraction/run";
 import { FIELD_NAMES } from "@/lib/extraction/schema";
+import { PRICING } from "@/lib/extraction/config";
 import {
   defaultLogSink,
   log,
+  LOG_ERROR_CODES,
   LOG_EVENTS,
   LOG_FIELD_NAMES,
   setLogSink,
@@ -99,9 +105,12 @@ const ANTHROPIC_KEY = `sk-ant-api03-${randomFrom(BASE64URL, 93)}AA`;
 const OPENAI_KEY = `sk-proj-${randomFrom(BASE64URL, 156)}`;
 // a run's close token is a UUID; src/app should register it (see the limit test)
 const CLOSE_TOKEN = uuid();
-// lowercase hex fits the model field's format, so only the redactor stops it
+// no known shape: only its registration catches it
 const HEX_SECRET = randomFrom(HEX, 40);
-const REGISTERED = [ANTHROPIC_KEY, OPENAI_KEY, CLOSE_TOKEN, HEX_SECRET];
+// letters only, capital first: fits error_name's shape, so only the
+// redactor stops it there
+const LETTERS_SECRET = `Q${randomFrom(UPPER + LOWER, 29)}`;
+const REGISTERED = [ANTHROPIC_KEY, OPENAI_KEY, CLOSE_TOKEN, HEX_SECRET, LETTERS_SECRET];
 
 // never registered: caught by shape alone
 const OPENAI_LEGACY_KEY = `sk-${randomFrom(ALNUM, 48)}`;
@@ -380,12 +389,11 @@ describe("no route gets a secret into a line", () => {
     }
   });
 
-  it("drops a registered key even where it fits the field's format", () => {
-    // 40 lowercase hex characters are a valid model id and a valid error code
-    log.info("extraction.call_succeeded", { model: HEX_SECRET, error_code: `e${HEX_SECRET}`, attempt: 1 });
+  it("drops a registered secret even where it fits a shape-limited field", () => {
+    log.info("extraction.call_failed", { error_name: LETTERS_SECRET, attempt: 1 });
     const line = lastLine();
     expect(line.fields).toEqual({ attempt: 1 });
-    expect(line.dropped).toBe(2);
+    expect(line.dropped).toBe(1);
     // and a registered close token, where it would be a valid id
     log.info("extraction.run_opened", { run_id: CLOSE_TOKEN, document_id: VALID.document_id });
     expect(lastLine().fields).toEqual({ document_id: VALID.document_id });
@@ -434,18 +442,18 @@ describe("no route gets a secret into a line", () => {
     expectNoLeak(lines, ALL_SECRETS);
   });
 
-  it("not even as a number: the final scan replaces a line it doesn't trust", () => {
-    // Numbers aren't redacted field by field; a registered secret made of
-    // digits is caught by the scan of the finished line.
-    const pin = "731906482215537";
-    const release = registerSecret(pin);
+  it("the final scan replaces a line whose fields spell a secret only once joined", () => {
+    // Each value passes on its own (numbers aren't redacted one by one); the
+    // registered value appears only in the serialized line.
+    const secret = '424242,"output_tokens":242424';
+    const release = registerSecret(secret);
     try {
-      log.info("extraction.run_finished", { size_bytes: Number(pin), attempts: 1 });
+      log.info("extraction.run_finished", { input_tokens: 424242, output_tokens: 242424 });
       const line = lastLine();
       expect(line.event).toBe("log.redaction_failed");
       expect(line.level).toBe("error");
       expect(line.fields).toEqual({ original_event: "extraction.run_finished" });
-      expect(lines[0]).not.toContain(pin);
+      expect(lines[0]).not.toContain(secret);
     } finally {
       release();
     }
@@ -458,6 +466,98 @@ describe("no route gets a secret into a line", () => {
     const unregistered = uuid();
     log.info("extraction.run_opened", { run_id: unregistered });
     expect(lastLine().fields).toEqual({ run_id: unregistered });
+  });
+});
+
+// Closed fields and bounded shapes -------------------------------------------------
+
+describe("closed fields take only their listed values; shapes are bounded", () => {
+  const releases: (() => void)[] = [];
+  beforeAll(() => {
+    for (const secret of REGISTERED) releases.push(registerSecret(secret));
+  });
+  afterAll(() => {
+    for (const release of releases) release();
+  });
+
+  function kept(fields: Record<string, unknown>): Record<string, unknown> {
+    lines = [];
+    log.info("extraction.run_finished", fields as LogFields);
+    return lastLine().fields;
+  }
+
+  it("error_code is one of LOG_ERROR_CODES, not any snake_case", () => {
+    for (const code of LOG_ERROR_CODES) expect(kept({ error_code: code })).toEqual({ error_code: code });
+    for (const text of ["ignore_previous_instructions", "primary_key_missing_", "the_total_is_7781", "a"]) {
+      expect(kept({ error_code: text })).toEqual({});
+    }
+  });
+
+  it("model is an id priced in config.ts, optionally with a date snapshot suffix", () => {
+    const accepted = [
+      ...Object.keys(PRICING),
+      "gpt-5-nano-2025-08-07",
+      "gpt-5-mini-20250807",
+      "claude-sonnet-5-20260115",
+      "claude-haiku-4-5-20251001",
+    ];
+    for (const model of accepted) expect(kept({ model })).toEqual({ model });
+    const refused = [
+      "4111-1111-1111-1111",
+      "gpt-5-nano-ignore-previous-instructions",
+      "gpt-5-nano-4111111111111111",
+      "gpt-5-nano-2025-13-01",
+      "gpt-5-nano-2025-0807",
+      "gpt-5-nano-19990807",
+      "gpt-5-nano-2025-08-07-2025-08-07",
+      "gpt-5",
+      "gpt-4o",
+      "claude-haiku-4-5",
+      "GPT-5-NANO",
+      "",
+    ];
+    for (const model of refused) expect(kept({ model })).toEqual({});
+  });
+
+  it("a count holds at most ten digits, so a card number doesn't fit", () => {
+    expect(kept({ size_bytes: 1_000_000_000 })).toEqual({ size_bytes: 1_000_000_000 });
+    for (const value of [4111111111111111, 1_000_000_001]) expect(kept({ size_bytes: value, input_tokens: value })).toEqual({});
+    expect(kept({ attempt: 1001, field_count: 1001 })).toEqual({});
+  });
+
+  it("a secret cut into short pieces finds no closed field; only a piece of the right shape fits error_name or db_code", () => {
+    const stringFields = LOG_FIELD_NAMES.filter((name) => typeof VALID[name] === "string");
+    for (const secret of [ANTHROPIC_KEY, OPENAI_KEY, HEX_SECRET, LETTERS_SECRET]) {
+      for (const size of [4, 5, 8, 11]) {
+        for (const text of [secret, secret.toLowerCase()]) {
+          for (let at = 0; at < text.length; at += size) {
+            const piece = text.slice(at, at + size);
+            for (const name of stringFields) {
+              if (!(name in kept({ [name]: piece }))) continue;
+              // the only fields a piece can land in, and only in their shape
+              const fits =
+                (name === "error_name" && /^[A-Z][A-Za-z]{0,39}$/.test(piece)) ||
+                (name === "db_code" && /^[0-9A-Z]{5}$/.test(piece));
+              expect(fits, `${name} kept ${piece}`).toBe(true);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("the case the review found: pieces across with({ model }) and error_code are dropped", () => {
+    for (const secret of [HEX_SECRET, ANTHROPIC_KEY.toLowerCase()]) {
+      for (let at = 0; at + 22 <= secret.length; at += 22) {
+        lines = [];
+        log
+          .with({ model: secret.slice(at, at + 11) } as LogFields)
+          .info("extraction.run_finished", { error_code: secret.slice(at + 11, at + 22) } as LogFields);
+        const line = lastLine();
+        expect(line.fields).toEqual({});
+        expect(line.dropped).toBe(2);
+      }
+    }
   });
 });
 
@@ -483,6 +583,7 @@ describe("free text is scrubbed of keys of every shape", () => {
     ["a registered OpenAI project key", OPENAI_KEY],
     ["a registered close token", CLOSE_TOKEN],
     ["a registered hex secret", HEX_SECRET],
+    ["a registered letters-only secret", LETTERS_SECRET],
   ])("%s, alone, spaced or glued to other text", (_name, secret) => {
     for (const text of [secret, `error: ${secret} rejected`, `glued${secret}glued`, `(${secret})`, `"${secret}"`]) {
       const scrubbed = redact(text);
@@ -561,6 +662,26 @@ describe("free text is scrubbed of keys of every shape", () => {
           expectNoLeak([visible(redact(text)), visible(describeError(new Error(text)))], [secret]);
         }
       }
+    }
+  });
+
+  it("OpenAI organization and project ids, which its error messages quote, but not ordinary words", () => {
+    const org = `org-${randomFrom(ALNUM, 24)}`;
+    const project = `proj_${randomFrom(ALNUM, 24)}`;
+    const rateLimited = (id: string) =>
+      `429 Rate limit reached for gpt-5-nano in organization ${id} on tokens per min (TPM): Limit 200000, Used 199000, Requested 5036.`;
+    expect(describeError(new ProviderError("openai", "client", rateLimited(org), 429))).toBe(
+      `openai client 429: ${rateLimited(REDACTED)}`,
+    );
+    expectNoLeak([redact(`project ${project} is over its budget`), redact(`glued${org}glued`)], [org, project]);
+    for (const ordinary of [
+      "an org-wide setting",
+      "see the org-chart",
+      "org-12345",
+      "proj_config is missing",
+      "the user-agent header",
+    ]) {
+      expect(redact(ordinary)).toBe(ordinary);
     }
   });
 
@@ -1010,18 +1131,103 @@ describe("an extraction run logs counts and kinds, never content", () => {
 // One logger ------------------------------------------------------------------------
 
 describe("one logger", () => {
-  it("console and the process streams are lint errors in src/lib, except in the logger itself", async () => {
-    const eslint = new ESLint({ cwd: process.cwd() });
-    const code = 'console.log("x");\nprocess.stdout.write("x");\nprocess.stderr.write("x");\n';
-    const rulesAt = async (filePath: string) => {
-      const [result] = await eslint.lintText(code, { filePath });
-      return result.messages.map((m) => m.ruleId);
-    };
-    expect(await rulesAt("src/lib/extraction/example.ts")).toEqual([
-      "no-console",
-      "no-restricted-properties",
-      "no-restricted-properties",
-    ]);
-    expect(await rulesAt("src/lib/log.ts")).toEqual([]);
-  }, 60_000);
+  // The rules eslint.config.mjs adds for src/lib; an error from one of them
+  // means the route is closed.
+  const LOGGER_RULES = new Set([
+    "no-console",
+    "no-restricted-globals",
+    "no-restricted-properties",
+    "no-restricted-imports",
+    "no-restricted-syntax",
+    "no-eval",
+    "no-implied-eval",
+    "no-new-func",
+  ]);
+
+  let eslint: ESLint;
+  beforeAll(() => {
+    eslint = new ESLint({ cwd: process.cwd() });
+  });
+
+  async function lint(code: string, filePath: string) {
+    const [result] = await eslint.lintText(code, { filePath });
+    expect(result.messages.filter((m) => m.fatal)).toEqual([]);
+    return result.messages.filter((m) => m.severity === 2).map((m) => m.ruleId ?? "");
+  }
+
+  // Each writes to a console, a process stream or a file descriptor without
+  // the logger. The first seven are the ones a review found open.
+  const bypasses = [
+    'globalThis.console.log("x");',
+    'import { stderr } from "node:process";\nstderr.write("x");',
+    'import proc from "node:process";\nproc.stdout.write("x");',
+    'const p = process;\np.stdout.write("x");',
+    'import { writeSync } from "node:fs";\nwriteSync(2, "x");',
+    'process._rawDebug("x");',
+    '// eslint-disable-next-line no-console\nconsole.log("x");',
+    '/* eslint-disable */\nconsole.log("x");',
+    'console.log("x");',
+    'const c = console;\nc.log("x");',
+    'const g = globalThis;\ng["console"].log("x");',
+    'global.process.stdout.write("x");',
+    'window.console.log("x");',
+    'self.console.log("x");',
+    'process.stdout.write("x");',
+    'process["stderr"].write("x");',
+    'const { stdout } = process;\nstdout.write("x");',
+    'send(process);',
+    'import fs from "fs";\nfs.appendFileSync("/dev/stderr", "x");',
+    'import { open } from "node:fs/promises";\nawait open("/dev/stderr", "a");',
+    'export { writeSync } from "node:fs";',
+    'import { WriteStream } from "node:tty";\nnew WriteStream(2).write("x");',
+    'import { Socket } from "node:net";\nnew Socket({ fd: 2 }).write("x");',
+    'import { execSync } from "node:child_process";\nexecSync("echo x >&2");',
+    'import { createRequire } from "node:module";\ncreateRequire("/")("fs").writeSync(2, "x");',
+    'import { console as inspectorConsole } from "node:inspector";\ninspectorConsole.log("x");',
+    'const fs = require("fs");\nfs.writeSync(2, "x");',
+    'import fs = require("fs");\nfs.writeSync(2, "x");',
+    'const name = "fs";\nawait import(name);',
+    'const fs = await import("node:fs");\nfs.writeSync(2, "x");',
+    'eval("console.log(1)");',
+    'new Function("console.log(1)")();',
+    'const F = Function;\nF("console.log(1)")();',
+    'setTimeout("console.log(1)", 0);',
+  ];
+
+  it.each(bypasses)("closed in src/lib: %s", async (code) => {
+    const errors = await lint(code, "src/lib/extraction/example.ts");
+    expect(errors.some((rule) => LOGGER_RULES.has(rule)), errors.join(", ")).toBe(true);
+  });
+
+  it.each(["js", "mjs", "cjs", "ts", "mts", "cts", "tsx", "jsx"])("covers .%s files", async (extension) => {
+    expect(await lint('console.log("x");\n', `src/lib/example.${extension}`)).toContain("no-console");
+  });
+
+  it("still allows reading configuration from process.env", async () => {
+    const code =
+      'export const key = process.env.ANTHROPIC_API_KEY ?? process.env["OPENAI_API_KEY"];\n' +
+      "export const settings = { process: 1 };\n" +
+      "export const named = settings.process;\n";
+    expect(await lint(code, "src/lib/extraction/example.ts")).toEqual([]);
+  });
+
+  it("leaves the logger itself alone, and doesn't reach src/app yet", async () => {
+    const code = 'console.log("x");\nprocess.stdout.write("x");\n';
+    expect(await lint(code, "src/lib/log.ts")).toEqual([]);
+    expect(await lint(code, "src/app/example.ts")).toEqual([]);
+  });
+
+  // The strict rules cover the server-side code only; the rest of src/lib may
+  // hold browser helpers (the UI redesign's), which need window and may need
+  // an inline disable, and still can't log around the logger.
+  it("keeps browser helpers elsewhere in src/lib usable, but still without console", async () => {
+    const browser = 'export const dark = () => window.matchMedia("(prefers-color-scheme: dark)").matches;\n';
+    expect(await lint(browser, "src/lib/theme.ts")).toEqual([]);
+    expect(await lint(browser, "src/lib/extraction/theme.ts")).toContain("no-restricted-globals");
+    expect(await lint('console.log("x");\n', "src/lib/theme.ts")).toContain("no-console");
+    expect(await lint('process.stderr.write("x");\n', "src/lib/theme.ts")).toContain("no-restricted-properties");
+    for (const file of ["src/lib/redact.ts", "src/lib/errors.ts"]) {
+      expect(await lint("export const w = globalThis;\n", file)).toContain("no-restricted-globals");
+    }
+  });
 });

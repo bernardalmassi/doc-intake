@@ -23,6 +23,10 @@
 //     credentials, key=value and "key": "value" pairs whose key names a
 //     credential, and any run of 40 or more token characters without a
 //     slash (a key format not listed here, or base64 document bytes).
+//   - OpenAI organization and project ids (org-..., proj_...), which its
+//     error messages quote ("Rate limit reached ... in organization org-...")
+//     and which would otherwise be stored in extraction_runs.error for every
+//     member of the tenant to read.
 //   - The query string, fragment and userinfo of every URL (a Supabase
 //     signed URL carries its token in ?token=), and data: URLs (the OpenAI
 //     provider sends the document as one).
@@ -111,6 +115,10 @@ const RULES: Rule[] = [
   { pattern: /\bkey-[A-Za-z0-9_-]{8,}/g, replacement: REDACTED },
   // Supabase API keys
   { pattern: /sb_(?:secret|publishable)_[A-Za-z0-9_-]{8,}/g, replacement: REDACTED },
+  // OpenAI organization and project ids: org- or proj_ and about 24 letters
+  // and digits. Twenty or more with no separator, so org-wide, org-chart or
+  // proj_config are left alone.
+  { pattern: /(?:org-|proj_)[A-Za-z0-9]{20,}/g, replacement: REDACTED },
   // JWTs: base64url of '{"' is always eyJ
   { pattern: /eyJ[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*){0,2}/g, replacement: REDACTED },
   // anything long and opaque: a key format not listed above, or document

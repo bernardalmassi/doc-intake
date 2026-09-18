@@ -1,31 +1,45 @@
 // The one logger. Code in src/lib writes logs through this module and
-// nothing else (eslint.config.mjs makes console.* and process.stdout/stderr
-// an error there), so this is the single place that decides what can reach
-// a log line.
+// nothing else (eslint.config.mjs forbids every other route to a console, a
+// process stream or a file descriptor there), so this is the single place
+// that decides what can reach a log line.
 //
-// The guarantee is structural, not a regex hoping to catch everything:
+// What a line can contain, exactly:
 //
-//   - A line is one JSON object: { ts, level, event, fields, dropped? }.
-//   - event is one of LOG_EVENTS, a closed list, checked by the type system
-//     and again at runtime. Anything else writes a fixed log.invalid_event
-//     line instead.
-//   - fields is a closed set of keys (LOG_FIELDS), each with a narrow format:
-//     a lowercase UUID, a member of a fixed enum, a lowercase model id, a
-//     SQLSTATE, a snake_case code, an error class name, a bounded integer
-//     or a boolean. An unknown key is a compile-time error in an object
-//     literal and is dropped at runtime (a caller can cast); so is a value
-//     that doesn't fit its key's format, and anything nested. `dropped`
-//     counts them, so a mistake shows in the log without echoing what was
-//     dropped (not even the key, whose name the caller controls).
-//   - So no field can hold free text: no message, filename, URL, model
-//     output, extracted value (value, source_text, raw_response, fields),
-//     document content, or SDK or database error message (V8's JSON.parse
-//     errors quote their input, and provider errors can echo the request).
-//     Errors are logged as error_kind, error_name, http_status and db_code.
-//   - Belt and braces: a string that fits its format is still dropped if
-//     redact.ts finds anything secret in it (a registered key, a key shape),
-//     and the finished line is scanned once more. If that scan finds
-//     anything, a fixed log.redaction_failed line is written instead.
+//   - One JSON object: { ts, level, event, fields, dropped? }. ts comes from
+//     the clock, level is info, warn or error, and dropped is a count.
+//   - event is one of LOG_EVENTS, checked by the type system and again at
+//     runtime. Anything else writes a fixed log.invalid_event line instead.
+//   - fields holds only keys from LOG_FIELDS, each with a primitive value in
+//     that key's format. An unknown key is a compile-time error in an object
+//     literal; at runtime unknown keys, off-format values and anything nested
+//     are dropped and counted in dropped, without echoing them (not even the
+//     key, whose name the caller controls). The formats are of two kinds:
+//       * closed sets: the five provider fields, run_status, document_status,
+//         mime_type and detected_mime_type, fallback_used, error_kind,
+//         error_code (LOG_ERROR_CODES), and model (an id priced in
+//         extraction/config.ts, optionally followed by a date snapshot such as
+//         -2025-08-07 or -20251001);
+//       * shapes, which a caller misusing a field could fill with other data
+//         of that shape: run_id, document_id, tenant_id and user_id take any
+//         lowercase UUID (32 hex digits each); error_name takes 1 to 40 ASCII
+//         letters starting with a capital, so a CamelCase phrase would fit;
+//         db_code takes 5 capital letters or digits; http_status an integer
+//         from 100 to 599; the counts, sizes and durations an integer from 0
+//         to 1000 or to a billion, so at most ten digits each.
+//   - So no line can carry a message, filename, URL, model output, extracted
+//     value (value, source_text, raw_response, fields), document text, or SDK
+//     or database error message (V8's JSON.parse errors quote their input,
+//     and provider errors can echo the request). Errors are logged as
+//     error_kind, error_name, http_status and db_code. What a misusing caller
+//     could still write is bounded by the shapes above: hex in an id field, a
+//     CamelCase word in error_name, digits in a number.
+//   - Secrets: a string that fits its format is still dropped if redact.ts
+//     finds a registered secret or a key shape in it, and the finished line
+//     is scanned again; a hit writes a fixed log.redaction_failed line
+//     instead. So no line contains a registered secret, any 12-character
+//     slice of one, or anything redact.ts's rules detect. A secret cut into
+//     pieces shorter than 12 characters and spread across fields or lines is
+//     not detected; only the shapes above limit where such pieces could go.
 //   - Logging never throws. Hostile input (throwing getters, proxies,
 //     circular objects, BigInt, symbols, huge strings) is dropped, and a
 //     sink that throws is ignored.
@@ -33,7 +47,7 @@
 // No "server-only" import and no secrets of its own, so tests import it
 // directly; the sink is injectable so they can capture what it writes.
 
-import type { ProviderName } from "./extraction/config";
+import { PRICING, type ProviderName } from "./extraction/config";
 import type { ProviderErrorKind } from "./extraction/providers/types";
 import { SUPPORTED_MIME_TYPES } from "./extraction/sniff";
 import { containsSecret } from "./redact";
@@ -93,7 +107,12 @@ function matching(pattern: RegExp, maxLength: number): Format<string> {
     typeof value === "string" && value.length <= maxLength && pattern.test(value) ? value : undefined;
 }
 
-function count(max: number = Number.MAX_SAFE_INTEGER): Format<number> {
+// No count we record comes near a billion (the database clamps a run at
+// 800 000 input tokens, a file is at most 10 MB, a call times out after a
+// minute), and ten digits can't hold a card or account number.
+const MAX_COUNT = 1_000_000_000;
+
+function count(max: number = MAX_COUNT): Format<number> {
   return (value) =>
     typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= max ? value : undefined;
 }
@@ -105,6 +124,28 @@ const uuid = matching(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 
 const PROVIDERS: Record<ProviderName, true> = { anthropic: true, openai: true };
 const provider = oneOf(keysOf(PROVIDERS));
+
+// A model id as a provider reports it: one priced in config.ts, or one of
+// those followed by a date snapshot (gpt-5-nano-2025-08-07, or -20251001 in
+// Anthropic's style). A reported id that isn't one of these is dropped, and
+// close_extraction_run would refuse to price it anyway.
+const PRICED_MODELS = Object.keys(PRICING);
+const SNAPSHOT_SUFFIX = /^-20\d{2}(-?)(0[1-9]|1[0-2])\1(0[1-9]|[12]\d|3[01])$/;
+const model: Format<string> = (value) => {
+  if (typeof value !== "string" || value.length > 64) return undefined;
+  if (PRICED_MODELS.includes(value)) return value;
+  return PRICED_MODELS.some((id) => value.startsWith(id) && SNAPSHOT_SUFFIX.test(value.slice(id.length)))
+    ? value
+    : undefined;
+};
+
+// Every error_code a line may carry. A closed list, so the field can't
+// become a channel for text: a new log call that needs a code adds it here.
+export const LOG_ERROR_CODES = [
+  // extraction/providers/select.ts
+  "invalid_provider_setting",
+  "primary_key_missing",
+] as const;
 
 export type LogErrorKind = ProviderErrorKind | "validation" | "unexpected";
 const ERROR_KINDS: Record<LogErrorKind, true> = {
@@ -128,14 +169,13 @@ const LOG_FIELDS = {
   tenant_id: uuid,
   user_id: uuid,
 
-  // providers and models. A model id is what the provider reports, such as
-  // gpt-5-nano-2025-08-07: lowercase, digits, dots and dashes.
+  // providers and models
   provider,
   primary_provider: provider,
   fallback_provider: provider,
   from_provider: provider,
   to_provider: provider,
-  model: matching(/^[a-z0-9][a-z0-9.-]{0,63}$/, 64),
+  model,
 
   // counts, sizes and durations
   attempt: count(1000),
@@ -159,10 +199,10 @@ const LOG_FIELDS = {
 
   // errors: what kind, which class, which code; never the message
   error_kind: oneOf(keysOf(ERROR_KINDS)),
-  // an Error subclass name, such as TypeError or APIConnectionTimeoutError
+  // an Error subclass name, such as TypeError or APIConnectionTimeoutError:
+  // a bounded identifier, not a closed list, because any library can throw
   error_name: matching(/^[A-Z][A-Za-z]{0,39}$/, 40),
-  // an application error code, such as primary_key_missing
-  error_code: matching(/^[a-z][a-z0-9_]{0,47}$/, 48),
+  error_code: oneOf(LOG_ERROR_CODES),
   // a Postgres SQLSTATE, such as 53400
   db_code: matching(/^[0-9A-Z]{5}$/, 5),
   http_status: (value: unknown) =>
