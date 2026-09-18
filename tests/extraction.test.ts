@@ -29,8 +29,8 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { computeCostUsd, EXTRACTION_LIMITS, PRICING, priceForModel } from "@/lib/extraction/config";
-import { classifyRunError } from "@/lib/errors";
+import { computeCostUsd, dearestModelFor, EXTRACTION_LIMITS, PRICING, priceForModel } from "@/lib/extraction/config";
+import { classifyRunError, isCostEstimated } from "@/lib/errors";
 import { failedCloseAttempts, runExtraction, toCloseParams, type RunOutcome } from "@/lib/extraction/run";
 import { FIELD_NAMES } from "@/lib/extraction/schema";
 import { answer, fakeProvider, pdfBytes, validJson } from "./helpers/fake-provider";
@@ -209,6 +209,23 @@ async function forgeRun(user: TestUser, documentId: string, costUsd: number) {
   const run = await readRun(user, opened.run_id);
   expect(Number(run?.cost_usd)).toBe(costUsd);
   return opened.run_id;
+}
+
+// Opens and closes a run that costs at least `costUsd`, in whole tokens at
+// the forging price; returns what it recorded.
+async function forgeTokens(user: TestUser, documentId: string, costUsd: number) {
+  const inputTokens = Math.ceil((costUsd * 1_000_000) / priceForModel(FORGE_MODEL).inputUsdPerMillion);
+  const opened = await mustOpen(user, documentId);
+  const { error } = await close(
+    user,
+    opened.run_id,
+    opened.close_token,
+    failedOutcome({ provider: "anthropic", model: FORGE_MODEL, inputTokens, outputTokens: 0 }),
+  );
+  if (error) throw new Error(`close_extraction_run failed: ${error.code} ${error.message}`);
+  const run = await readRun(user, opened.run_id);
+  expect(Number(run?.cost_usd)).toBe(computeCostUsd(FORGE_MODEL, inputTokens, 0));
+  return Number(run?.cost_usd);
 }
 
 // Setup --------------------------------------------------------------------
@@ -507,14 +524,18 @@ describe("run lifecycle in the database", () => {
     expect((await readRun(x(), opened.run_id))?.status).toBe("running");
 
     // what the Extract action does next: the same usage is refused again
-    // for the same reason, then the close without a model is accepted
-    const [withUsage, withoutUsage] = failedCloseAttempts(refusedOutcome, refused.error?.code ?? null);
+    // for the same reason, then the same tokens at the dearest price on
+    // file are accepted, never a close without the usage
+    const [withUsage, estimated] = failedCloseAttempts(refusedOutcome, refused.error?.code ?? null);
     expect((await close(x(), opened.run_id, opened.close_token, withUsage)).error?.code).toBe("22023");
-    expect((await close(x(), opened.run_id, opened.close_token, withoutUsage)).error).toBeNull();
+    expect((await close(x(), opened.run_id, opened.close_token, estimated)).error).toBeNull();
 
     const run = await readRun(x(), opened.run_id);
-    expect(run).toMatchObject({ status: "failed", model: null });
-    expect(Number(run?.cost_usd ?? 0)).toBe(0);
+    const dearest = dearestModelFor(1000, 10);
+    expect(run).toMatchObject({ status: "failed", provider: PRICING[dearest].provider, model: dearest, input_tokens: 1000, output_tokens: 10 });
+    expect(Number(run?.cost_usd)).toBe(computeCostUsd(dearest, 1000, 10));
+    expect(Number(run?.cost_usd)).toBeGreaterThan(0);
+    expect(isCostEstimated(run?.error)).toBe(true);
     expect(classifyRunError(run?.error)).toBe("extraction.result_not_saved");
     expect((await readDocument(x(), doc.id))?.status).toBe("pending");
     expect(await readFields(x(), doc.id)).toEqual([]);
@@ -658,6 +679,53 @@ describe("limits", () => {
     expect((await readDocument(x(), docC.id))?.status).toBe("pending");
   });
 
+  it("a run served by a model with no price is charged an estimate, and the ceiling then blocks the next call", async () => {
+    // its own tenant, just under its ceiling
+    const tenant = await createTenant(x(), "unpriced");
+    tenants.push(tenant);
+    const doc = await uploadDocument(x(), tenant, "unpriced.pdf");
+    await forgeRun(x(), doc.id, EXTRACTION_LIMITS.tenantMonthlyCeilingUsd - 0.01);
+
+    // a real run whose provider reports a model id nothing prices
+    const opened = await mustOpen(x(), doc.id);
+    const provider = fakeProvider("anthropic", "claude-haiku-4-5-20251001", [
+      answer(validJson({ title: { value: "Invoice 7", confidence: 0.95 } }), "claude-unpriced-9", 20_000, 1_000),
+    ]);
+    const outcome = await runExtraction({ bytes: pdfBytes("unpriced"), mimeType: "application/pdf", filename: "unpriced.pdf", primary: provider, fallback: null });
+    expect(outcome).toMatchObject({ status: "succeeded", model: "claude-unpriced-9", inputTokens: 20_000, outputTokens: 1_000 });
+
+    // the Extract action's close sequence: the outcome, then each planned retry
+    const refused = await close(x(), opened.run_id, opened.close_token, outcome);
+    expect(refused.error?.code).toBe("22023");
+    let closedWith: RunOutcome | null = null;
+    for (const attempt of failedCloseAttempts(outcome, refused.error?.code ?? null)) {
+      if (!(await close(x(), opened.run_id, opened.close_token, attempt)).error) {
+        closedWith = attempt;
+        break;
+      }
+    }
+    expect(closedWith).not.toBeNull();
+
+    expect((await readDocument(x(), doc.id))?.status).toBe("pending");
+
+    // the next call is refused by the ceiling before anything is opened;
+    // at no cost the tenant would still be 0.01 under it and be let through
+    const next = await open(x(), doc.id);
+    expect(next.error?.code).toBe("53400");
+    expect(next.data).toBeNull();
+    expect(next.error?.message).toMatch(/this organization has reached its monthly extraction spend ceiling/);
+    const runs = await x().client.from("extraction_runs").select("id").eq("tenant_id", tenant);
+    expect(runs.data).toHaveLength(2);
+
+    // because the tokens were paid for, the run carries a cost, marked estimated
+    const run = await readRun(x(), opened.run_id);
+    const expected = computeCostUsd(dearestModelFor(20_000, 1_000), 20_000, 1_000);
+    expect(expected).toBeGreaterThan(0.01);
+    expect(run).toMatchObject({ status: "failed", input_tokens: 20_000, output_tokens: 1_000 });
+    expect(Number(run?.cost_usd)).toBe(expected);
+    expect(isCostEstimated(run?.error)).toBe(true);
+  });
+
   it("the hourly rate limit blocks a call", async () => {
     for (let i = 0; i < EXTRACTION_LIMITS.hourlyRunLimit; i++) {
       await forgeRun(x(), docQ.id, 0);
@@ -673,11 +741,21 @@ describe("limits", () => {
   });
 
   it("the global monthly spend ceiling blocks a call for a tenant that has spent nothing", async () => {
-    // C already carries one tenant ceiling's worth; two more tenants bring
-    // the month's total to the global ceiling
-    const remaining = EXTRACTION_LIMITS.globalMonthlyCeilingUsd - EXTRACTION_LIMITS.tenantMonthlyCeilingUsd;
-    await forgeRun(x(), docG1.id, EXTRACTION_LIMITS.tenantMonthlyCeilingUsd);
-    await forgeRun(x(), docG2.id, remaining - EXTRACTION_LIMITS.tenantMonthlyCeilingUsd);
+    // The earlier tests have spent some of the month's global allowance in
+    // this run's tenants; two more tenants spend what is left, each at most
+    // a tenant ceiling. (Spend in tenants this user can't see isn't counted
+    // here, as before: the test project is expected to hold no other runs.)
+    const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString();
+    const spent = await x().client.from("extraction_runs").select("cost_usd").in("tenant_id", tenants).gte("started_at", monthStart);
+    expect(spent.error).toBeNull();
+    let remaining =
+      EXTRACTION_LIMITS.globalMonthlyCeilingUsd - (spent.data ?? []).reduce((sum, run) => sum + Number(run.cost_usd ?? 0), 0);
+    for (const doc of [docG1, docG2]) {
+      if (remaining <= 0) break;
+      // a millionth over, so rounding in this sum can't leave the database's just short
+      remaining -= await forgeTokens(x(), doc.id, Math.min(remaining + 1e-6, EXTRACTION_LIMITS.tenantMonthlyCeilingUsd));
+    }
+    expect(remaining).toBeLessThanOrEqual(0);
 
     const refused = await open(x(), docG3.id);
     expect(refused.data).toBeNull();

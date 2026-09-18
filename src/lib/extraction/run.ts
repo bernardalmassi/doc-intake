@@ -31,7 +31,7 @@
 import { RUN_ERROR_MARKERS } from "../errors";
 import { log, type Logger, type LogFields } from "../log";
 import { redact } from "../redact";
-import { MAX_OUTPUT_TOKENS, MAX_VALIDATION_RETRIES, type ProviderName } from "./config";
+import { dearestModelFor, MAX_OUTPUT_TOKENS, MAX_VALIDATION_RETRIES, PRICING, type ProviderName } from "./config";
 import { describeError, ProviderError, type ExtractionProvider, type ExtractionRequest } from "./providers/types";
 import { buildJsonSchema, gateFields, retryPrompt, SYSTEM_PROMPT, userPrompt, validateExtraction, type GatedField } from "./schema";
 import type { SupportedMimeType } from "./sniff";
@@ -315,11 +315,20 @@ export function toCloseParams(runId: string, closeToken: string, outcome: RunOut
 // dropped connection. A refused close changes nothing, so the run is still
 // open and its token still valid; closing it as failed with no fields puts
 // the document back to how it was instead of leaving it in processing
-// until the stale-run reaper frees it. First with the run's usage, so its
-// spend is recorded; then, if the run had any, without a model or token
-// counts, which the close accepts for any run. A failed run keeps its own
-// error; a successful one's fields are lost, and its error says so with the
-// SQLSTATE of the refusal (never its message), for classifyRunError.
+// until the stale-run reaper frees it.
+//
+// First with the run's own usage, so its spend is recorded at its price.
+// If that is refused too (the usual reason: the provider reported a model
+// id with no price on file), the same token counts at the dearest price on
+// file (dearestModelFor in config.ts), with the error marked so the page
+// shows the cost as an estimate. A run that called a provider is never
+// closed without its usage: dropping it would record no cost for tokens
+// that were paid for, and the spend ceilings would never see them. If the
+// estimate is refused as well, the run stays open until the reaper.
+//
+// A failed run keeps its own error; a successful one's fields are lost, and
+// its error says so with the SQLSTATE of the refusal (never its message),
+// for classifyRunError.
 export function failedCloseAttempts(outcome: RunOutcome, sqlState: string | null): RunOutcome[] {
   const error =
     outcome.status === "failed"
@@ -335,5 +344,21 @@ export function failedCloseAttempts(outcome: RunOutcome, sqlState: string | null
   };
   const withUsage: RunOutcome = { ...usage, status: "failed", error, rawResponse: null };
   if (usage.model === null && usage.inputTokens === 0 && usage.outputTokens === 0) return [withUsage];
-  return [withUsage, { ...withUsage, provider: null, model: null, inputTokens: 0, outputTokens: 0 }];
+
+  const dearest = dearestModelFor(usage.inputTokens, usage.outputTokens);
+  const estimated: RunOutcome = {
+    ...withUsage,
+    provider: PRICING[dearest].provider,
+    model: dearest,
+    error: `${RUN_ERROR_MARKERS.costEstimated} (${identifier(sqlState, "no answer")}; served by ${identifier(usage.model, "no model")}): ${error}`,
+  };
+  return [withUsage, estimated];
+}
+
+// A SQLSTATE or a model id as the estimate's error quotes it: only the
+// characters either can contain, so nothing else reaches the stored text
+// and no parenthesis can end the marker early.
+function identifier(value: string | null, absent: string): string {
+  if (value === null) return absent;
+  return /^[A-Za-z0-9._:-]{1,100}$/.test(value) ? value : "unrecognised";
 }

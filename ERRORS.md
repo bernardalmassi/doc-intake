@@ -119,6 +119,8 @@ Every failure a user can hit, the code `src/lib/errors.ts` gives it, and the mes
 
 These come from the text stored in `extraction_runs.error` (and returned as the Extract action's `outcome.error`).
 
+A stored error may start with "cost estimated at the dearest price on file (SQLSTATE; served by model id): ". `failedCloseAttempts` in `run.ts` writes it when the run was charged at the dearest price on file because the database couldn't price the model that served it. It isn't a failure of its own: `classifyRunError` skips it and classifies what follows, and `isCostEstimated` reports it.
+
 | Failure | Detected by | Code | Retry | Message |
 |---|---|---|---|---|
 | No key for the primary provider, or `EXTRACTION_PROVIDER` set to something else | starts "extraction is not configured" or "EXTRACTION_PROVIDER must be" | `extraction.not_configured` | no | Extraction isn't set up on this server. Ask whoever runs this service to configure it. |

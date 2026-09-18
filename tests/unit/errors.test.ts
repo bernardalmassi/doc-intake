@@ -785,6 +785,7 @@ describe("the sources that write run errors", () => {
     expect(run).toContain(RUN_ERROR_MARKERS.noFallback);
     // failedCloseAttempts writes it through the constant
     expect(run).toContain("RUN_ERROR_MARKERS.resultNotRecorded");
+    expect(run).toContain("RUN_ERROR_MARKERS.costEstimated");
 
     const select = read("src/lib/extraction/providers/select.ts");
     expect(select).toContain(RUN_ERROR_MARKERS.notConfigured);

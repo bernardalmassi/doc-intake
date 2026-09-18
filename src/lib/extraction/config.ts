@@ -125,6 +125,22 @@ export function priceForModel(model: string): ModelPrice {
   throw new Error(`no price on file for model ${model}; add it to PRICING in config.ts and to the migration`);
 }
 
+// The priced model that makes these token counts cost the most. When
+// close_extraction_run can't price the model a run was served by, the run
+// is closed at this model's price instead of at no cost (failedCloseAttempts
+// in run.ts): the dearest rate on file for the tokens the provider reported.
+// The app only ever asks for models it prices, so whatever id comes back is
+// one of them under another name, and can't cost more than this.
+export function dearestModelFor(inputTokens: number, outputTokens: number): string {
+  let dearest: { model: string; cost: number } | null = null;
+  for (const [model, price] of Object.entries(PRICING).sort(([a], [b]) => a.localeCompare(b))) {
+    const cost = inputTokens * price.inputUsdPerMillion + outputTokens * price.outputUsdPerMillion;
+    if (dearest === null || cost > dearest.cost) dearest = { model, cost };
+  }
+  if (dearest === null) throw new Error("no model has a price on file");
+  return dearest.model;
+}
+
 // What close_extraction_run will record for a call: the same clamp and
 // rounding as the SQL, for display and for the drift test. The database's
 // number is the one that counts.

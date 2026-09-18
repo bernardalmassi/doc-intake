@@ -406,6 +406,11 @@ export const RUN_ERROR_MARKERS = {
   // failedCloseAttempts (run.ts), when close_extraction_run refused a
   // successful run and the Extract action closed it as failed instead
   resultNotRecorded: "the result could not be recorded",
+  // failedCloseAttempts (run.ts), when the close with the run's own model
+  // was refused too and the run was charged at the dearest price on file:
+  // "<this> (<SQLSTATE>; served by <model id>): <the run's error>". Not a
+  // failure of its own; what follows it decides the code.
+  costEstimated: "cost estimated at the dearest price on file",
 } as const;
 
 // How a ProviderError's message starts, where its kind and status alone
@@ -935,8 +940,21 @@ export function classifyRunError(error: string | null | undefined): ErrorCode {
   return guarded(() => runCode(error));
 }
 
+// "cost estimated at the dearest price on file (22023; served by x): ..."
+const COST_ESTIMATED = new RegExp(`^${escapeRegExp(RUN_ERROR_MARKERS.costEstimated)} \\([^()]*\\): `);
+
+// Whether a run's cost is an estimate: failedCloseAttempts charged it at the
+// dearest price on file because the database couldn't price the model that
+// served it. The page shows such a cost as estimated.
+export function isCostEstimated(error: string | null | undefined): boolean {
+  return typeof error === "string" && COST_ESTIMATED.test(error);
+}
+
 function runCode(error: string | null | undefined): ErrorCode {
   if (typeof error !== "string" || error.trim().length === 0) return "unknown";
+
+  const estimated = COST_ESTIMATED.exec(error);
+  if (estimated) return runCode(error.slice(estimated[0].length));
 
   if (error.startsWith(RUN_ERROR_MARKERS.abandoned)) return "extraction.abandoned";
   if (error.startsWith(RUN_ERROR_MARKERS.downloadFailed)) return "extraction.download_failed";
