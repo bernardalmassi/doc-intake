@@ -32,6 +32,7 @@ written under the item and the item is skipped.
 - [x] 9. Extraction panel. Field, value, confidence, band, source text, clarifying question when present. Plain English status line.
 - [x] 10. Run history per document: provider, model, tokens, cost, latency, status, time.
 - [x] 11. Responsive to phone width, keyboard reachable, visible focus, aria-live on status changes, contrast AA.
+- [x] 11a. From the goal, not the list: an error page, so a failed load isn't Next's generic screen.
 - [ ] 12. DESIGN-NOTES.md: tokens, the reason for each, what would change next.
 
 ## Blockers

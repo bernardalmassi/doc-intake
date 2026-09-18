@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist } from "next/font/google";
+import { InlineScript } from "./components/inline-script";
 import { themeScript } from "./components/theme";
 import { SITE_NAME, SITE_SUMMARY } from "./site";
 import "./globals.css";
@@ -33,7 +34,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} h-full antialiased`}
     >
       <head>
-        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+        <InlineScript html={themeScript} />
       </head>
       <body className="flex min-h-full flex-col bg-canvas text-base text-fg">{children}</body>
     </html>
