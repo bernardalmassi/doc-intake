@@ -1,9 +1,10 @@
 import { badgeClass, errorClass, hintClass, reviewBadgeClass, sectionTitleClass } from "@/app/ui";
 import { EXTRACTION_LIMITS } from "@/lib/extraction/config";
 import { DocumentActions, type ExtractMode } from "./document-actions";
-import { ExtractionPanel } from "./extraction-panel";
+import { ExtractionPanel, LatestRun } from "./extraction-panel";
+import { fieldSummary } from "./fields";
 import { fileKind, formatBytes, formatUtc } from "./format";
-import { AlertIcon, DocumentsIcon, SpinnerIcon } from "./icons";
+import { AlertIcon, ChevronRightIcon, DocumentsIcon, SpinnerIcon } from "./icons";
 import { describeRunError, DOCUMENTS_HEADING_ID, runErrorAdvice, statusLabel } from "./messages";
 import type { DocumentEntry } from "./types";
 
@@ -140,7 +141,18 @@ function DocumentItem({ entry, slug, canManage }: { entry: DocumentEntry; slug: 
         canDelete={canManage}
         extract={extract}
       />
-      <ExtractionPanel run={runs[0] ?? null} fields={fields} />
+      {fields.length > 0 && (
+        // Open from the start when the document needs review: the fields
+        // to check are the reason to be here.
+        <details open={review} className="group mt-4 border-t border-line pt-3">
+          <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 text-sm font-medium [&::-webkit-details-marker]:hidden">
+            <ChevronRightIcon className="text-muted group-open:rotate-90" />
+            Extracted fields
+          </summary>
+          <ExtractionPanel fields={fields} />
+        </details>
+      )}
+      {runs[0] && <LatestRun run={runs[0]} />}
     </article>
   );
 }
@@ -212,20 +224,37 @@ function StatusLine({ entry, canManage }: { entry: DocumentEntry; canManage: boo
 
     case "extracted":
     case "needs_review":
-      if (latestFailed) {
-        return (
-          <FailedRun
-            lead="The latest extraction failed."
-            error={latest.error}
-            next="The results below are from an earlier run."
-          />
-        );
-      }
-      return null;
+      return (
+        <>
+          <FieldsLine entry={entry} />
+          {latestFailed && (
+            <FailedRun
+              lead="The latest extraction failed."
+              error={latest.error}
+              next="The results below are from an earlier run."
+            />
+          )}
+        </>
+      );
 
     default:
       return null;
   }
+}
+
+// The status line of an extracted document, computed from its fields:
+// "9 of 10 fields found. 2 need checking: Due date and Total amount."
+// The fields to check are in the accent, as they are what review means.
+function FieldsLine({ entry }: { entry: DocumentEntry }) {
+  if (entry.fields.length === 0) return null;
+  const summary = fieldSummary(entry.fields);
+  return (
+    <p className="mt-3 max-w-prose text-sm">
+      {summary.found}
+      {summary.check && <span className="font-medium text-accent"> {summary.check}</span>}
+      {summary.note && <span className="text-muted"> {summary.note}</span>}
+    </p>
+  );
 }
 
 // A failed run: what failed and why in danger text, then what to do next.

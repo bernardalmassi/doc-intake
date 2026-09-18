@@ -111,3 +111,14 @@ export function AlertIcon({ className }: IconProps) {
     </Icon>
   );
 }
+
+// A question mark in a circle: a clarifying question for a reviewer.
+export function QuestionIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <circle cx="8" cy="8" r="6" />
+      <path d="M6.4 6.3a1.7 1.7 0 1 1 2.3 1.6c-.45.18-.7.55-.7 1v.35" />
+      <path d="M8 11.1v.15" strokeWidth="2" />
+    </Icon>
+  );
+}

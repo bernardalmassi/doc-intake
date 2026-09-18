@@ -29,7 +29,7 @@ written under the item and the item is skipped.
 - [x] 6. /app/[slug]. Header, upload, document list, 404 for unknown and non-member slugs.
 - [x] 7. Upload states: idle, chosen, uploading, rejected type, too large, failed.
 - [x] 8. Document states: pending, processing, extracted, needs_review, failed. needs_review sorts first and is visibly distinct. Buttons must not shift the row when a status message appears.
-- [ ] 9. Extraction panel. Field, value, confidence, band, source text, clarifying question when present. Plain English status line.
+- [x] 9. Extraction panel. Field, value, confidence, band, source text, clarifying question when present. Plain English status line.
 - [ ] 10. Run history per document: provider, model, tokens, cost, latency, status, time.
 - [ ] 11. Responsive to phone width, keyboard reachable, visible focus, aria-live on status changes, contrast AA.
 - [ ] 12. DESIGN-NOTES.md: tokens, the reason for each, what would change next.

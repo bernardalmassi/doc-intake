@@ -16,6 +16,7 @@ import {
   DOCUMENTS_HEADING_ID,
   describeDeleteError,
   describeDownloadError,
+  describeExtractResult,
   type Explained,
 } from "./messages";
 import { useOperations } from "./operations";
@@ -134,9 +135,9 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
 
   let notice: Notice = null;
   if (last === "extract") {
+    const result = describeExtractResult(extractState);
     if (extracting) notice = { tone: "progress", text: "Extracting. This can take up to a minute." };
-    else if (extractState.error) notice = { tone: "error", text: extractState.error };
-    else if (extractState.message !== undefined) notice = { tone: "done", text: "Extraction finished." };
+    else if (result) notice = { tone: result.ok ? "done" : "error", text: result.text, detail: result.detail };
   } else if (last === "delete") {
     if (deleting) notice = { tone: "progress", text: "Deleting…" };
     else if (deleteState.error) notice = { tone: "error", ...describeDeleteError(deleteState.error) };

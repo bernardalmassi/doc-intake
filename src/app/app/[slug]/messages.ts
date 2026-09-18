@@ -2,6 +2,7 @@
 // values (roles, status enums) never reach the screen as they are.
 
 import { fileKind, formatBytes, NBSP } from "./format";
+import type { FormState } from "@/app/auth/actions";
 import type { UploadFailure } from "./operations";
 import type { Role } from "./types";
 
@@ -228,4 +229,87 @@ export function describeDownloadError(error: string): Explained {
     return { text: "The file couldn't be found. It may have been deleted; refresh the page.", detail: error };
   }
   return { text: "The download couldn't start. Try again.", detail: error };
+}
+
+// ------------------------------------------------------- extract results
+
+// "1.000000" (as Postgres formats the ceiling) -> "$1.00"
+function formatLimit(amount: string): string {
+  const value = Number(amount);
+  return Number.isFinite(value) ? `$${value.toFixed(2)}` : `${amount} USD`;
+}
+
+// What an Extract click came back with, as one short sentence. The known
+// shapes are the ones extract-action.ts returns; anything else keeps its
+// text as the technical detail.
+export function describeExtractResult(state: FormState): (Explained & { ok: boolean }) | null {
+  if (state.error) return { ok: false, ...describeExtractError(state.error) };
+  if (state.message !== undefined) return { ok: true, text: "Extraction finished." };
+  return null;
+}
+
+function describeExtractError(error: string): Explained {
+  if (error === CONNECTION_ERROR) return { text: error };
+  if (error === "Missing document." || error === "Document not found.") {
+    return { text: "This document no longer exists. Refresh the page." };
+  }
+  if (error === "Only admins can run extraction.") return { text: "Only admins can extract documents." };
+
+  const paused = "Extraction is paused: ";
+  if (error.startsWith(paused)) {
+    const amount = /\(([\d.]+) USD\)/.exec(error)?.[1];
+    const limit = amount ? ` of ${formatLimit(amount)}` : "";
+    const detail = error.slice(paused.length);
+    if (error.includes("across all organizations")) {
+      return {
+        text: `Extraction is paused for everyone until next month: the monthly spending limit${limit} across all organizations has been reached.`,
+        detail,
+      };
+    }
+    return {
+      text: `Extraction is paused for this organization until next month: it has reached its monthly spending limit${limit}.`,
+      detail,
+    };
+  }
+
+  const limited = "Extraction is rate limited: ";
+  if (error.startsWith(limited)) {
+    const count = /limit of (\d+)/.exec(error)?.[1];
+    return {
+      text: count
+        ? `This organization has run ${count} extractions in the last hour, the most allowed. Try again later.`
+        : "This organization has run too many extractions in the last hour. Try again later.",
+      detail: error.slice(limited.length),
+    };
+  }
+
+  const blocked = "Can't extract right now: ";
+  if (error.startsWith(blocked)) {
+    if (error.includes("has no file yet")) {
+      return { text: "This document's file never finished uploading, so there is nothing to extract." };
+    }
+    if (error.includes("already running")) {
+      return {
+        text: "An extraction is already running for this document. Refresh the page in a minute to see the results.",
+      };
+    }
+    return { text: "This document can't be extracted right now.", detail: error.slice(blocked.length) };
+  }
+
+  const failed = "Extraction failed: ";
+  if (error.startsWith(failed)) {
+    const raw = error.slice(failed.length);
+    const next = runErrorAdvice(raw) ?? "Nothing was changed, and you can try again.";
+    return { text: `Extraction failed. ${describeRunError(raw)} ${next}`, detail: raw };
+  }
+
+  const unrecorded = "The run could not be recorded: ";
+  if (error.startsWith(unrecorded)) {
+    return {
+      text: "The extraction ran, but its result couldn't be saved. Refresh the page and try again.",
+      detail: error.slice(unrecorded.length),
+    };
+  }
+
+  return { text: "Extraction couldn't be started. Try again.", detail: error };
 }
