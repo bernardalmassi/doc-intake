@@ -573,7 +573,7 @@ These are flaws or sharp edges in what exists today, as distinct from the unbuil
 - **A removed member's JWT stays valid for up to an hour.** Every database and storage request re-checks membership, so they can't read, upload or complete anything (tested), but the CDN window above applies to files they had already fetched.
 - **Admins can rename any document in their tenant**, not just their own. This is by design (uploader or admin) but worth knowing.
 - **Deletion is hard and irreversible.** `delete_tenant` cascades to memberships and documents immediately, with no soft delete or grace period. `delete_own_account` deletes the `auth.users` row. Recovery depends on whatever backups the Supabase plan provides. Both functions were added so the test could clean up without the service role, and they are now live features.
-- **Slug collisions reveal that a slug exists.** `create_tenant` returns a unique violation for a slug already taken by any tenant, including ones the caller can't see.
+- **Slug collisions reveal that a slug exists.** `create_tenant` returns a unique violation for a slug already taken by any tenant, including ones the caller can't see. A derived address says the same thing by landing on -2 or later; `createTenant` tries at most 20 per submit, because each try is a real insert.
 - **Members see other members' user ids**, and each document's `uploaded_by`. Emails are not exposed, since `auth.users` isn't readable.
 
 ## Deliberately not yet implemented

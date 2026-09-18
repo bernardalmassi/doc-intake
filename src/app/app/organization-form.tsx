@@ -3,30 +3,14 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { buttonClass, errorClass, hintClass, inputClass, labelClass } from "@/app/ui";
 import { type ErrorCode, SLUG_PATTERN, userFacingError } from "@/lib/errors";
+import { SLUG_MAX_LENGTH, slugify } from "@/lib/slug";
 
 // The web address rule is the tenants.slug check constraint, mirrored in
 // src/lib/errors.ts. Native validation enforces it before submit with the
 // same words the server's answer would use; the server checks it again.
-const ADDRESS_MAX = 48;
 const ADDRESS_RULE = "3 to 48 characters: lowercase letters, numbers and hyphens.";
 const ADDRESS_INVALID = userFacingError("tenant.slug_invalid").message;
 const NAME_MISSING = userFacingError("tenant.name_required").message;
-
-// "Café Müller & Co" -> "cafe-muller-co". Accents are dropped rather than
-// the whole letter, runs of hyphens collapse to one, and hyphens are
-// trimmed from the ends, so the address never starts or ends with one.
-function deriveAddress(name: string): string {
-  return name
-    .normalize("NFKD")
-    .replace(/\p{M}/gu, "")
-    .toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9-]/g, "")
-    .replace(/-{2,}/g, "-")
-    .replace(/^-+/, "")
-    .slice(0, ADDRESS_MAX)
-    .replace(/-+$/, "");
-}
 
 type Field = "name" | "address";
 
@@ -80,12 +64,13 @@ export function OrganizationForm({
   const echoRef = useRef<HTMLSpanElement>(null);
 
   const [name, setName] = useState(defaultName);
-  // The address follows the name until the user types in it.
+  // The address follows the name until the user types in it
+  // (src/lib/slug.ts, the helper createTenant derives it with).
   const [addressEdited, setAddressEdited] = useState(
-    defaultAddress !== undefined && defaultAddress !== deriveAddress(defaultName),
+    defaultAddress !== undefined && defaultAddress !== slugify(defaultName),
   );
   const [typedAddress, setTypedAddress] = useState(defaultAddress ?? "");
-  const address = addressEdited ? typedAddress : deriveAddress(name);
+  const address = addressEdited ? typedAddress : slugify(name);
 
   // Fields changed since the last submit. An error about a value the user
   // has since changed no longer applies, so it's hidden.
@@ -101,9 +86,10 @@ export function OrganizationForm({
   const formError = placed && placed.field === null ? placed.message : null;
 
   // Native validation with plain messages. The attributes on the inputs
-  // (required, pattern, minLength, maxLength) say the same thing and work
-  // before hydration; pattern carries the length too, because minLength
-  // only checks what the user typed, not the derived address.
+  // (required, pattern, maxLength) say the same thing and work before
+  // hydration; pattern carries the length too. The address isn't required:
+  // left empty, the server derives it. A derived address that's too short
+  // (punctuation only, or another script) is refused here like a typed one.
   useEffect(() => {
     nameRef.current?.setCustomValidity(name.trim() ? "" : NAME_MISSING);
   }, [name]);
@@ -188,10 +174,11 @@ export function OrganizationForm({
           <input
             ref={addressRef}
             id={ids.address}
-            name="slug"
-            required
-            minLength={3}
-            maxLength={ADDRESS_MAX}
+            // Submitted only once typed in. While it follows the name the
+            // server derives the same address and, if it's taken, adds
+            // -2, -3 … instead of refusing it.
+            name={addressEdited ? "slug" : undefined}
+            maxLength={SLUG_MAX_LENGTH}
             pattern="[a-z0-9\-]{3,48}"
             autoComplete="off"
             autoCapitalize="none"

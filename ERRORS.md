@@ -58,7 +58,7 @@ Every failure a user can hit, the code `src/lib/errors.ts` gives it, and the mes
 |---|---|---|---|---|
 | Organization name blank | `checkTenantInput`; 23514 on `tenants_name_check` | `tenant.name_required` | no | Enter a name for the organization. |
 | Slug doesn't match `^[a-z0-9-]{3,48}$` | `checkTenantInput`; 23514 on `tenants_slug_check` | `tenant.slug_invalid` | no | The web address must be 3 to 48 characters long and use only lowercase letters, digits and hyphens. |
-| Slug already used, including by an organization the user can't see | 23505 from `create_tenant` or a tenants update | `tenant.slug_taken` | no | That web address is already in use. Choose a different one. |
+| Slug already used, including by an organization the user can't see | 23505 from `create_tenant` for a typed slug, or for a derived one and its -2 to -20; or from a tenants update | `tenant.slug_taken` | no | That web address is already in use. Choose a different one. |
 | Organization page for a slug that doesn't exist, or that the user isn't a member of | no row (RLS hides it); 22P02 from `delete_tenant` | `tenant.not_found` | no | We couldn't find that organization, or you don't have access to it. |
 | A non-admin renames the organization or changes its slug | zero rows; 42501 | `tenant.update_not_allowed` | no | Only an admin can change this organization's name or web address. |
 | A non-owner deletes the organization | 42501 from `delete_tenant` | `tenant.delete_not_owner` | no | Only an owner can delete this organization. |

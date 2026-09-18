@@ -13,6 +13,7 @@ import {
   type ErrorCode,
 } from "@/lib/errors";
 import { log } from "@/lib/log";
+import { slugCandidates, slugify, tryEachSlug } from "@/lib/slug";
 import { createClient } from "@/lib/supabase/server";
 
 // Every failure below is returned as a code from src/lib/errors.ts, never as
@@ -20,29 +21,46 @@ import { createClient } from "@/lib/supabase/server";
 // Each outcome is logged with ids, the code and the SQLSTATE or HTTP
 // status: never a name, filename, slug or error message.
 
+// The form leaves `slug` empty while the address follows the name. An empty
+// one is derived from the name (src/lib/slug.ts, as the form does) and, if
+// taken, tried again as -2, -3 … up to MAX_SLUG_ATTEMPTS. One the user typed
+// is tried once, as typed: if it's taken, they're told.
 export async function createTenant(_prev: FormState, formData: FormData): Promise<FormState> {
   const user = await requireUser();
   const actionLog = log.with({ user_id: user.id });
 
   const name = String(formData.get("name") ?? "").trim();
-  const slug = String(formData.get("slug") ?? "").trim().toLowerCase();
-  const invalid = checkTenantInput(name, slug);
+  const typed = String(formData.get("slug") ?? "").trim().toLowerCase();
+  const candidates = typed ? [typed] : slugCandidates(slugify(name));
+  // A name that derives to fewer than 3 characters is refused here, on the
+  // address field, rather than given an invented address.
+  const invalid = checkTenantInput(name, candidates[0]);
   if (invalid) {
     actionLog.info("tenant.create_refused", { error_code: invalid });
     return { error: invalid };
   }
 
   const supabase = await createClient();
-  // Inserts the tenant and the caller's owner membership in one transaction.
-  const { data, error, status } = await supabase.rpc("create_tenant", { p_name: name, p_slug: slug });
-  if (error) {
-    const code = classifyDatabaseError({ ...error, status }, "create_tenant");
-    actionLog.warn("tenant.create_refused", { error_code: code, ...failureFields(error, status) });
-    return { error: code };
+  let attempts = 0;
+  const outcome = await tryEachSlug(
+    candidates,
+    async (slug) => {
+      attempts += 1;
+      // Inserts the tenant and the caller's owner membership in one transaction.
+      const { data, error, status } = await supabase.rpc("create_tenant", { p_name: name, p_slug: slug });
+      if (!error) return { slug, id: (data as { id?: string } | null)?.id };
+      const code = classifyDatabaseError({ ...error, status }, "create_tenant");
+      return { slug, code, failure: failureFields(error, status) };
+    },
+    (result) => "code" in result && result.code === "tenant.slug_taken",
+  );
+  if ("code" in outcome) {
+    actionLog.warn("tenant.create_refused", { error_code: outcome.code, attempts, ...outcome.failure });
+    return { error: outcome.code };
   }
 
-  actionLog.info("tenant.created", { tenant_id: (data as { id?: string } | null)?.id });
-  redirect(`/app/${slug}`);
+  actionLog.info("tenant.created", { tenant_id: outcome.id, attempts });
+  redirect(`/app/${outcome.slug}`);
 }
 
 export type CreatedDocument = { id: string; storagePath: string; error?: undefined } | { error: ErrorCode };
