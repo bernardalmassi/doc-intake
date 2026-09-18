@@ -115,7 +115,8 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
   // stays with it
   let answered = false;
   // kept once the run has switched away from the primary, so that if the
-  // fallback fails too the error says why both did
+  // fallback fails too the error says why both did; cleared once an answer
+  // arrives, so a later failed retry isn't reported as a double failure
   let primaryFailure: string | null = null;
 
   // One call, switching to the fallback provider if the current one times
@@ -132,6 +133,7 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
       try {
         const response = await provider.extract(request);
         answered = true;
+        primaryFailure = null;
         usage.model = response.model;
         usage.inputTokens += response.inputTokens;
         usage.outputTokens += response.outputTokens;

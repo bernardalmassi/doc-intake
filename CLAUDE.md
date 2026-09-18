@@ -25,9 +25,9 @@ npm run eval                        # replay the recorded provider answers for e
 npm run eval -- --live              # re-record missing or stale fixtures against the real providers (costs money; capped)
 ```
 
-CI (`.github/workflows/ci.yml`) runs typecheck, lint, build and `test:unit` on every push and pull request, with placeholder `NEXT_PUBLIC_*` values and no secrets. The Supabase suites run there only when started by hand with the `SUPABASE_TEST_*` repository secrets, serialized and never cancelled. Tests that need no database go in `tests/unit/` and must not import `server-only` modules.
+CI (`.github/workflows/ci.yml`) runs typecheck, lint, build, `test:unit` and `npm run eval` (offline replay) on every push and pull request, with placeholder `NEXT_PUBLIC_*` values and no secrets; actions are pinned to commit SHAs. The Supabase suites run there only when started by hand with the `SUPABASE_TEST_*` repository secrets, serialized and never cancelled. No such secrets are set yet, so so far they have only been run locally. Tests that need no database go in `tests/unit/` and must not import `server-only` modules.
 
-`npm test` hits a real Supabase project with real sign-ups (see README "Tests"): it needs `.env.test`, all migrations applied, and email confirmation off. It uses only the publishable key; keep it that way, since the point is to exercise RLS as a signed-in user. No test calls a model: the orchestrator is tested with fake providers, and Vitest only loads `SUPABASE_TEST_*` variables, so provider keys can't reach it.
+`npm test` hits a real Supabase project with real sign-ups (see README "Tests"): it needs `.env.test`, all migrations applied, and email confirmation off. It uses only the publishable key; keep it that way, since the point is to exercise RLS as a signed-in user. No test calls a model: the orchestrator is tested with fake providers, and Vitest only loads `SUPABASE_TEST_*` variables and blanks `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, so provider keys can't reach it even from the shell.
 
 ## Stack
 

@@ -21,7 +21,7 @@ Built with Next.js 16 (App Router, Server Actions), React 19, Tailwind CSS 4, Su
 3. The orchestrator (`src/lib/extraction/run.ts`) calls the primary provider (Claude Haiku 4.5 by default, `EXTRACTION_PROVIDER=openai` for gpt-5-nano), switches once to the other provider on a timeout or 5xx before any answer, validates the JSON against the schema and formats (`schema.ts`), retries once with the validation error, runs the output guard for signs of prompt injection, and gates each field by confidence: high is written, medium is written with one clarifying question, low sends the document to `needs_review`.
 4. `close_extraction_run` (SQL) records the outcome in one transaction and computes the cost itself from the reported token counts, clamped, at the price in its own table. There is no cost parameter. A failed run leaves the document exactly as it was.
 
-**Library layout.** `src/lib/extraction/` holds the config (thresholds, models, and mirrors of the database's limits and prices with a drift test), the schema and prompt, the output guard, the orchestrator, and `providers/` (one interface, two SDK adapters that import `server-only`, and the testable pieces moved out of them: error classification and response interpretation). `src/lib/log.ts` is the only logger. `src/lib/errors.ts` maps every failure a user can hit to one message (table in [ERRORS.md](ERRORS.md)).
+**Library layout.** `src/lib/extraction/` holds the config (thresholds, models, and mirrors of the database's limits and prices with a drift test), the schema and prompt, the output guard, the orchestrator, and `providers/` (one interface, two SDK adapters that import `server-only`, and the testable pieces moved out of them: error classification and response interpretation). `src/lib/log.ts` is the only logger. `src/lib/errors.ts` maps every failure a user can hit to one message (table in [ERRORS.md](ERRORS.md)); the pages don't use it yet and still show raw error text, because the UI is being redesigned separately.
 
 ## Security model
 
@@ -35,7 +35,7 @@ Details, verification and the known gaps: [SECURITY.md](SECURITY.md).
 
 ## Running it
 
-Requirements: Node.js 20.9 or later (CI uses 24), a Supabase project, and an Anthropic and/or OpenAI API key. The project was built against a hosted Supabase project; `npx supabase start` runs a local stack instead if Docker is available.
+Requirements: Node.js 22.12 or later (CI uses 24; `openai` and Vite need 22), a Supabase project, and an Anthropic and/or OpenAI API key. The project was built against a hosted Supabase project; `npx supabase start` runs a local stack instead if Docker is available.
 
 ```bash
 npm ci
@@ -83,10 +83,10 @@ The Supabase suites sign up five throwaway users per run with only the publishab
 
 1. Apply every migration to the project (above).
 2. Turn email confirmation off (Authentication → Sign In / Providers → Email), since the tests need a session straight from sign-up.
-3. Copy `.env.test.example` to `.env.test` and fill in the project URL and publishable key. Never the service role key. Vitest loads only `SUPABASE_TEST_*` variables, so provider keys can't reach a test.
+3. Copy `.env.test.example` to `.env.test` and fill in the project URL and publishable key. Never the service role key. Vitest loads only `SUPABASE_TEST_*` variables and blanks both provider keys, so a provider key can't reach a test even from the shell.
 4. Run `npm test`: 634 unit tests and 55 Supabase tests, about 30 seconds. Sign-ups count toward the project's auth rate limit, so many runs in a row may be throttled.
 
-**CI** (`.github/workflows/ci.yml`) runs type check, lint, build, the unit tests and the offline evals on every push and pull request, with no secrets. The Supabase suites need the `SUPABASE_TEST_URL` and `SUPABASE_TEST_PUBLISHABLE_KEY` repository secrets and run only when started by hand (Actions → CI → Run workflow → "Also run the Supabase suites"), one at a time, never cancelled mid-run.
+**CI** (`.github/workflows/ci.yml`) runs type check, lint, build, the unit tests and the offline evals on every push and pull request, with no secrets. The Supabase suites need the `SUPABASE_TEST_URL` and `SUPABASE_TEST_PUBLISHABLE_KEY` repository secrets and run only when started by hand (Actions → CI → Run workflow → "Also run the Supabase suites"), one at a time, never cancelled mid-run. Those secrets aren't set yet, so the Supabase suites have so far been run locally only.
 
 ## Evals
 

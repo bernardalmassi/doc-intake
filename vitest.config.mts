@@ -12,8 +12,9 @@ export default defineConfig(({ mode }) => ({
     // the logger writes nowhere unless a test captures it
     setupFiles: ["tests/setup/quiet-logs.ts"],
     // Only SUPABASE_TEST_* vars, from .env.test / .env.test.local, so tests
-    // can't silently pick up the app's .env.local.
-    env: loadEnv(mode, process.cwd(), "SUPABASE_TEST_"),
+    // can't silently pick up the app's .env.local. The provider keys are
+    // blanked too, so a key exported in the shell can't reach a test either.
+    env: { ...loadEnv(mode, process.cwd(), "SUPABASE_TEST_"), ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" },
     // Real network round trips to Supabase.
     testTimeout: 30_000,
     hookTimeout: 60_000,

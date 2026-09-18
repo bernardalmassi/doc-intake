@@ -357,7 +357,7 @@ describe("validation retry", () => {
     }
   });
 
-  it("a fallback that fails its own retry is reported after the primary's failure", async () => {
+  it("a fallback that fails its own retry reports the retry's failure, not the primary's", async () => {
     const primary = fakeProvider("anthropic", HAIKU, [timedOut("anthropic")]);
     const fallback = fakeProvider("openai", NANO, [answer("{ nope", NANO_SNAPSHOT, 700, 60), timedOut("openai")]);
     const outcome = await runExtraction({ ...input, primary, fallback });
@@ -366,9 +366,10 @@ describe("validation retry", () => {
     expect(fallback.requests).toHaveLength(2);
     expect(outcome).toMatchObject({ status: "failed", provider: "openai", attempts: 3, inputTokens: 700, rawResponse: "{ nope" });
     if (outcome.status === "failed") {
-      expect(outcome.error).toMatch(
-        /failed: anthropic transport: request timed out; fallback openai transport: request timed out$/,
-      );
+      // the retry went only to the fallback; the primary's timeout is in the
+      // log (extraction.fallback), not presented as part of this failure
+      expect(outcome.error).toMatch(/^retry after invalid response \(.+\) failed: openai transport: request timed out$/);
+      expect(outcome.error).not.toContain("anthropic");
     }
   });
 });
@@ -568,9 +569,14 @@ describe("bounds", () => {
           const answers = calls.flatMap((c) => (c.answer === null ? [] : [c.answer]));
           expect(outcome.rawResponse, label).toBe(answers.length > 0 ? answers[answers.length - 1] : null);
           if (last.answer === null) {
-            // after a switch, the error names both providers' failures
             if (calls.some((c) => c.provider === "openai")) {
-              expect(outcome.error, label).toMatch(/anthropic \w+( \d+)?: .+; fallback openai \w+( \d+)?: /);
+              if (calls.length === 2) {
+                // the fallback's first call failed too: both failures are named
+                expect(outcome.error, label).toMatch(/^anthropic \w+( \d+)?: .+; fallback openai \w+( \d+)?: /);
+              } else {
+                // a failed retry reports its own failure, on the provider that answered
+                expect(outcome.error, label).toMatch(/^retry after invalid response \(.+\) failed: openai \w+( \d+)?: /);
+              }
             }
             // "no fallback configured" only where a fallback would have been
             // used: a first call that got no answer
@@ -606,8 +612,9 @@ describe("bounds", () => {
     // a proxy's HTML error page as the message, several thousand characters
     const page = (status: number) => `<html><body><h1>${status} Bad Gateway</h1>${"<p>upstream error</p>".repeat(300)}</body></html>`;
 
-    // the longest error there is: the primary's failure, the fallback's
-    // invalid answer, and the fallback's failed retry
+    // the most outside text in one run: the primary's failure, the
+    // fallback's invalid answer, and the fallback's failed retry (the error
+    // reports the last two)
     const primary = fakeProvider("anthropic", HAIKU, [serverError("anthropic", 502, page(502))]);
     const fallback = fakeProvider("openai", NANO, [answer(noisy, NANO_SNAPSHOT), serverError("openai", 503, page(503))]);
     const outcome = await runExtraction({ ...input, primary, fallback });
@@ -617,7 +624,7 @@ describe("bounds", () => {
     expect(noisy.length + page(502).length + page(503).length).toBeGreaterThan(3 * DB_MAX_ERROR_LENGTH);
     expect(outcome.error.length).toBeLessThanOrEqual(DB_MAX_ERROR_LENGTH);
     expect(outcome.error).toMatch(
-      /^retry after invalid response \(the object has 300 unexpected keys; .+\.\.\.\) failed: anthropic server 502: <html><body><h1>502 Bad Gateway<\/h1>.+\.\.\.; fallback openai server 503: <html><body><h1>503 Bad Gateway<\/h1>.+\.\.\.$/,
+      /^retry after invalid response \(the object has 300 unexpected keys; .+\.\.\.\) failed: openai server 503: <html><body><h1>503 Bad Gateway<\/h1>.+\.\.\.$/,
     );
     expect(outcome.rawResponse).toBe(noisy);
   });

@@ -38,8 +38,10 @@ jobs:
     env:
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
@@ -71,21 +73,29 @@ jobs:
     concurrency:
       group: supabase-test-project
       cancel-in-progress: false
-    env:
-      SUPABASE_TEST_URL: ${{ secrets.SUPABASE_TEST_URL }}
-      SUPABASE_TEST_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_TEST_PUBLISHABLE_KEY }}
-      SUPABASE_TEST_EMAIL_DOMAIN: ${{ secrets.SUPABASE_TEST_EMAIL_DOMAIN }}
     steps:
+      # The secrets are exposed only to the two steps that need them, not to
+      # npm ci and its install scripts.
       - name: Require the test project secrets
-        if: env.SUPABASE_TEST_URL == '' || env.SUPABASE_TEST_PUBLISHABLE_KEY == ''
+        env:
+          SUPABASE_TEST_URL: ${{ secrets.SUPABASE_TEST_URL }}
+          SUPABASE_TEST_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_TEST_PUBLISHABLE_KEY }}
         run: |
-          echo "::error::Set the SUPABASE_TEST_URL and SUPABASE_TEST_PUBLISHABLE_KEY repository secrets (see README, Tests)."
-          exit 1
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+          if [ -z "$SUPABASE_TEST_URL" ] || [ -z "$SUPABASE_TEST_PUBLISHABLE_KEY" ]; then
+            echo "::error::Set the SUPABASE_TEST_URL and SUPABASE_TEST_PUBLISHABLE_KEY repository secrets (see README, Tests)."
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
       - run: npm ci
       - name: All Vitest suites, including the Supabase ones
+        env:
+          SUPABASE_TEST_URL: ${{ secrets.SUPABASE_TEST_URL }}
+          SUPABASE_TEST_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_TEST_PUBLISHABLE_KEY }}
+          SUPABASE_TEST_EMAIL_DOMAIN: ${{ secrets.SUPABASE_TEST_EMAIL_DOMAIN }}
         run: npm test
