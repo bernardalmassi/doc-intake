@@ -40,10 +40,49 @@ Items run in parallel on separate branches and are merged and ticked as they pas
 - [x] 7. Error taxonomy: every failure path a user can hit mapped to one clear message, exported from one module so the UI can use it later.
   Done 03:41. `src/lib/errors.ts`: 68 stable codes, one message each, and classifiers for PostgREST, Auth, Storage, provider and stored run errors that return only a code, so no raw text can reach a user. `ERRORS.md` lists about 90 failure paths; a test keeps it in step, and another parses every `raise` in the migrations and fails if one has no code or a matched phrase disappears. 394 tests; `npm test` 596 green. Not wired into `src/app` (frozen); the call sites are listed in the commit message. Finding for later (needs a migration): SQLSTATE 53400 and 55000 each cover two outcomes, so two classifications read the raised phrase.
 
+## After the checklist: adversarial review
+
+All seven items were done by 03:59. Two reviewers then attacked the branch
+(one on the extraction path and evals, one on logging, errors, CI and
+docs), and every confirmed finding was fixed and merged by 04:35 with the
+same gates (`npm test` 831 green):
+
+- A document could make `close_extraction_run` refuse the close (a U+0000
+  or an unpaired surrogate in model output), leaving the run running and
+  unmetered. Model text is now cleaned at validation, and `toCloseParams`
+  makes every string safe for Postgres, within its column and, for the
+  error, scrubbed and never blank.
+- Output guard: false positives on ordinary documents ("Amazon.com" in a
+  summary, an IBAN in a question, lakh-grouped totals) and cheap bypasses
+  (full-width letters, zero-width characters, soft hyphens) fixed; total
+  grounding made exact; ISO 4217 and bounded amounts enforced.
+- Eval: exact baselines for right, flagged and sent-to-review counts
+  instead of floors that let a field slip; injection runs must succeed;
+  failed recordings are re-recorded; the live cost cap fails closed.
+- Logger: the ESLint "one logger" rule closed against aliasing,
+  `node:process`/`fs` imports, `globalThis.console` and inline disables in
+  the server-side code; `error_code` and `model` made closed formats;
+  OpenAI organization ids scrubbed from stored run errors.
+- Error taxonomy: the drift test parses every PL/pgSQL RAISE form and only
+  live function definitions; new provider endings classified; classifiers
+  never throw.
+- CI pins actions to SHAs, doesn't persist the token, and scopes the
+  Supabase secrets to the steps that use them. Provider keys exported in
+  the shell are blanked in tests. Node 22.12 declared.
+- Docs now say plainly what isn't true yet: `errors.ts` isn't wired into
+  the pages, the Supabase suites have only run locally (no repository
+  secrets), and a tenant admin can close a run with any error text that
+  members then see raw.
+
+Needs `src/app` (frozen) or SQL (out of scope), recorded in SECURITY.md:
+wire `errors.ts` and the logger into the Server Actions and pages; retry a
+refused close as failed; distinct SQLSTATEs for the two outcomes 53400 and
+55000 each cover.
+
 ## Dev dependencies added
 
-None yet.
+None.
 
 ## Blockers
 
-None yet.
+None.
