@@ -5,9 +5,10 @@ import type { DocumentEntry, DocumentRow, FieldRow, RunRow } from "./types";
 const FIELD_ORDER = new Map(FIELDS.map((field, index) => [field.name, index]));
 
 // Groups runs and fields under their documents and puts the list in the
-// order it is shown, newest first. Pure, so the design preview runs the same grouping and sorting on fixture
-// rows. `now` is passed in (milliseconds) to decide whether a running
-// extraction has gone stale.
+// order it is shown: documents that need review first, then newest first.
+// Pure, so the design preview runs the same grouping and sorting on
+// fixture rows. `now` is passed in (milliseconds) to decide whether a
+// running extraction has gone stale.
 export function buildEntries(
   documents: DocumentRow[],
   runs: RunRow[],
@@ -47,5 +48,10 @@ export function buildEntries(
     return { document, runs: documentRuns, fields: documentFields, staleRun };
   });
 
-  return entries.toSorted((a, b) => Date.parse(b.document.created_at) - Date.parse(a.document.created_at));
+  return entries.toSorted((a, b) => {
+    const reviewA = a.document.status === "needs_review" ? 0 : 1;
+    const reviewB = b.document.status === "needs_review" ? 0 : 1;
+    if (reviewA !== reviewB) return reviewA - reviewB;
+    return Date.parse(b.document.created_at) - Date.parse(a.document.created_at);
+  });
 }

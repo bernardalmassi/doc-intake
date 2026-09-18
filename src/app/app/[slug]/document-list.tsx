@@ -1,9 +1,10 @@
-import { badgeClass, hintClass, panelClass, reviewBadgeClass, sectionTitleClass } from "@/app/ui";
-import { DocumentActions } from "./document-actions";
+import { badgeClass, errorClass, hintClass, reviewBadgeClass, sectionTitleClass } from "@/app/ui";
+import { EXTRACTION_LIMITS } from "@/lib/extraction/config";
+import { DocumentActions, type ExtractMode } from "./document-actions";
 import { ExtractionPanel } from "./extraction-panel";
 import { fileKind, formatBytes, formatUtc } from "./format";
-import { DocumentsIcon } from "./icons";
-import { DOCUMENTS_HEADING_ID, statusLabel } from "./messages";
+import { AlertIcon, DocumentsIcon, SpinnerIcon } from "./icons";
+import { describeRunError, DOCUMENTS_HEADING_ID, runErrorAdvice, statusLabel } from "./messages";
 import type { DocumentEntry } from "./types";
 
 type ListProps = {
@@ -92,42 +93,154 @@ function EmptyDocuments({ canManage }: { canManage: boolean }) {
 }
 
 function DocumentItem({ entry, slug, canManage }: { entry: DocumentEntry; slug: string; canManage: boolean }) {
-  const { document, runs, fields } = entry;
+  const { document, runs, fields, staleRun } = entry;
   const review = document.status === "needs_review";
+  const hasFile = document.status !== "uploading";
   const kind = fileKind(document.mime_type);
   const meta = [
     kind,
     document.size_bytes !== null ? formatBytes(document.size_bytes) : null,
   ].filter((part): part is string => part !== null);
 
+  // Extract is the primary action while there are no results yet; once
+  // there are, running it again is secondary.
+  let extract: { mode: ExtractMode; primary: boolean } | null = null;
+  if (canManage && hasFile) {
+    const mode: ExtractMode =
+      document.status === "processing" && !staleRun ? "running" : runs.length > 0 ? "again" : "first";
+    extract = { mode, primary: fields.length === 0 };
+  }
+
   return (
-    <article aria-labelledby={`document-${document.id}`} className={panelClass}>
+    // Needs review is the one state in the accent: the border and the
+    // badge, plus the badge's icon and words and its place at the top of
+    // the list, so it never rests on color alone.
+    <article
+      aria-labelledby={`document-${document.id}`}
+      className={`rounded-lg border bg-surface p-4 sm:p-5 ${review ? "border-accent" : "border-line"}`}
+    >
       <div className="flex items-start justify-between gap-3">
         <h3 id={`document-${document.id}`} className="min-w-0 font-medium [overflow-wrap:anywhere]">
           {document.filename}
         </h3>
-        <span className={review ? reviewBadgeClass : badgeClass}>{statusLabel(document.status)}</span>
+        <StatusBadge status={document.status} stale={staleRun} />
       </div>
       <p className={`mt-1 ${hintClass} tabular-nums`}>
         {meta.length > 0 && `${meta.join(" · ")} · `}
         {document.status === "uploading" ? "Upload started" : "Uploaded"}{" "}
         <time dateTime={document.created_at}>{formatUtc(document.created_at)}</time>
       </p>
-      {document.status === "uploading" && <UnfinishedUpload canManage={canManage} />}
-      <div className="mt-3">
-        <DocumentActions
-          id={document.id}
-          slug={slug}
-          filename={document.filename}
-          storagePath={document.storage_path}
-          status={document.status}
-          uploaded={document.status !== "uploading"}
-          canDelete={canManage}
-          canExtract={canManage}
-        />
-      </div>
+      <StatusLine entry={entry} canManage={canManage} />
+      <DocumentActions
+        id={document.id}
+        slug={slug}
+        filename={document.filename}
+        storagePath={document.storage_path}
+        canDownload={hasFile}
+        canDelete={canManage}
+        extract={extract}
+      />
       <ExtractionPanel run={runs[0] ?? null} fields={fields} />
     </article>
+  );
+}
+
+function StatusBadge({ status, stale }: { status: string; stale: boolean }) {
+  if (status === "needs_review") {
+    return (
+      <span className={`${reviewBadgeClass} shrink-0 gap-1`}>
+        <AlertIcon />
+        Needs review
+      </span>
+    );
+  }
+  if (status === "processing" && !stale) {
+    return (
+      <span className={`${badgeClass} shrink-0 gap-1.5`}>
+        <SpinnerIcon />
+        Extracting
+      </span>
+    );
+  }
+  return <span className={`${badgeClass} shrink-0`}>{stale ? "Extraction stalled" : statusLabel(status)}</span>;
+}
+
+// One or two sentences under the document's name saying where it stands
+// and what happens next, computed from the document and its runs.
+function StatusLine({ entry, canManage }: { entry: DocumentEntry; canManage: boolean }) {
+  const { document, runs, staleRun } = entry;
+  const latest = runs[0];
+  const latestFailed = latest?.status === "failed";
+  const retry = canManage ? "You can try again." : "An admin can try again.";
+
+  switch (document.status) {
+    case "uploading":
+      return <UnfinishedUpload canManage={canManage} />;
+
+    case "pending":
+      if (latestFailed) {
+        return <FailedRun lead="The last extraction failed." error={latest.error} next={retry} />;
+      }
+      return (
+        <p className={`mt-3 ${hintClass}`}>
+          {canManage
+            ? "Not extracted yet. Extract reads its type, sender, dates, amounts and more."
+            : "Not extracted yet. An admin can extract it."}
+        </p>
+      );
+
+    case "processing":
+      if (staleRun) {
+        return (
+          <p className="mt-3 max-w-prose text-sm">
+            This extraction has been running for more than {EXTRACTION_LIMITS.staleRunMinutes} minutes and has
+            probably stopped.{" "}
+            <span className="text-muted">
+              {canManage ? "Extract again to restart it." : "An admin can restart it."}
+            </span>
+          </p>
+        );
+      }
+      return (
+        <p className={`mt-3 ${hintClass}`}>
+          Extraction is running. Refresh the page in a minute to see the results.
+        </p>
+      );
+
+    case "failed":
+      return <FailedRun lead="Extraction failed." error={latestFailed ? latest.error : null} next={retry} />;
+
+    case "extracted":
+    case "needs_review":
+      if (latestFailed) {
+        return (
+          <FailedRun
+            lead="The latest extraction failed."
+            error={latest.error}
+            next="The results below are from an earlier run."
+          />
+        );
+      }
+      return null;
+
+    default:
+      return null;
+  }
+}
+
+// A failed run: what failed and why in danger text, then what to do next.
+function FailedRun({ lead, error, next }: { lead: string; error: string | null; next: string }) {
+  const advice = runErrorAdvice(error);
+  return (
+    <p className="mt-3 flex max-w-prose items-start gap-1.5 text-sm">
+      <AlertIcon className="mt-0.5 text-danger" />
+      <span className="min-w-0">
+        <span className={errorClass}>
+          {lead} {error !== null && describeRunError(error)}
+        </span>{" "}
+        <span className="text-muted">{advice ?? next}</span>
+      </span>
+    </p>
   );
 }
 

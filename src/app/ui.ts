@@ -118,3 +118,10 @@ export const reviewBadgeClass = `${badgeBase} border-accent font-medium text-acc
 // disabled drops keyboard focus to <body>, and it doesn't come back when
 // the button is enabled again. Looks the same as a disabled buttonClass.
 export const submitButtonClass = `${buttonClass} aria-disabled:cursor-not-allowed aria-disabled:bg-line aria-disabled:text-muted`;
+
+// ---- organization page
+
+// Delete, once armed: the first click on a Delete button arms it and the
+// second deletes. Filled danger, so the armed state reads at a glance, in
+// the same box as every other button.
+export const armedDangerButtonClass = `${buttonBase} border-danger px-3 bg-danger text-canvas disabled:border-line disabled:bg-transparent disabled:text-muted`;
