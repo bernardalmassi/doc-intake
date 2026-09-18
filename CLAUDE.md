@@ -69,7 +69,7 @@ Uploads are **row first**. Never send file bytes through a Server Action (1 MB b
 - **Download** is a signed URL created on click with a 60 second expiry, never rendered into the page. Don't assert deletion through the authenticated download endpoint: Supabase's CDN serves a deleted object to the same session for a while, and an already-fetched signed URL for the rest of its lifetime. Use the object index (list, minting a signed URL) instead.
 - A row in `'uploading'` whose upload never finishes just stays there. Nothing sweeps them yet.
 
-## LLM extraction (`20260918000001` to `20260918000004`)
+## LLM extraction (`20260918000001` to `20260919000001`)
 
 An admin clicks Extract; the Server Action `src/app/app/extract-action.ts` runs the whole thing in the request (no queue yet; pgmq is next). **Spend is checked in the database before the call and cost is computed in the database after it.** Nothing about cost trusts the app, because the app runs as the user and any admin can call the same RPCs over PostgREST.
 

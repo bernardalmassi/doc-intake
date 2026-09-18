@@ -56,16 +56,22 @@ describe("the abandoned-run estimate", () => {
 
   it("grows with the page count instead of charging every run the same", () => {
     const costs = Array.from({ length: EXTRACTION_LIMITS.maxPagesPerDocument }, (_, i) => abandonedRunCostUsd(i + 1));
-    // strictly more for each page until a call can take no more input
-    const capped = Math.floor(
-      (EXTRACTION_LIMITS.maxInputTokensPerCall - EXTRACTION_LIMITS.promptInputTokens) / EXTRACTION_LIMITS.inputTokensPerPage,
-    );
+    // strictly more for each page until a cap binds: a call's input
+    // (max_input_tokens_per_call), or the run's (max_input_tokens_per_run)
+    const L = EXTRACTION_LIMITS;
+    const perCallFull = Math.floor((L.maxInputTokensPerCall - L.promptInputTokens) / L.inputTokensPerPage);
+    const perRunFull = Math.floor((L.maxInputTokensPerRun / L.maxCallsPerRun - L.promptInputTokens) / L.inputTokensPerPage);
+    const capped = Math.min(perCallFull, perRunFull, L.maxPagesPerDocument);
+    // the per-call cap no longer binds before the page limit (20260919000001)
+    expect(perCallFull).toBe(L.maxPagesPerDocument);
     for (let pages = 2; pages <= capped; pages++) {
       expect(costs[pages - 1], `${pages} pages`).toBeGreaterThan(costs[pages - 2]);
     }
     expect(abandonedRunCostUsd(10)).toBeGreaterThan(2 * abandonedRunCostUsd(1));
     // a genuinely large document may cost most of the budget, or at Sonnet 5
-    // prices more than all of it (1.26144 USD for 100 pages), and does
+    // prices more than all of it (1.66144 USD from 88 pages, where the
+    // per-run clamp binds), and does
+    expect(abandonedRunCostUsd(EXTRACTION_LIMITS.maxPagesPerDocument)).toBe(1.66144);
     expect(abandonedRunCostUsd(EXTRACTION_LIMITS.maxPagesPerDocument)).toBeGreaterThan(0.5 * CEILING);
     // an unknown count is charged as the most pages a document can have
     expect(abandonedRunCostUsd(null)).toBe(abandonedRunCostUsd(EXTRACTION_LIMITS.maxPagesPerDocument));

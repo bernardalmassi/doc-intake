@@ -23,7 +23,7 @@ export const EXTRACTION_LIMITS = {
   // derivation.
   maxCallsPerRun: 3,
   maxOutputTokensPerCall: 2048,
-  maxInputTokensPerCall: 200_000,
+  maxInputTokensPerCall: 304_500,
   promptInputTokens: 4500,
   inputTokensPerPage: 3000,
   // Anthropic's per-request PDF page limit; also what an unknown count is
