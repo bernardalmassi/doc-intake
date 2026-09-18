@@ -7,10 +7,11 @@ import type { SupportedMimeType } from "../sniff";
 
 export type { ProviderName };
 
+// Deliberately no filename: the document's name is attacker-controlled and
+// must not reach a model (see RunInput in run.ts).
 export type ExtractionRequest = {
   bytes: Uint8Array;
   mimeType: SupportedMimeType;
-  filename: string;
   systemPrompt: string;
   userPrompt: string;
   // JSON schema the provider must constrain its output to

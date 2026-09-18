@@ -3,6 +3,7 @@ import "server-only";
 import OpenAI from "openai";
 import type { ResponseInput } from "openai/resources/responses/responses";
 import { OPENAI_REASONING_EFFORT } from "../config";
+import { ATTACHMENT_FILENAME } from "../schema";
 import { classifyOpenAIError } from "./classify";
 import { interpretOpenAIResponse } from "./interpret";
 import type { ExtractionProvider, ExtractionRequest, ProviderResponse } from "./types";
@@ -32,7 +33,7 @@ export function createOpenAIProvider(options: {
       const dataUrl = `data:${request.mimeType};base64,${toBase64(request.bytes)}`;
       const attachment =
         request.mimeType === "application/pdf"
-          ? ({ type: "input_file", filename: request.filename, file_data: dataUrl } as const)
+          ? ({ type: "input_file", filename: ATTACHMENT_FILENAME, file_data: dataUrl } as const)
           : ({ type: "input_image", image_url: dataUrl, detail: "auto" } as const);
 
       const input: ResponseInput = [

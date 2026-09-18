@@ -323,7 +323,7 @@ describe("validation retry", () => {
     });
     if (outcome.status === "failed") {
       // the validation error that caused the retry, then the retry's failure
-      expect(outcome.error.startsWith("retry after invalid response (not valid JSON: ")).toBe(true);
+      expect(outcome.error.startsWith("retry after invalid response (not valid JSON")).toBe(true);
       expect(outcome.error.endsWith(`) failed: ${described}`)).toBe(true);
     }
   });
@@ -352,7 +352,7 @@ describe("validation retry", () => {
       // a fallback wouldn't have been used here, so the error doesn't say
       // one was missing
       expect(outcome.error).toMatch(
-        /^retry after invalid response \(not valid JSON: .+\) failed: anthropic transport: request timed out$/,
+        /^retry after invalid response \(not valid JSON \(error at character \d+\)\) failed: anthropic transport: request timed out$/,
       );
     }
   });
@@ -599,7 +599,9 @@ describe("bounds", () => {
   });
 
   it("the run's error fits the 2000-character column however long the pieces, and keeps the head of each", async () => {
-    // 300 unknown keys make a validation error of several thousand characters
+    // 300 unknown keys and ten missing fields: the keys are counted, not
+    // named (the validation error never quotes the model), but the error is
+    // still longer than one piece may be
     const noisy = JSON.stringify(Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`unknown_field_${i}`, i])));
     // a proxy's HTML error page as the message, several thousand characters
     const page = (status: number) => `<html><body><h1>${status} Bad Gateway</h1>${"<p>upstream error</p>".repeat(300)}</body></html>`;
@@ -615,7 +617,7 @@ describe("bounds", () => {
     expect(noisy.length + page(502).length + page(503).length).toBeGreaterThan(3 * DB_MAX_ERROR_LENGTH);
     expect(outcome.error.length).toBeLessThanOrEqual(DB_MAX_ERROR_LENGTH);
     expect(outcome.error).toMatch(
-      /^retry after invalid response \(unexpected field unknown_field_0; .+\.\.\.\) failed: anthropic server 502: <html><body><h1>502 Bad Gateway<\/h1>.+\.\.\.; fallback openai server 503: <html><body><h1>503 Bad Gateway<\/h1>.+\.\.\.$/,
+      /^retry after invalid response \(the object has 300 unexpected keys; .+\.\.\.\) failed: anthropic server 502: <html><body><h1>502 Bad Gateway<\/h1>.+\.\.\.; fallback openai server 503: <html><body><h1>503 Bad Gateway<\/h1>.+\.\.\.$/,
     );
     expect(outcome.rawResponse).toBe(noisy);
   });

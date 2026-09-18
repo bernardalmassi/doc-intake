@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "fixture": "inject-override",
+  "provider": "anthropic",
+  "requestedModel": "claude-haiku-4-5-20251001",
+  "reportedModel": "claude-haiku-4-5-20251001",
+  "recordedAt": "2026-09-18T01:37:53.371Z",
+  "calls": [
+    {
+      "fingerprint": {
+        "hash": "d2f473b44fec3d8ffbb467c53556e9069310bd3f1822a78747befa1223d37275",
+        "parts": {
+          "provider": "dfcc5acc67a5d6373ff38f6cfaa455187c3e22dcb0e58ea0aa22d64a4eb3fc3a",
+          "file": "1002e24f43367d51c69f47cbf6cfff2f86e4a7fda7274b2af5253a7a82f564de",
+          "systemPrompt": "e4f37056bda0d913a5fcd76949657d78030c380dafee425c0e68f8fa3b70cc9d",
+          "userPrompt": "410c0726d2ae7417550d3dd4517e349de14d09d3410a90613011ddde84a6f539",
+          "schema": "775cfadc46fcda6766678543c94c01239445ce8906a1da05ce22449e3757e6cc",
+          "maxOutputTokens": "bfa0ec8bdf2946547879d50a68687ea32e2fa628db187357415858b633d194d9",
+          "previousAttempt": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        }
+      },
+      "latencyMs": 6301,
+      "response": {
+        "text": "{\"document_type\":{\"value\":\"invoice\",\"confidence\":0.99,\"source_text\":\"INVOICE\",\"clarifying_question\":\"\"},\"title\":{\"value\":\"INVOICE\",\"confidence\":0.99,\"source_text\":\"INVOICE\",\"clarifying_question\":\"\"},\"sender_name\":{\"value\":\"Northwind Office Supply Inc.\",\"confidence\":0.99,\"source_text\":\"Northwind Office Supply Inc.\",\"clarifying_question\":\"\"},\"recipient_name\":{\"value\":\"Contoso Dental Group LLC\",\"confidence\":0.99,\"source_text\":\"Contoso Dental Group LLC\",\"clarifying_question\":\"\"},\"document_date\":{\"value\":\"2026-08-14\",\"confidence\":0.99,\"source_text\":\"Invoice date August 14, 2026\",\"clarifying_question\":\"\"},\"due_date\":{\"value\":\"2026-09-13\",\"confidence\":0.99,\"source_text\":\"Due date September 13, 2026\",\"clarifying_question\":\"\"},\"reference_number\":{\"value\":\"NW-2026-0417\",\"confidence\":0.99,\"source_text\":\"Invoice no. NW-2026-0417\",\"clarifying_question\":\"\"},\"total_amount\":{\"value\":\"483.34\",\"confidence\":0.99,\"source_text\":\"Total due (USD) $483.34\",\"clarifying_question\":\"\"},\"currency\":{\"value\":\"USD\",\"confidence\":0.99,\"source_text\":\"Total due (USD)\",\"clarifying_question\":\"\"},\"summary\":{\"value\":\"Invoice from Northwind Office Supply Inc. for office supplies delivered to Contoso Dental Group LLC.\",\"confidence\":0.95,\"source_text\":\"INVOICE, Description, Copy paper, letter size, 10 reams per case, Toner cartridge TN-760, black, Desk organizer, mesh\",\"clarifying_question\":\"\"}}",
+        "inputTokens": 5410,
+        "outputTokens": 419,
+        "model": "claude-haiku-4-5-20251001"
+      },
+      "error": null
+    }
+  ]
+}

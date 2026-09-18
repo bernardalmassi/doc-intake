@@ -10,7 +10,8 @@
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
-    "test:db": "supabase db query --linked -f supabase/tests/extraction_stale_runs.sql"
+    "test:db": "supabase db query --linked -f supabase/tests/extraction_stale_runs.sql",
+    "eval": "node evals/run.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.126.0",

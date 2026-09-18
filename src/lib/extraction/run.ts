@@ -37,6 +37,8 @@ import type { SupportedMimeType } from "./sniff";
 export type RunInput = {
   bytes: Uint8Array;
   mimeType: SupportedMimeType;
+  // Never sent to a provider: any member can choose or rename it, so it is
+  // attacker-controlled. Kept only so the caller's signature is unchanged.
   filename: string;
   primary: ExtractionProvider;
   fallback: ExtractionProvider | null;
@@ -101,9 +103,8 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
   const base: ExtractionRequest = {
     bytes: input.bytes,
     mimeType: input.mimeType,
-    filename: input.filename,
     systemPrompt: SYSTEM_PROMPT,
-    userPrompt: userPrompt(input.filename),
+    userPrompt: userPrompt(),
     schema,
     maxOutputTokens: MAX_OUTPUT_TOKENS,
   };
