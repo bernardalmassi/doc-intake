@@ -13,7 +13,7 @@
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
-    "test:db": "supabase db query --linked -f supabase/tests/extraction_stale_runs.sql",
+    "test:db": "node scripts/test-db.mjs",
     "eval": "node evals/run.mjs"
   },
   "dependencies": {

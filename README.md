@@ -75,18 +75,41 @@ and open http://localhost:3000.
 |---|---|---|
 | `npm run test:unit` | `tests/unit/`: validation, gating, the orchestrator with fake providers, real SDK error handling over a fake `fetch`, the output guard and injection fixtures, the logger's redaction, the error taxonomy | nothing: no database, no network, no secrets |
 | `npm test` | the unit tests plus `tests/tenant-isolation.test.ts` and `tests/extraction.test.ts` against a real Supabase project | `.env.test` |
-| `npm run test:db` | `supabase/tests/extraction_stale_runs.sql`, the stale-run reaper, in a rolled-back transaction | a linked Supabase CLI |
+| `npm run test:db` | `supabase/tests/extraction_stale_runs.sql`, the stale-run reaper, in a rolled-back transaction, against the test project | `.env.test` and a logged-in Supabase CLI |
 | `npm run eval` | the offline eval: recorded provider answers replayed and scored (see [Evals](#evals)) | nothing |
 | `npm run typecheck` | `next typegen` then `tsc --noEmit` | nothing |
 
-The Supabase suites sign up five throwaway users per run with only the publishable key and assert, as real signed-in users, what each can and can't do: tenant isolation for rows, files and memberships, the upload rules, role changes, the spend ceilings and rate limit, cost computed in the database, and that runs and fields can't be read across tenants or written by anyone. They delete everything they create and fail if cleanup doesn't finish. To run them:
+The Supabase suites sign up five throwaway users per run with only the publishable key and assert, as real signed-in users, what each can and can't do: tenant isolation for rows, files and memberships, the upload rules, role changes, the spend ceilings and rate limit, cost computed in the database, and that runs and fields can't be read across tenants or written by anyone. They delete everything they create and fail if cleanup doesn't finish.
 
-1. Apply every migration to the project (above).
-2. Turn email confirmation off (Authentication → Sign In / Providers → Email), since the tests need a session straight from sign-up.
-3. Copy `.env.test.example` to `.env.test` and fill in the project URL and publishable key. Never the service role key. Vitest loads only `SUPABASE_TEST_*` variables and blanks both provider keys, so a provider key can't reach a test even from the shell.
-4. Run `npm test`: 792 unit tests and 56 Supabase tests, about 30 seconds. Sign-ups count toward the project's auth rate limit, so many runs in a row may be throttled.
+**Two projects.** The tests run against their own Supabase project, never the app's. The extraction suite forges spend up to the monthly ceilings (1 USD per tenant, 3 USD across all tenants). The global ceiling counts every tenant in a project, so against the app's project a test run would spend the app's real budget and could pause extraction for every user until the month ends. So:
 
-**CI** (`.github/workflows/ci.yml`) runs type check, lint, build, the unit tests and the offline evals on every push and pull request, with no secrets. The Supabase suites need the `SUPABASE_TEST_URL` and `SUPABASE_TEST_PUBLISHABLE_KEY` repository secrets and run only when started by hand (Actions → CI → Run workflow → "Also run the Supabase suites"), one at a time, never cancelled mid-run. Those secrets aren't set yet, so the Supabase suites have so far been run locally only.
+| | App project | Test project |
+|---|---|---|
+| Used by | `npm run dev`, the deployed app | `npm test`, `npm run test:db` |
+| Configured in | `.env.local` (`NEXT_PUBLIC_SUPABASE_URL`, publishable key, provider keys) | `.env.test` (`SUPABASE_TEST_URL`, `SUPABASE_TEST_PUBLISHABLE_KEY`) |
+| Migrations | `npx supabase db push` (the CLI is linked to it) | `npx supabase db push --project-ref <test ref>` |
+| Email confirmation | as the app needs it | off |
+
+Every migration goes to both projects, the test project first. `scripts/supabase-test-target.mjs` makes both Vitest suites and `test:db` refuse to run when the test URL has the same project ref as, or the test key equals, the app's (from any `.env*` file Next.js reads, or `SUPABASE_APP_URL` in the environment). They also refuse when there is no app project to compare against, so a missing `.env.local` doesn't silently skip the check. `test:db` passes the test project's ref to the CLI, so the CLI stays linked to the app's project.
+
+To run them:
+
+1. Create a second Supabase project for tests and apply every migration to it: `npx supabase db push --project-ref <test ref>` (show `--dry-run` first).
+2. Turn email confirmation off on it (Authentication → Sign In / Providers → Email), since the tests need a session straight from sign-up.
+3. Copy `.env.test.example` to `.env.test` and fill in the **test** project's URL and publishable key, and `SUPABASE_TEST_EMAIL`: a real mailbox the test users sign up on as plus-addresses, since hosted Supabase refuses `example.com`. Never a secret or service role key. Vitest loads only `SUPABASE_TEST_*` variables and blanks both provider keys, so a provider key can't reach a test even from the shell.
+4. Run `npm test`. Sign-ups count toward the test project's auth rate limit, so many runs in a row may be throttled.
+
+**CI** (`.github/workflows/ci.yml`) runs type check, lint, build, the unit tests and the offline evals on every push and pull request, with no secrets. The Supabase suites run only when started by hand (Actions → CI → Run workflow → "Also run the Supabase suites"), one at a time, never cancelled mid-run. They need these repository settings, none of which are set yet, so the suites have so far run only locally:
+
+| Name | Kind | Value |
+|---|---|---|
+| `SUPABASE_TEST_URL` | secret | the test project's URL |
+| `SUPABASE_TEST_PUBLISHABLE_KEY` | secret | the test project's publishable key |
+| `SUPABASE_TEST_EMAIL` | secret | a real mailbox; each test user signs up as a plus-address on it, because hosted Supabase refuses example and test domains ("Example and test domains are currently not supported"). With email confirmation off, nothing is sent |
+| `SUPABASE_TEST_EMAIL_DOMAIN` | secret, optional | instead of `SUPABASE_TEST_EMAIL`, a domain for generated addresses, for a project that accepts it |
+| `SUPABASE_APP_URL` | variable | the app project's URL, which the guard compares against. It isn't secret; the browser sees it |
+
+CI doesn't run `test:db`. The Supabase CLI reaches a project through a personal access token (`SUPABASE_ACCESS_TOKEN`), and a token is scoped to the whole account, the app project included. Putting one in CI would give the workflow write access to production. Run it locally.
 
 ## Evals
 

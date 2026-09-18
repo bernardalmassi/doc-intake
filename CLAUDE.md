@@ -20,14 +20,14 @@ npx supabase migration new <name>   # new timestamped file in supabase/migration
 npm run test:unit                   # tests/unit only: no database, no network, no secrets (what CI runs)
 npm test                            # everything: tests/unit plus the tenant isolation + extraction suites against the project in .env.test
 npx vitest run -t "cannot upload"   # run tests whose name matches
-npm run test:db                     # rolled-back SQL test of the stale-run reaper, via the CLI against the linked project
+npm run test:db                     # rolled-back SQL test of the stale-run reaper, via the CLI against the test project (by ref)
 npm run eval                        # replay the recorded provider answers for every fixture in evals/, score, check (free, no secrets)
 npm run eval -- --live              # re-record missing or stale fixtures against the real providers (costs money; capped)
 ```
 
-CI (`.github/workflows/ci.yml`) runs typecheck, lint, build, `test:unit` and `npm run eval` (offline replay) on every push and pull request, with placeholder `NEXT_PUBLIC_*` values and no secrets; actions are pinned to commit SHAs. The Supabase suites run there only when started by hand with the `SUPABASE_TEST_*` repository secrets, serialized and never cancelled. No such secrets are set yet, so so far they have only been run locally. Tests that need no database go in `tests/unit/` and must not import `server-only` modules.
+CI (`.github/workflows/ci.yml`) runs typecheck, lint, build, `test:unit` and `npm run eval` (offline replay) on every push and pull request, with placeholder `NEXT_PUBLIC_*` values and no secrets; actions are pinned to commit SHAs. The Supabase suites run there only when started by hand with the `SUPABASE_TEST_*` repository secrets and the `SUPABASE_APP_URL` repository variable, serialized and never cancelled. No such secrets are set yet, so so far they have only been run locally. Tests that need no database go in `tests/unit/` and must not import `server-only` modules.
 
-`npm test` hits a real Supabase project with real sign-ups (see README "Tests"): it needs `.env.test`, all migrations applied, and email confirmation off. It uses only the publishable key; keep it that way, since the point is to exercise RLS as a signed-in user. No test calls a model: the orchestrator is tested with fake providers, and Vitest only loads `SUPABASE_TEST_*` variables and blanks `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, so provider keys can't reach it even from the shell.
+`npm test` hits a real Supabase project with real sign-ups (see README "Tests"): the separate **test** project (`doc-intake-test`, `jqhqvtkhijrrvhfwseaq`), never the app's (`rimxdhisbmhjhjdvultm`). It needs `.env.test`, all migrations applied there, and email confirmation off. `scripts/supabase-test-target.mjs` makes both suites and `test:db` refuse to run if the test URL or key is the app's. Every migration goes to both projects, the test project first: `npx supabase db push --project-ref jqhqvtkhijrrvhfwseaq` (the CLI stays linked to the app project). It uses only the publishable key; keep it that way, since the point is to exercise RLS as a signed-in user. No test calls a model: the orchestrator is tested with fake providers, and Vitest only loads `SUPABASE_TEST_*` variables and blanks `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, so provider keys can't reach it even from the shell.
 
 ## Stack
 

@@ -459,10 +459,14 @@ Every "cannot" assertion is paired with a control that reads the data back as an
 
 ### How to run it
 
-1. Apply all migrations to the target project: `npx supabase db push`.
-2. Turn off email confirmation on that project, since the test needs a session straight from sign-up.
-3. Copy `.env.test.example` to `.env.test` and set `SUPABASE_TEST_URL` and `SUPABASE_TEST_PUBLISHABLE_KEY`. Tests read only `SUPABASE_TEST_*` variables, so they can't pick up `.env.local` (and so no provider key can reach them: no test calls a model).
-4. Run `npm test`. Each run makes five sign-ups (three for the isolation suite, two for the extraction suite), which count toward Supabase Auth's sign-up rate limit. `npm run test:db` runs the SQL reaper test through the Supabase CLI against the linked project.
+The suites run against a **separate test project**, never the app's (README, "Tests", has the two-project table). The extraction suite forges spend up to both monthly ceilings, and the global ceiling counts every tenant in a project, so against the app's project a test run would consume the app's real budget and could pause extraction for every user until the month ends. `scripts/supabase-test-target.mjs` enforces the split: both Vitest suites and `npm run test:db` refuse to start when `SUPABASE_TEST_URL` has the same project ref as `NEXT_PUBLIC_SUPABASE_URL` in any `.env*` file Next.js reads or `SUPABASE_APP_URL` in the environment, or when the test publishable key is the app's, or when no app project is known to compare against. `tests/unit/supabase-target.test.ts` covers the check. The check runs before any sign-up; it was also run against the real app URL and refused.
+
+1. Apply all migrations to the test project: `npx supabase db push --project-ref <test ref>` (the CLI stays linked to the app's project).
+2. Turn off email confirmation on the test project, since the test needs a session straight from sign-up.
+3. Copy `.env.test.example` to `.env.test` and set `SUPABASE_TEST_URL` and `SUPABASE_TEST_PUBLISHABLE_KEY` to the test project's. Tests read only `SUPABASE_TEST_*` variables from files, so they can't pick up `.env.local`'s keys (and so no provider key can reach them: no test calls a model).
+4. Run `npm test`. Each run makes five sign-ups (three for the isolation suite, two for the extraction suite), which count toward the test project's sign-up rate limit. `npm run test:db` runs the SQL reaper test through the Supabase CLI against the test project, by ref.
+
+For CI, the suites need the `SUPABASE_TEST_URL`, `SUPABASE_TEST_PUBLISHABLE_KEY` and `SUPABASE_TEST_EMAIL` secrets (the last a real mailbox for plus-addressed sign-ups; hosted Supabase refuses example and test domains) and the `SUPABASE_APP_URL` variable, and CI refuses to start them without all three. `test:db` stays local: the CLI needs a personal access token, which is scoped to the whole Supabase account, production included.
 
 See the README section "Tenant isolation test" for details.
 

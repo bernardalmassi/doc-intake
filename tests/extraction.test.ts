@@ -34,16 +34,11 @@ import { classifyRunError, isCostEstimated } from "@/lib/errors";
 import { failedCloseAttempts, runExtraction, toCloseParams, type RunOutcome } from "@/lib/extraction/run";
 import { FIELD_NAMES } from "@/lib/extraction/schema";
 import { answer, fakeProvider, pdfBytes, validJson } from "./helpers/fake-provider";
+import { SUPABASE_TEST_PUBLISHABLE_KEY, SUPABASE_TEST_URL, testEmail } from "./helpers/supabase-target";
 
-const url = process.env.SUPABASE_TEST_URL;
-const publishableKey = process.env.SUPABASE_TEST_PUBLISHABLE_KEY;
-const emailDomain = process.env.SUPABASE_TEST_EMAIL_DOMAIN || "example.com";
-
-if (!url || !publishableKey) {
-  throw new Error(
-    "Set SUPABASE_TEST_URL and SUPABASE_TEST_PUBLISHABLE_KEY in .env.test (see .env.test.example).",
-  );
-}
+// the test project, never the app's: the import throws if they match
+const url = SUPABASE_TEST_URL;
+const publishableKey = SUPABASE_TEST_PUBLISHABLE_KEY;
 
 const BUCKET = "documents";
 const MIN_PASSWORD_LENGTH = 15;
@@ -84,14 +79,14 @@ const RUN_COLUMNS =
 const FIELD_COLUMNS = "document_id, run_id, name, value, confidence, band, source_text, clarifying_question";
 
 function newClient() {
-  return createClient(url!, publishableKey!, {
+  return createClient(url, publishableKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }
 
 async function signUpUser(label: string): Promise<TestUser> {
   const client = newClient();
-  const email = `extraction-${label}-${runId}@${emailDomain}`;
+  const email = testEmail(`extraction-${label}-${runId}`);
   const password = `${randomUUID()}Aa1!`;
   expect(password.length).toBeGreaterThanOrEqual(MIN_PASSWORD_LENGTH);
   const { data, error } = await client.auth.signUp({ email, password });

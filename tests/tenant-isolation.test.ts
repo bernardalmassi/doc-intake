@@ -14,16 +14,11 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { SUPABASE_TEST_PUBLISHABLE_KEY, SUPABASE_TEST_URL, testEmail } from "./helpers/supabase-target";
 
-const url = process.env.SUPABASE_TEST_URL;
-const publishableKey = process.env.SUPABASE_TEST_PUBLISHABLE_KEY;
-const emailDomain = process.env.SUPABASE_TEST_EMAIL_DOMAIN || "example.com";
-
-if (!url || !publishableKey) {
-  throw new Error(
-    "Set SUPABASE_TEST_URL and SUPABASE_TEST_PUBLISHABLE_KEY in .env.test (see .env.test.example).",
-  );
-}
+// the test project, never the app's: the import throws if they match
+const url = SUPABASE_TEST_URL;
+const publishableKey = SUPABASE_TEST_PUBLISHABLE_KEY;
 
 const BUCKET = "documents";
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -47,7 +42,7 @@ const ROW_COLUMNS =
   "id, tenant_id, storage_path, status, size_bytes, mime_type, filename, uploaded_by";
 
 function newClient() {
-  return createClient(url!, publishableKey!, {
+  return createClient(url, publishableKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }
@@ -61,7 +56,7 @@ function pdfBlob(marker: string) {
 
 async function signUpUser(label: string): Promise<TestUser> {
   const client = newClient();
-  const email = `tenant-isolation-${label}-${runId}@${emailDomain}`;
+  const email = testEmail(`tenant-isolation-${label}-${runId}`);
   // 40 characters: over the 15 minimum, under Supabase's 72 maximum
   const password = `${randomUUID()}Aa1!`;
   expect(password.length).toBeGreaterThanOrEqual(MIN_PASSWORD_LENGTH);
@@ -879,7 +874,7 @@ describe("auth configuration", () => {
     const password = "abcdefghijklm1"; // 14 characters
     expect(password).toHaveLength(MIN_PASSWORD_LENGTH - 1);
     const { data, error } = await client.auth.signUp({
-      email: `tenant-isolation-short-${runId}@${emailDomain}`,
+      email: testEmail(`tenant-isolation-short-${runId}`),
       password,
     });
 

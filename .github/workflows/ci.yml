@@ -3,8 +3,9 @@
 # needs a secret.
 #
 # The Supabase suites (tests/tenant-isolation.test.ts, tests/extraction.test.ts)
-# sign up real users against a real project, so they need the SUPABASE_TEST_*
-# repository secrets and run only when started by hand (Actions → CI → Run
+# sign up real users against the separate test project, never the app's, so
+# they need the SUPABASE_TEST_* repository secrets and the SUPABASE_APP_URL
+# repository variable and run only when started by hand (Actions → CI → Run
 # workflow → "Also run the Supabase suites"). They are serialized across the
 # whole repository because two concurrent runs would see each other's forged
 # spend in the global ceiling test, and they are never cancelled mid-run,
@@ -77,13 +78,18 @@ jobs:
     steps:
       # The secrets are exposed only to the two steps that need them, not to
       # npm ci and its install scripts.
+      # SUPABASE_APP_URL is a repository variable, not a secret (the app's
+      # URL is public): the suites refuse to run when the test URL is the
+      # app's project, and refuse outright when they have nothing to
+      # compare against (scripts/supabase-test-target.mjs).
       - name: Require the test project secrets
         env:
           SUPABASE_TEST_URL: ${{ secrets.SUPABASE_TEST_URL }}
           SUPABASE_TEST_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_TEST_PUBLISHABLE_KEY }}
+          SUPABASE_APP_URL: ${{ vars.SUPABASE_APP_URL }}
         run: |
-          if [ -z "$SUPABASE_TEST_URL" ] || [ -z "$SUPABASE_TEST_PUBLISHABLE_KEY" ]; then
-            echo "::error::Set the SUPABASE_TEST_URL and SUPABASE_TEST_PUBLISHABLE_KEY repository secrets (see README, Tests)."
+          if [ -z "$SUPABASE_TEST_URL" ] || [ -z "$SUPABASE_TEST_PUBLISHABLE_KEY" ] || [ -z "$SUPABASE_APP_URL" ]; then
+            echo "::error::Set the SUPABASE_TEST_URL and SUPABASE_TEST_PUBLISHABLE_KEY repository secrets and the SUPABASE_APP_URL repository variable (see README, Tests)."
             exit 1
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -98,5 +104,7 @@ jobs:
         env:
           SUPABASE_TEST_URL: ${{ secrets.SUPABASE_TEST_URL }}
           SUPABASE_TEST_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_TEST_PUBLISHABLE_KEY }}
+          SUPABASE_TEST_EMAIL: ${{ secrets.SUPABASE_TEST_EMAIL }}
           SUPABASE_TEST_EMAIL_DOMAIN: ${{ secrets.SUPABASE_TEST_EMAIL_DOMAIN }}
+          SUPABASE_APP_URL: ${{ vars.SUPABASE_APP_URL }}
         run: npm test
