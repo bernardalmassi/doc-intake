@@ -5,13 +5,15 @@
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 // "18 Sep 2026, 04:12 UTC". Built by hand: Intl's en-GB month names differ
-// between ICU versions ("Sep" or "Sept").
-export function formatUtc(iso: string): string {
+// between ICU versions ("Sep" or "Sept"). A table whose header already says
+// UTC passes zone: false.
+export function formatUtc(iso: string, { zone = true }: { zone?: boolean } = {}): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
   const hours = String(date.getUTCHours()).padStart(2, "0");
   const minutes = String(date.getUTCMinutes()).padStart(2, "0");
-  return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}, ${hours}:${minutes} UTC`;
+  const time = `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}, ${hours}:${minutes}`;
+  return zone ? `${time} UTC` : time;
 }
 
 const integerFormat = new Intl.NumberFormat("en-US");
@@ -43,4 +45,18 @@ const KIND_LABELS: Record<string, string> = {
 export function fileKind(mimeType: string | null | undefined): string | null {
   if (!mimeType) return null;
   return KIND_LABELS[mimeType] ?? null;
+}
+
+// US dollars. Runs cost fractions of a cent, so always four decimals: they
+// line up in a column and the smallest real run still shows digits.
+// Anything above zero that would round to $0.0000 says so.
+export function formatUsd(value: number): string {
+  if (value > 0 && value < 0.00005) return "<$0.0001";
+  return `$${value.toFixed(4)}`;
+}
+
+// Milliseconds as seconds: "3.2 s", "72 s".
+export function formatSeconds(ms: number): string {
+  const seconds = ms / 1000;
+  return `${seconds < 100 ? seconds.toFixed(1) : Math.round(seconds)}${NBSP}s`;
 }

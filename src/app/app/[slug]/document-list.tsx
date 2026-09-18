@@ -1,11 +1,12 @@
 import { badgeClass, errorClass, hintClass, reviewBadgeClass, sectionTitleClass } from "@/app/ui";
 import { EXTRACTION_LIMITS } from "@/lib/extraction/config";
 import { DocumentActions, type ExtractMode } from "./document-actions";
-import { ExtractionPanel, LatestRun } from "./extraction-panel";
+import { ExtractionPanel } from "./extraction-panel";
 import { fieldSummary } from "./fields";
 import { fileKind, formatBytes, formatUtc } from "./format";
 import { AlertIcon, ChevronRightIcon, DocumentsIcon, SpinnerIcon } from "./icons";
 import { describeRunError, DOCUMENTS_HEADING_ID, runErrorAdvice, statusLabel } from "./messages";
+import { RunHistory, runHistoryMeta } from "./run-history";
 import type { DocumentEntry } from "./types";
 
 type ListProps = {
@@ -145,15 +146,29 @@ function DocumentItem({ entry, slug, canManage }: { entry: DocumentEntry; slug: 
         // Open from the start when the document needs review: the fields
         // to check are the reason to be here.
         <details open={review} className="group mt-4 border-t border-line pt-3">
-          <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 text-sm font-medium [&::-webkit-details-marker]:hidden">
-            <ChevronRightIcon className="text-muted group-open:rotate-90" />
-            Extracted fields
-          </summary>
+          <Summary>Extracted fields</Summary>
           <ExtractionPanel fields={fields} />
         </details>
       )}
-      {runs[0] && <LatestRun run={runs[0]} />}
+      {runs.length > 0 && (
+        <details className="group mt-4 border-t border-line pt-3">
+          <Summary meta={runHistoryMeta(runs)}>Run history</Summary>
+          <RunHistory runs={runs} filename={document.filename} staleRun={staleRun} />
+        </details>
+      )}
     </article>
+  );
+}
+
+// The clickable line of a disclosure: a chevron that turns when open, the
+// name, and optional muted detail.
+function Summary({ children, meta }: { children: React.ReactNode; meta?: string }) {
+  return (
+    <summary className="flex w-fit cursor-pointer list-none flex-wrap items-center gap-x-1.5 text-sm font-medium [&::-webkit-details-marker]:hidden">
+      <ChevronRightIcon className="text-muted group-open:rotate-90" />
+      <span className="mr-1.5">{children}</span>
+      {meta && <span className="font-normal text-muted tabular-nums">{meta}</span>}
+    </summary>
   );
 }
 

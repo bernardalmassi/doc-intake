@@ -1,8 +1,7 @@
 import { hintClass } from "@/app/ui";
 import { BAND_LABELS, fieldLabel } from "./fields";
-import { formatCount, formatUtc } from "./format";
 import { AlertIcon, QuestionIcon } from "./icons";
-import type { FieldRow, RunRow } from "./types";
+import type { FieldRow } from "./types";
 
 // The fields of one document, in schema order. Each shows its value (or
 // "Not found"), how sure the model was as a number and in words, the text
@@ -79,21 +78,5 @@ function Field({ field }: { field: FieldRow }) {
         )}
       </dd>
     </div>
-  );
-}
-
-// The latest run in one line. Replaced by the full run history next.
-export function LatestRun({ run }: { run: RunRow }) {
-  return (
-    <p className={`mt-4 border-t border-line pt-3 ${hintClass} tabular-nums`}>
-      Last run {run.status}
-      {run.provider && ` with ${run.provider} (${run.model})`}
-      {run.input_tokens !== null &&
-        `, ${formatCount(run.input_tokens)} in / ${formatCount(run.output_tokens ?? 0)} out tokens`}
-      {run.cost_usd !== null && `, $${Number(run.cost_usd).toFixed(4)}`}
-      {run.latency_ms !== null && `, ${(run.latency_ms / 1000).toFixed(1)} s`}
-      {" · "}
-      {formatUtc(run.started_at)}
-    </p>
   );
 }
