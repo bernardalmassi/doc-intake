@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useMemo, useState } from "react";
+import { flushSync } from "react-dom";
 import type { FormState } from "@/app/auth/actions";
 
 // Everything the organization page does to a document, behind one context.
@@ -52,7 +53,18 @@ export function OperationsProvider({
   children: React.ReactNode;
 }) {
   const [announcement, setAnnouncement] = useState("");
-  const value = useMemo(() => ({ ...operations, announce: setAnnouncement }), [operations]);
+  const value = useMemo(
+    () => ({
+      ...operations,
+      // Emptied first, so the same words twice in a row (two files with
+      // one name, deleted one after the other) are a change, and read.
+      announce: (message: string) => {
+        flushSync(() => setAnnouncement(""));
+        setAnnouncement(message);
+      },
+    }),
+    [operations],
+  );
   return (
     <OperationsContext value={value}>
       {children}

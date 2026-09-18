@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { buttonClass, errorClass, ghostButtonClass, hintClass, secondaryButtonClass } from "@/app/ui";
+import { buttonClass, errorClass, ghostButtonClass, hintClass, secondaryButtonClass, textTargetClass } from "@/app/ui";
 import { fileKind, formatBytes } from "./format";
 import { AlertIcon, CheckIcon, DotIcon, FileIcon, SpinnerIcon, UploadIcon } from "./icons";
 import {
@@ -59,9 +59,7 @@ export function UploadForm({
   // Where focus goes after the next render. Views swap buttons in and out,
   // and a keyboard user must not be dropped at the top of the page.
   const focusAfterRender = useRef<"choose" | "primary" | null>(null);
-  const id = useId();
-  const hintId = `${id}-hint`;
-  const messageId = `${id}-message`;
+  const hintId = useId();
 
   useEffect(() => {
     const target = focusAfterRender.current;
@@ -208,11 +206,15 @@ export function UploadForm({
             <div className="min-w-0">
               <p className="flex flex-wrap items-center gap-x-2 gap-y-2">
                 <span className="pointer-coarse:hidden">{dragging ? "Drop it here" : "Drag a file here, or"}</span>
+                {/* Described by the limits only. The last result is announced
+                    by the regions below as it happens; focus often lands here
+                    at that same moment, and a description holding the result
+                    would read it out a second time. */}
                 <button
                   ref={chooseButton}
                   type="button"
                   onClick={() => input.current?.click()}
-                  aria-describedby={`${hintId} ${messageId}`}
+                  aria-describedby={hintId}
                   className={secondaryButtonClass}
                 >
                   Choose a file
@@ -257,22 +259,29 @@ export function UploadForm({
         )}
       </div>
 
-      {/* Always rendered, so screen readers announce what appears in it.
-          min-h keeps the list below from jumping when a line appears. */}
-      <div id={messageId} aria-live="polite" className="mt-2 min-h-5 text-sm">
-        {state.kind === "idle" && state.uploaded && (
-          <p className="flex items-start gap-1.5">
-            <CheckIcon className="mt-0.5" />
-            <span className="min-w-0 [overflow-wrap:anywhere]">Uploaded {state.uploaded}.</span>
-          </p>
-        )}
-        {state.kind === "rejected" && (
-          <p role="alert" className={`flex items-start gap-1.5 ${errorClass}`}>
-            <AlertIcon className="mt-0.5" />
-            <span className="min-w-0 [overflow-wrap:anywhere]">{describeRejection(state.reason, state.file)}</span>
-          </p>
-        )}
-        {state.kind === "uploading" && <span className="sr-only">{UPLOAD_STEPS[state.step - 1]}…</span>}
+      {/* Two regions, always rendered so what appears in them is announced,
+          and side by side rather than nested so nothing is announced twice:
+          polite for the steps and the result, alert for a rejected file.
+          (A failed upload is announced inside the file card.) min-h keeps
+          the list below from jumping when a line appears. */}
+      <div className="mt-2 min-h-5 text-sm">
+        <div aria-live="polite">
+          {state.kind === "idle" && state.uploaded && (
+            <p className="flex items-start gap-1.5">
+              <CheckIcon className="mt-0.5" />
+              <span className="min-w-0 [overflow-wrap:anywhere]">Uploaded {state.uploaded}.</span>
+            </p>
+          )}
+          {state.kind === "uploading" && <span className="sr-only">{UPLOAD_STEPS[state.step - 1]}…</span>}
+        </div>
+        <div role="alert">
+          {state.kind === "rejected" && (
+            <p className={`flex items-start gap-1.5 ${errorClass}`}>
+              <AlertIcon className="mt-0.5" />
+              <span className="min-w-0 [overflow-wrap:anywhere]">{describeRejection(state.reason, state.file)}</span>
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -305,14 +314,20 @@ function ChosenFile({
 
       {state.kind === "uploading" && <UploadSteps current={state.step} />}
 
-      {state.kind === "failed" && (
-        <div className="mt-4">
-          <p role="alert" className={`flex items-start gap-1.5 ${errorClass}`}>
+      {/* Rendered while the card is (chosen, uploading, failed), so it is
+          in the page before a failure is written into it. */}
+      <div role="alert">
+        {state.kind === "failed" && (
+          <p className={`mt-4 flex items-start gap-1.5 ${errorClass}`}>
             <AlertIcon className="mt-0.5" />
             <span className="min-w-0">
               The upload didn&apos;t finish. {describeUploadFailure(state.failure)}
             </span>
           </p>
+        )}
+      </div>
+      {state.kind === "failed" && (
+        <>
           {state.failure.rowCreated && (
             <p className={`mt-1 ${hintClass}`}>
               An unfinished entry for this file is now in the list below.{" "}
@@ -320,10 +335,10 @@ function ChosenFile({
             </p>
           )}
           <details className="mt-2 text-sm">
-            <summary className="w-fit cursor-pointer text-muted">Technical details</summary>
+            <summary className={`w-fit cursor-pointer text-muted ${textTargetClass}`}>Technical details</summary>
             <p className="mt-1 text-muted [overflow-wrap:anywhere]">{uploadFailureDetail(state.failure)}</p>
           </details>
-        </div>
+        </>
       )}
     </>
   );

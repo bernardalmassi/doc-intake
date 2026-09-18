@@ -1,5 +1,7 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { AccountControls, SiteHeader } from "@/app/components/site-header";
+import { cache } from "react";
+import { AccountControls, MAIN_ID, SiteHeader } from "@/app/components/site-header";
 import { pageClass } from "@/app/ui";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -20,21 +22,38 @@ function requestTime(): number {
   return Date.now();
 }
 
-export default async function OrganizationPage({ params }: PageProps<"/app/[slug]">) {
-  const user = await requireUser();
-  const { slug } = await params;
+// The organization at this address, as the signed-in user sees it: the
+// page and its title both need it, and cache() makes that one query per
+// request. RLS hides tenants the user isn't a member of, so a slug the user
+// can't access and a slug that doesn't exist both come back as null, and
+// both callers turn that into the same 404. Signed out, requireUser
+// redirects to sign in first, so the title never decides that.
+const getOrganization = cache(async (slug: string): Promise<Organization | null> => {
+  await requireUser();
   const supabase = await createClient();
-
-  // RLS hides tenants the user isn't a member of, so a slug the user can't
-  // access and a slug that doesn't exist both end up here as "no row", and
-  // get the same 404.
-  const { data: tenant, error: tenantError } = await supabase
+  const { data, error } = await supabase
     .from("tenants")
     .select("id, name, slug")
     .eq("slug", slug)
     .maybeSingle<Organization>();
-  if (tenantError) throw tenantError;
+  if (error) throw error;
+  return data;
+});
+
+// The organization's name, so the tab says which organization it is.
+export async function generateMetadata({ params }: PageProps<"/app/[slug]">): Promise<Metadata> {
+  const { slug } = await params;
+  const organization = await getOrganization(slug);
+  if (!organization) notFound();
+  return { title: organization.name };
+}
+
+export default async function OrganizationPage({ params }: PageProps<"/app/[slug]">) {
+  const user = await requireUser();
+  const { slug } = await params;
+  const tenant = await getOrganization(slug);
   if (!tenant) notFound();
+  const supabase = await createClient();
 
   const [membership, documentsResult, runsResult, fieldsResult] = await Promise.all([
     supabase
@@ -80,7 +99,7 @@ export default async function OrganizationPage({ params }: PageProps<"/app/[slug
       <SiteHeader>
         <AccountControls email={user.email} />
       </SiteHeader>
-      <main className={pageClass}>
+      <main id={MAIN_ID} className={pageClass}>
         <LiveOperations>
           <OrganizationView organization={tenant} role={role} entries={entries} />
         </LiveOperations>

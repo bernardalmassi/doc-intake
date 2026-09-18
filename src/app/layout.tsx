@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist } from "next/font/google";
 import { themeScript } from "./components/theme";
+import { SITE_NAME, SITE_SUMMARY } from "./site";
 import "./globals.css";
 
 // One family for everything, numbers included (with tabular-nums where
@@ -10,9 +11,12 @@ const geistSans = Geist({
   subsets: ["latin"],
 });
 
+// Each page sets a short title ("Sign in", an organization's name) and the
+// template adds the app's name, so tabs and history entries are told apart
+// by their first words. The landing page sets none and gets the name alone.
 export const metadata: Metadata = {
-  title: "doc-intake",
-  description: "Document intake",
+  title: { template: `%s · ${SITE_NAME}`, default: SITE_NAME },
+  description: SITE_SUMMARY,
 };
 
 // data-theme="dark" is the server default. The inline script in <head>

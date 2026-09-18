@@ -76,6 +76,7 @@ export function CredentialsFormView({ mode, state, pending, formAction }: ViewPr
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
   const checkEmailRef = useRef<HTMLHeadingElement>(null);
+  const echoRef = useRef<HTMLSpanElement>(null);
 
   // Controlled so it survives the reset React applies to a form after its
   // action runs. The password stays uncontrolled: React would mirror a
@@ -104,11 +105,13 @@ export function CredentialsFormView({ mode, state, pending, formAction }: ViewPr
   const showCheckEmail = isSignUp && !pending && Boolean(state.message) && state !== dismissed;
 
   // After a failed submit, focus goes to the field that needs fixing, whose
-  // description now includes the error. A message for the whole form is
-  // announced by its alert region and focus stays on the button. After a
-  // sign-up that needs confirming, focus goes to the panel's heading.
+  // description now includes the error (or, when focus is already there,
+  // the error goes to the alert region; see focusField). A message for the
+  // whole form is announced by its alert region and focus stays on the
+  // button. After a sign-up that needs confirming, focus goes to the
+  // panel's heading.
   useEffect(() => {
-    if (clientProblems) focusField(clientProblems, emailRef.current, passwordRef.current);
+    if (clientProblems) focusField(clientProblems, emailRef.current, passwordRef.current, echoRef.current);
   }, [clientProblems]);
 
   const lastState = useRef(state);
@@ -116,7 +119,7 @@ export function CredentialsFormView({ mode, state, pending, formAction }: ViewPr
     if (lastState.current === state) return;
     lastState.current = state;
     if (state.error) {
-      focusField(describeAuthError(state.error), emailRef.current, passwordRef.current);
+      focusField(describeAuthError(state.error), emailRef.current, passwordRef.current, echoRef.current);
     } else if (state.message) {
       checkEmailRef.current?.focus();
     }
@@ -133,6 +136,9 @@ export function CredentialsFormView({ mode, state, pending, formAction }: ViewPr
       event.preventDefault();
       return;
     }
+    // Emptied first, so the same error after this submit is a change, and
+    // is read again.
+    if (echoRef.current) echoRef.current.textContent = "";
     const found = validate(mode, emailRef.current, passwordRef.current);
     if (found) event.preventDefault();
     setClientProblems(found);
@@ -225,6 +231,8 @@ export function CredentialsFormView({ mode, state, pending, formAction }: ViewPr
 
       {/* Always in the page, so a message added to it is announced. */}
       <div role="alert">
+        {/* Written by focusField, never by React. */}
+        <span ref={echoRef} className="sr-only" />
         {problems.form && (
           <p className={`mt-5 max-w-sm rounded-md border border-danger px-3 py-2 ${errorClass}`}>
             {problems.form}
@@ -271,13 +279,24 @@ function validate(
   return Object.keys(problems).length > 0 ? problems : null;
 }
 
+// Focus on the field with the error, so the field is read with its
+// description, which includes the error. When focus is already in that
+// field (Enter pressed there), focusing it again reads nothing, so the
+// error is written into the alert region instead: announced once either
+// way.
 function focusField(
   problems: Problems,
   email: HTMLInputElement | null,
   password: HTMLInputElement | null,
+  echo: HTMLElement | null,
 ) {
-  if (problems.email) email?.focus();
-  else if (problems.password) password?.focus();
+  const field = problems.email ? email : problems.password ? password : null;
+  if (!field) return;
+  if (field === document.activeElement) {
+    if (echo) echo.textContent = problems.email ?? problems.password ?? "";
+  } else {
+    field.focus();
+  }
 }
 
 // A three-quarter ring. Turns only when the visitor allows motion; the

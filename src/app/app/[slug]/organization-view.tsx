@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { linkClass, pageTitleClass, sectionTitleClass } from "@/app/ui";
+import { linkClass, pageTitleClass, sectionTitleClass, textTargetClass } from "@/app/ui";
 import { DocumentList } from "./document-list";
 import { ChevronRightIcon } from "./icons";
 import { canManage, DOCUMENTS_HEADING_ID, ROLE_LABELS, roleAbilities } from "./messages";
@@ -25,7 +25,7 @@ export function OrganizationView({
       <nav aria-label="Breadcrumb">
         <ol className="flex flex-wrap items-center gap-x-1.5 text-sm text-muted">
           <li>
-            <Link href="/app" className={linkClass}>
+            <Link href="/app" className={`${linkClass} ${textTargetClass} inline-block`}>
               Organizations
             </Link>
           </li>

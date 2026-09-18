@@ -9,6 +9,7 @@ import {
   errorClass,
   linkClass,
   secondaryButtonClass,
+  textTargetClass,
 } from "@/app/ui";
 import { AlertIcon, CheckIcon, SpinnerIcon } from "./icons";
 import {
@@ -48,9 +49,7 @@ type Notice = (Explained & { tone: "progress" | "done" | "error" }) | null;
 // them.
 export function DocumentActions({ id, slug, filename, storagePath, canDownload, canDelete, extract }: Props) {
   const operations = useOperations();
-  const baseId = useId();
-  const messageId = `${baseId}-message`;
-  const questionId = `${baseId}-question`;
+  const questionId = useId();
   // The message shown is the one for the last thing the user did.
   const [last, setLast] = useState<"extract" | "delete" | "download" | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -202,32 +201,47 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
         )}
       </div>
 
-      {/* Always rendered, so what appears in it is announced. basis-64: it
-          sits beside the buttons when there is room, below them when not,
-          whatever it says. */}
-      <div id={messageId} aria-live="polite" className="flex min-w-0 flex-1 basis-64 items-center text-sm sm:min-h-9">
-        {confirming ? (
-          <p>
-            <span id={questionId}>
-              Delete this document and everything extracted from it? This can&apos;t be undone.
-            </span>{" "}
-            <button
-              ref={cancelButton}
-              type="button"
-              onClick={cancelDelete}
-              onKeyDown={onEscape}
-              onBlur={(event) => {
-                // Leaving the confirmation altogether disarms it too.
-                if (event.relatedTarget !== deleteButton.current) setConfirming(false);
-              }}
-              className={linkClass}
-            >
-              Cancel
-            </button>
-          </p>
-        ) : (
-          notice && <NoticeLine notice={notice} />
-        )}
+      {/* basis-64: the message sits beside the buttons when there is room,
+          below them when not, whatever it says. */}
+      <div className="flex min-w-0 flex-1 basis-64 items-center text-sm sm:min-h-9">
+        <div className="min-w-0 flex-1">
+          {/* Two regions, always rendered so what appears in them is
+              announced, and side by side rather than nested so nothing is
+              announced twice: polite for the question, progress and
+              results, alert for errors. The technical details stay outside
+              both, to be opened, not read out. */}
+          <div aria-live="polite">
+            {confirming ? (
+              <p>
+                <span id={questionId}>
+                  Delete this document and everything extracted from it? This can&apos;t be undone.
+                </span>{" "}
+                <button
+                  ref={cancelButton}
+                  type="button"
+                  onClick={cancelDelete}
+                  onKeyDown={onEscape}
+                  onBlur={(event) => {
+                    // Leaving the confirmation altogether disarms it too.
+                    if (event.relatedTarget !== deleteButton.current) setConfirming(false);
+                  }}
+                  className={`${linkClass} ${textTargetClass}`}
+                >
+                  Cancel
+                </button>
+              </p>
+            ) : (
+              notice && notice.tone !== "error" && <NoticeLine notice={notice} />
+            )}
+          </div>
+          <div role="alert">{!confirming && notice?.tone === "error" && <NoticeLine notice={notice} />}</div>
+          {!confirming && notice?.tone === "error" && notice.detail && (
+            <details className="mt-1 pl-5.5">
+              <summary className={`w-fit cursor-pointer text-muted ${textTargetClass}`}>Technical details</summary>
+              <p className="mt-1 text-muted [overflow-wrap:anywhere]">{notice.detail}</p>
+            </details>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -236,18 +250,10 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
 function NoticeLine({ notice }: { notice: NonNullable<Notice> }) {
   if (notice.tone === "error") {
     return (
-      <div className="min-w-0">
-        <p role="alert" className={`flex items-start gap-1.5 ${errorClass}`}>
-          <AlertIcon className="mt-0.5" />
-          <span className="min-w-0">{notice.text}</span>
-        </p>
-        {notice.detail && (
-          <details className="mt-1 pl-5.5">
-            <summary className="w-fit cursor-pointer text-muted">Technical details</summary>
-            <p className="mt-1 text-muted [overflow-wrap:anywhere]">{notice.detail}</p>
-          </details>
-        )}
-      </div>
+      <p className={`flex items-start gap-1.5 ${errorClass}`}>
+        <AlertIcon className="mt-0.5" />
+        <span className="min-w-0">{notice.text}</span>
+      </p>
     );
   }
   return (

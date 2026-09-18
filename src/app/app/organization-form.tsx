@@ -83,6 +83,7 @@ export function OrganizationForm({
   const nameRef = useRef<HTMLInputElement>(null);
   const addressRef = useRef<HTMLInputElement>(null);
   const submitRef = useRef<HTMLButtonElement>(null);
+  const echoRef = useRef<HTMLSpanElement>(null);
 
   const [name, setName] = useState(defaultName);
   // The address follows the name until the user types in it.
@@ -118,13 +119,23 @@ export function OrganizationForm({
 
   // When a submit comes back with a field error, move focus to that field:
   // its error is part of its description, so a screen reader reads it out.
-  // Otherwise, disabling the submit button while pending dropped focus if
-  // it was on the button, so put it back there, ready for another try.
+  // Focus that is already in the field (Enter pressed there) can't move to
+  // it, and nothing would be read, so the error goes to the alert region
+  // instead. Otherwise, disabling the submit button while pending dropped
+  // focus if it was on the button, so put it back there, ready for another
+  // try.
   const wasPending = useRef(pending);
   useEffect(() => {
+    // An echoed error goes when its field is edited and the error hides.
+    const echo = echoRef.current;
+    if (echo?.textContent && echo.textContent !== nameError && echo.textContent !== addressError) {
+      echo.textContent = "";
+    }
     if (wasPending.current && !pending) {
       const field = nameError ? nameRef.current : addressError ? addressRef.current : null;
-      if (field) {
+      if (field && field === document.activeElement) {
+        if (echo) echo.textContent = nameError ?? addressError;
+      } else if (field) {
         field.focus();
         field.setSelectionRange(field.value.length, field.value.length);
       } else if (!document.activeElement || document.activeElement === document.body) {
@@ -135,7 +146,15 @@ export function OrganizationForm({
   }, [pending, nameError, addressError]);
 
   return (
-    <form action={action} onSubmit={() => setChanged({ name: false, address: false })}>
+    <form
+      action={action}
+      onSubmit={() => {
+        setChanged({ name: false, address: false });
+        // Emptied first, so the same error after the next submit is a
+        // change, and is read again.
+        if (echoRef.current) echoRef.current.textContent = "";
+      }}
+    >
       <div>
         <label htmlFor={ids.name} className={labelClass}>
           Organization name
@@ -227,12 +246,18 @@ export function OrganizationForm({
         </button>
       </div>
 
-      {/* Always rendered, so a change inside it is announced. Empty, it
-          takes no space. */}
-      <p aria-live="polite" className="text-sm">
-        {pending && <span className="sr-only">Creating the organization…</span>}
-        {formError && <span className={`mt-3 block ${errorClass}`}>{formError}</span>}
+      {/* Always rendered, so a change inside them is announced, and side by
+          side rather than nested: polite for progress, alert for an error
+          (the echo of a field error, or one about the whole form). Empty,
+          they take no space. */}
+      <p aria-live="polite" className="sr-only">
+        {pending ? "Creating the organization…" : ""}
       </p>
+      <div role="alert" className="text-sm">
+        {/* Written by the effect above, never by React. */}
+        <span ref={echoRef} className="sr-only" />
+        {formError && <p className={`mt-3 ${errorClass}`}>{formError}</p>}
+      </div>
     </form>
   );
 }

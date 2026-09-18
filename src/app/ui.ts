@@ -36,6 +36,14 @@ export const errorClass = "text-sm text-danger";
 export const linkClass =
   "text-fg underline decoration-line-strong underline-offset-4 hover:decoration-fg";
 
+// For a text link or text button that stands on its own (a breadcrumb,
+// Cancel, the link under a form) and a disclosure's summary line: at least
+// 24px tall, WCAG 2.5.8's minimum target, without making its line any
+// taller. 2px of padding above and below, taken back by negative margins.
+// A link also needs inline-block, which gives it the full line height; a
+// link inside running text doesn't get this, so it can still wrap.
+export const textTargetClass = "py-0.5 -my-0.5";
+
 // Money, token counts, latency, sizes and times: add `tabular-nums` so
 // digits line up in columns and don't jitter as values change.
 

@@ -1,4 +1,4 @@
-import { badgeClass, errorClass, hintClass, reviewBadgeClass, sectionTitleClass } from "@/app/ui";
+import { badgeClass, errorClass, hintClass, reviewBadgeClass, sectionTitleClass, textTargetClass } from "@/app/ui";
 import { EXTRACTION_LIMITS } from "@/lib/extraction/config";
 import { DocumentActions, type ExtractMode } from "./document-actions";
 import { ExtractionPanel } from "./extraction-panel";
@@ -161,10 +161,12 @@ function DocumentItem({ entry, slug, canManage }: { entry: DocumentEntry; slug: 
 }
 
 // The clickable line of a disclosure: a chevron that turns when open, the
-// name, and optional muted detail.
+// name, and optional muted detail. At least 24px tall (textTargetClass).
 function Summary({ children, meta }: { children: React.ReactNode; meta?: string }) {
   return (
-    <summary className="flex w-fit cursor-pointer list-none flex-wrap items-center gap-x-1.5 text-sm font-medium [&::-webkit-details-marker]:hidden">
+    <summary
+      className={`flex w-fit cursor-pointer list-none flex-wrap items-center gap-x-1.5 text-sm font-medium [&::-webkit-details-marker]:hidden ${textTargetClass}`}
+    >
       <ChevronRightIcon className="text-muted group-open:rotate-90" />
       <span className="mr-1.5">{children}</span>
       {meta && <span className="font-normal text-muted tabular-nums">{meta}</span>}

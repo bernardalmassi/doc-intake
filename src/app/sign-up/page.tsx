@@ -3,11 +3,11 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { signUp } from "@/app/auth/actions";
 import { CredentialsForm } from "@/app/auth/credentials-form";
-import { SiteHeader } from "@/app/components/site-header";
-import { linkClass, pageClass, pageTitleClass } from "@/app/ui";
+import { MAIN_ID, SiteHeader } from "@/app/components/site-header";
+import { linkClass, pageClass, pageTitleClass, textTargetClass } from "@/app/ui";
 import { getCurrentUser } from "@/lib/auth";
 
-export const metadata: Metadata = { title: "Create an account · doc-intake" };
+export const metadata: Metadata = { title: "Create an account" };
 
 export default async function SignUpPage() {
   if (await getCurrentUser()) redirect("/app");
@@ -15,13 +15,13 @@ export default async function SignUpPage() {
   return (
     <>
       <SiteHeader />
-      <main className={pageClass}>
+      <main id={MAIN_ID} className={pageClass}>
         <div className="max-w-sm">
           <h1 className={pageTitleClass}>Create an account</h1>
           <CredentialsForm mode="sign-up" action={signUp} />
           <p className="mt-8 text-muted">
             Already have an account?{" "}
-            <Link href="/sign-in" className={linkClass}>
+            <Link href="/sign-in" className={`${linkClass} ${textTargetClass} inline-block`}>
               Sign in
             </Link>
           </p>

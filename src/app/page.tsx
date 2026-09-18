@@ -1,8 +1,8 @@
-import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { SiteHeader } from "@/app/components/site-header";
+import { MAIN_ID, SiteHeader } from "@/app/components/site-header";
 import { getCurrentUser } from "@/lib/auth";
+import { SITE_SUMMARY } from "./site";
 import {
   buttonClass,
   linkClass,
@@ -10,18 +10,13 @@ import {
   pageTitleClass,
   secondaryButtonClass,
   sectionTitleClass,
+  textTargetClass,
 } from "./ui";
-
-// What the app does, in one line. Also the page's meta description.
-const summary =
-  "doc-intake pulls the key details out of uploaded documents and flags anything uncertain for review.";
 
 const repoUrl = "https://github.com/bernardalmassi/doc-intake";
 
-export const metadata: Metadata = {
-  title: "doc-intake",
-  description: summary,
-};
+// No metadata of its own: the root layout's default title (the app's name)
+// and description (SITE_SUMMARY, the heading below) are this page's.
 
 // One sentence each, and every fact in them can be checked in the repo:
 // the limits in public.extraction_limits (mirrored in
@@ -53,9 +48,9 @@ export default async function Home() {
   return (
     <>
       <SiteHeader />
-      <main className={pageClass}>
+      <main id={MAIN_ID} className={pageClass}>
         <div className="max-w-3xl sm:pt-6">
-          <h1 className={`${pageTitleClass} max-w-2xl text-balance`}>{summary}</h1>
+          <h1 className={`${pageTitleClass} max-w-2xl text-balance`}>{SITE_SUMMARY}</h1>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link href="/sign-up" className={buttonClass}>
               Create an account
@@ -81,7 +76,7 @@ export default async function Home() {
               ))}
             </dl>
             <p className="mt-6">
-              <a href={repoUrl} className={linkClass}>
+              <a href={repoUrl} className={`${linkClass} ${textTargetClass} inline-block`}>
                 Source and tests on GitHub
               </a>
             </p>

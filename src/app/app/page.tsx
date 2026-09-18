@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
-import { AccountControls, SiteHeader } from "@/app/components/site-header";
+import { AccountControls, MAIN_ID, SiteHeader } from "@/app/components/site-header";
 import { pageClass } from "@/app/ui";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { CreateTenantForm } from "./create-tenant-form";
 import { OrganizationsView, type Organization, type Role } from "./organizations";
 
-export const metadata: Metadata = { title: "Organizations · doc-intake" };
+export const metadata: Metadata = { title: "Organizations" };
 
 type MembershipRow = {
   role: Role;
@@ -38,7 +38,7 @@ export default async function AppPage() {
       <SiteHeader>
         <AccountControls email={user.email} />
       </SiteHeader>
-      <main className={pageClass}>
+      <main id={MAIN_ID} className={pageClass}>
         <OrganizationsView organizations={organizations} createForm={<CreateTenantForm />} />
       </main>
     </>
