@@ -1,0 +1,41 @@
+import Link from "next/link";
+import { signOut } from "@/app/auth/actions";
+import { containerClass, secondaryButtonClass } from "@/app/ui";
+import { ThemeToggle } from "./theme-toggle";
+
+// On every page. Same max width and gutters as the page content. The
+// right-hand slot holds whatever the page needs there (the signed-in
+// account on /app pages); the theme toggle is always last.
+export function SiteHeader({ children }: { children?: React.ReactNode }) {
+  return (
+    <header className="border-b border-line">
+      <div className={`${containerClass} flex h-14 items-center justify-between gap-4`}>
+        <Link href="/" className="shrink-0 text-base font-semibold tracking-tight text-fg">
+          doc-intake
+        </Link>
+        <div className="flex min-w-0 items-center gap-3">
+          {children}
+          <ThemeToggle />
+        </div>
+      </div>
+    </header>
+  );
+}
+
+// The header slot for a signed-in page: who is signed in, and Sign out.
+// The email truncates rather than pushing the header wider on a phone.
+export function AccountControls({ email }: { email: string | undefined }) {
+  return (
+    <>
+      <p className="min-w-0 truncate text-sm text-muted">
+        <span className="hidden sm:inline">Signed in as </span>
+        {email}
+      </p>
+      <form action={signOut} className="shrink-0">
+        <button type="submit" className={secondaryButtonClass}>
+          Sign out
+        </button>
+      </form>
+    </>
+  );
+}

@@ -1,3 +1,4 @@
+import { panelClass } from "@/app/ui";
 import { FIELDS } from "@/lib/extraction/schema";
 
 export type RunRow = {
@@ -25,10 +26,12 @@ export type FieldRow = {
   clarifying_question: string | null;
 };
 
+// No green or amber: the accent is kept for what needs review, and a low
+// field is what puts a document in needs_review. Item 9 redesigns this.
 const bandClass: Record<string, string> = {
-  high: "text-green-400",
-  medium: "text-amber-400",
-  low: "text-red-400",
+  high: "text-fg",
+  medium: "text-fg",
+  low: "text-accent",
 };
 
 function formatCost(cost: number | string | null) {
@@ -54,10 +57,10 @@ export function ExtractionPanel({
   if (!run && fields.length === 0) return null;
 
   return (
-    <div className="mt-6 max-w-4xl rounded border border-neutral-800 p-4">
+    <div className={`mt-6 max-w-4xl ${panelClass}`}>
       <h3 className="font-medium">{filename}</h3>
       {run && (
-        <p className="mt-1 text-sm text-neutral-400">
+        <p className="mt-1 text-sm text-muted tabular-nums">
           Last run {run.status}
           {run.provider && ` with ${run.provider} (${run.model})`}
           {run.input_tokens !== null && `, ${run.input_tokens} in / ${run.output_tokens} out tokens`}
@@ -66,12 +69,12 @@ export function ExtractionPanel({
           {run.attempts > 1 && `, ${run.attempts} calls`}
           {" · "}
           {new Date(run.started_at).toLocaleString("en-GB", { timeZone: "UTC" })} UTC
-          {run.error && <span className="block text-red-400">{run.error}</span>}
+          {run.error && <span className="block text-danger">{run.error}</span>}
         </p>
       )}
       {fields.length > 0 && (
         <table className="mt-3 w-full text-left text-sm">
-          <thead className="text-neutral-400">
+          <thead className="text-muted">
             <tr>
               <th className="py-1 pr-4 font-normal">Field</th>
               <th className="py-1 pr-4 font-normal">Value</th>
@@ -81,18 +84,18 @@ export function ExtractionPanel({
           </thead>
           <tbody>
             {fields.map((field) => (
-              <tr key={field.name} className="border-t border-neutral-800 align-top">
+              <tr key={field.name} className="border-t border-line align-top">
                 <td className="py-1 pr-4">{labelOf(field.name)}</td>
                 <td className="py-1 pr-4">
-                  {field.value ?? <span className="text-neutral-500">not found</span>}
+                  {field.value ?? <span className="text-muted">not found</span>}
                   {field.clarifying_question && (
-                    <span className="block text-amber-400">{field.clarifying_question}</span>
+                    <span className="block text-muted">{field.clarifying_question}</span>
                   )}
                 </td>
-                <td className={`py-1 pr-4 ${bandClass[field.band] ?? ""}`}>
+                <td className={`py-1 pr-4 tabular-nums ${bandClass[field.band] ?? ""}`}>
                   {Number(field.confidence).toFixed(2)} {field.band}
                 </td>
-                <td className="py-1 pr-4 text-neutral-400">{field.source_text}</td>
+                <td className="py-1 pr-4 text-muted">{field.source_text}</td>
               </tr>
             ))}
           </tbody>

@@ -1,18 +1,117 @@
 @import "tailwindcss";
 
+/* The local /design-preview fixture page is git-excluded, and Tailwind
+   skips excluded paths, so it is registered here. A no-op in a clone
+   without the folder. */
+@source "./design-preview";
+
+/*
+  Design tokens. Components use only these, through Tailwind utilities:
+  bg-canvas, bg-surface, border-line, border-line-strong, text-fg,
+  text-muted, bg-accent, hover:bg-accent-hover, text-accent-fg, text-danger.
+  Each theme below swaps the raw values, so no component needs `dark:`.
+
+  Tailwind's default palette, type scale and font stacks are reset, so a
+  stray `neutral-800`, `text-xs` or `font-mono` compiles to nothing.
+  transparent, current and inherit are keywords, not theme values, and
+  keep working. Values, reasons and contrast ratios: DESIGN-NOTES.md.
+*/
 @theme inline {
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-*: initial;
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-danger: var(--danger);
+
+  --font-*: initial;
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+
+  /* No glass: blur-* and backdrop-blur-* have no named values. */
+  --blur-*: initial;
 }
 
-/* Dark only. color-scheme makes native controls (file pickers, password
-   dots, autofill) render dark too. */
-:root {
+/* Four sizes, each with its line height. Nothing else exists. */
+@theme {
+  --text-*: initial;
+  --text-sm: 0.8125rem; /* 13px: labels, meta, table cells, buttons */
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.9375rem; /* 15px: body */
+  --text-base--line-height: 1.5rem;
+  --text-lg: 1.25rem; /* 20px: section headings */
+  --text-lg--line-height: 1.75rem;
+  --text-lg--letter-spacing: -0.01em;
+  --text-2xl: 1.875rem; /* 30px: page titles */
+  --text-2xl--line-height: 2.25rem;
+  --text-2xl--letter-spacing: -0.02em;
+}
+
+/*
+  Dark is the default whatever the OS says. The server renders
+  data-theme="dark"; the inline script in layout.tsx switches <html> to
+  "light" before first paint when that was the visitor's choice.
+  color-scheme makes native controls (file picker, scrollbars, autofill)
+  follow the theme.
+*/
+:root,
+[data-theme="dark"] {
   color-scheme: dark;
+  --canvas: #0c0c0b;
+  --surface: #171716;
+  --line: #282826;
+  --line-strong: #6b6b66;
+  --fg: #ededea;
+  --muted: #9e9e98;
+  --accent: #ff8f40;
+  --accent-hover: #ffa968;
+  --accent-fg: #0c0c0b;
+  --danger: #ff6b6b;
 }
 
-body {
-  background: #0a0a0a;
-  color: #ededed;
-  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+[data-theme="light"] {
+  color-scheme: light;
+  --canvas: #fafaf8;
+  --surface: #ffffff;
+  --line: #e6e6e1;
+  --line-strong: #8c8c86;
+  --fg: #141413;
+  --muted: #5e5e59;
+  --accent: #b54a00;
+  --accent-hover: #9a3f00;
+  --accent-fg: #fafaf8;
+  --danger: #b91c1c;
+}
+
+/* Hand-written CSS reads the raw variables (var(--accent)), not
+   var(--color-accent): those are resolved once on :root, so they would
+   ignore a data-theme set on anything below <html>. */
+@layer base {
+  /* One ring for everything keyboard-focusable. Inputs tighten it to sit
+     on their border (ui.ts). */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  ::placeholder {
+    color: var(--muted);
+  }
+
+  ::selection {
+    background-color: var(--fg);
+    color: var(--canvas);
+  }
+
+  /* One family: code-ish elements don't switch to a monospace stack. */
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: inherit;
+  }
 }

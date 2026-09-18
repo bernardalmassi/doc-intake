@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { createDocument } from "@/app/app/actions";
-import { buttonClass, errorClass, inputClass, labelClass } from "@/app/ui";
+import { buttonClass, errorClass, fileInputClass, labelClass } from "@/app/ui";
 import { createClient } from "@/lib/supabase/client";
 
 // Same limits as the bucket. Checked here only so an obviously bad file
@@ -85,7 +85,7 @@ export function UploadForm({ tenantId }: { tenantId: string }) {
           ref={fileInput}
           required
           accept={ALLOWED_TYPES.join(",")}
-          className={`${inputClass} file:mr-3 file:rounded file:border-0 file:bg-neutral-700 file:px-2 file:py-1 file:text-neutral-100`}
+          className={fileInputClass}
         />
       </div>
       <p aria-live="polite" className="min-h-5 text-sm">

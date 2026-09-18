@@ -1,14 +1,12 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist } from "next/font/google";
+import { themeScript } from "./components/theme";
 import "./globals.css";
 
+// One family for everything, numbers included (with tabular-nums where
+// they line up in columns).
 const geistSans = Geist({
   variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
   subsets: ["latin"],
 });
 
@@ -17,15 +15,23 @@ export const metadata: Metadata = {
   description: "Document intake",
 };
 
+// data-theme="dark" is the server default. The inline script in <head>
+// runs while the HTML is parsed, before first paint, and switches it to a
+// stored "light", so a light visitor never sees a dark flash. It changes
+// an attribute React rendered, hence suppressHydrationWarning (which covers
+// <html>'s own attributes only, not its children).
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      data-theme="dark"
+      suppressHydrationWarning
+      className={`${geistSans.variable} h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col bg-neutral-950 text-neutral-100">
-        {children}
-      </body>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
+      <body className="flex min-h-full flex-col bg-canvas text-base text-fg">{children}</body>
     </html>
   );
 }

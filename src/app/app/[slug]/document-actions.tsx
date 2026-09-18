@@ -3,7 +3,13 @@
 import { useActionState, useState } from "react";
 import { deleteDocument } from "@/app/app/actions";
 import { extractDocument } from "@/app/app/extract-action";
-import { buttonClass, dangerButtonClass, errorClass, secondaryButtonClass } from "@/app/ui";
+import {
+  buttonClass,
+  dangerButtonClass,
+  errorClass,
+  hintClass,
+  secondaryButtonClass,
+} from "@/app/ui";
 import { createClient } from "@/lib/supabase/client";
 
 type Props = {
@@ -87,7 +93,7 @@ export function DocumentActions({
         </form>
       )}
       {message && (
-        <span role={isError ? "alert" : "status"} className={isError ? errorClass : "text-sm text-neutral-400"}>
+        <span role={isError ? "alert" : "status"} className={isError ? errorClass : hintClass}>
           {message}
         </span>
       )}

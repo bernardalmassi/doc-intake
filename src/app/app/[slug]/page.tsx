@@ -1,7 +1,16 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { signOut } from "@/app/auth/actions";
-import { linkClass, secondaryButtonClass } from "@/app/ui";
+import { AccountControls, SiteHeader } from "@/app/components/site-header";
+import {
+  hintClass,
+  linkClass,
+  pageClass,
+  pageTitleClass,
+  sectionTitleClass,
+  tableClass,
+  tdClass,
+  thClass,
+} from "@/app/ui";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { DocumentActions } from "./document-actions";
@@ -88,86 +97,83 @@ export default async function TenantPage({ params }: PageProps<"/app/[slug]">) {
   }
 
   return (
-    <main className="p-8">
-      <header className="flex items-center justify-between gap-4">
-        <p className="text-sm text-neutral-400">
+    <>
+      <SiteHeader>
+        <AccountControls email={user.email} />
+      </SiteHeader>
+      <main className={pageClass}>
+        <p className={hintClass}>
           <Link href="/app" className={linkClass}>
             Organizations
           </Link>
           <span className="mx-2">/</span>
           {tenant.name}
-          <span className="ml-3">Signed in as {user.email}</span>
         </p>
-        <form action={signOut}>
-          <button type="submit" className={secondaryButtonClass}>
-            Sign out
-          </button>
-        </form>
-      </header>
 
-      <h1 className="mt-8 text-2xl font-semibold">{tenant.name}</h1>
+        <h1 className={`mt-2 ${pageTitleClass}`}>{tenant.name}</h1>
 
-      <section className="mt-6">
-        <h2 className="text-lg font-semibold">Upload a document</h2>
-        <UploadForm tenantId={tenant.id} />
-      </section>
-
-      <section className="mt-10">
-        <h2 className="text-lg font-semibold">Documents</h2>
-        {documents.length === 0 ? (
-          <p className="mt-2 text-neutral-400">No documents yet.</p>
-        ) : (
-          <table className="mt-4 w-full max-w-4xl text-left text-sm">
-            <thead className="text-neutral-400">
-              <tr>
-                <th className="py-2 pr-4 font-normal">Filename</th>
-                <th className="py-2 pr-4 font-normal">Status</th>
-                <th className="py-2 pr-4 font-normal">Size</th>
-                <th className="py-2 pr-4 font-normal">Uploaded</th>
-                <th className="py-2 pr-4 font-normal"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {documents.map((doc) => (
-                <tr key={doc.id} className="border-t border-neutral-800">
-                  <td className="py-2 pr-4">{doc.filename}</td>
-                  <td className="py-2 pr-4">{doc.status}</td>
-                  <td className="py-2 pr-4">{formatSize(doc.size_bytes)}</td>
-                  <td className="py-2 pr-4 text-neutral-400">
-                    {new Date(doc.created_at).toLocaleString("en-GB", { timeZone: "UTC" })} UTC
-                  </td>
-                  <td className="py-2 pr-4">
-                    <DocumentActions
-                      id={doc.id}
-                      slug={tenant.slug}
-                      filename={doc.filename}
-                      storagePath={doc.storage_path}
-                      status={doc.status}
-                      uploaded={doc.status !== "uploading"}
-                      canDelete={isAdmin}
-                      canExtract={isAdmin}
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
-
-      {documents.some((doc) => latestRun.has(doc.id) || fieldsByDocument.has(doc.id)) && (
-        <section className="mt-10">
-          <h2 className="text-lg font-semibold">Extraction</h2>
-          {documents.map((doc) => (
-            <ExtractionPanel
-              key={doc.id}
-              filename={doc.filename}
-              run={latestRun.get(doc.id) ?? null}
-              fields={fieldsByDocument.get(doc.id) ?? []}
-            />
-          ))}
+        <section className="mt-6">
+          <h2 className={sectionTitleClass}>Upload a document</h2>
+          <UploadForm tenantId={tenant.id} />
         </section>
-      )}
-    </main>
+
+        <section className="mt-10">
+          <h2 className={sectionTitleClass}>Documents</h2>
+          {documents.length === 0 ? (
+            <p className="mt-2 text-muted">No documents yet.</p>
+          ) : (
+            <table className={`mt-4 max-w-4xl ${tableClass}`}>
+              <thead>
+                <tr>
+                  <th className={thClass}>Filename</th>
+                  <th className={thClass}>Status</th>
+                  <th className={thClass}>Size</th>
+                  <th className={thClass}>Uploaded</th>
+                  <th className={thClass}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {documents.map((doc) => (
+                  <tr key={doc.id}>
+                    <td className={tdClass}>{doc.filename}</td>
+                    <td className={tdClass}>{doc.status}</td>
+                    <td className={`${tdClass} tabular-nums`}>{formatSize(doc.size_bytes)}</td>
+                    <td className={`${tdClass} text-muted tabular-nums`}>
+                      {new Date(doc.created_at).toLocaleString("en-GB", { timeZone: "UTC" })} UTC
+                    </td>
+                    <td className={tdClass}>
+                      <DocumentActions
+                        id={doc.id}
+                        slug={tenant.slug}
+                        filename={doc.filename}
+                        storagePath={doc.storage_path}
+                        status={doc.status}
+                        uploaded={doc.status !== "uploading"}
+                        canDelete={isAdmin}
+                        canExtract={isAdmin}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+
+        {documents.some((doc) => latestRun.has(doc.id) || fieldsByDocument.has(doc.id)) && (
+          <section className="mt-10">
+            <h2 className={sectionTitleClass}>Extraction</h2>
+            {documents.map((doc) => (
+              <ExtractionPanel
+                key={doc.id}
+                filename={doc.filename}
+                run={latestRun.get(doc.id) ?? null}
+                fields={fieldsByDocument.get(doc.id) ?? []}
+              />
+            ))}
+          </section>
+        )}
+      </main>
+    </>
   );
 }

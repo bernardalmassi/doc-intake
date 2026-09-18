@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { buttonClass, errorClass, inputClass, labelClass } from "@/app/ui";
+import { buttonClass, errorClass, hintClass, inputClass, labelClass } from "@/app/ui";
 import { MIN_PASSWORD_LENGTH } from "@/lib/password";
 import type { FormState } from "./actions";
 
@@ -47,7 +47,7 @@ export function CredentialsForm({ action, submitLabel, passwordAutoComplete }: P
           className={inputClass}
         />
         {isSignUp && (
-          <p id="password-hint" className="mt-1 text-sm text-neutral-400">
+          <p id="password-hint" className={`mt-1 ${hintClass}`}>
             At least {MIN_PASSWORD_LENGTH} characters.
           </p>
         )}
