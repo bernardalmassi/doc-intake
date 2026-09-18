@@ -1,52 +1,38 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AccountControls, SiteHeader } from "@/app/components/site-header";
-import {
-  hintClass,
-  linkClass,
-  pageClass,
-  pageTitleClass,
-  sectionTitleClass,
-  tableClass,
-  tdClass,
-  thClass,
-} from "@/app/ui";
+import { pageClass } from "@/app/ui";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { DocumentActions } from "./document-actions";
-import { ExtractionPanel, type FieldRow, type RunRow } from "./extraction-panel";
-import { UploadForm } from "./upload-form";
+import { buildEntries } from "./entries";
+import { LiveOperations } from "./live-operations";
+import { OrganizationView } from "./organization-view";
+import type { DocumentRow, FieldRow, Organization, Role, RunRow } from "./types";
 
-type Tenant = { id: string; name: string; slug: string };
-type DocumentRow = {
-  id: string;
-  filename: string;
-  status: string;
-  storage_path: string;
-  size_bytes: number | null;
-  mime_type: string | null;
-  created_at: string;
-};
-
-function formatSize(bytes: number | null) {
-  if (bytes === null) return "";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+function toRole(value: string | undefined): Role {
+  return value === "owner" || value === "admin" ? value : "member";
 }
 
-export default async function TenantPage({ params }: PageProps<"/app/[slug]">) {
+// The time of the request, to tell a stale extraction from a running one.
+// A Server Component renders once per request, so the clock is read once;
+// react-hooks/purity can't tell that from a client re-render, hence the
+// helper.
+function requestTime(): number {
+  return Date.now();
+}
+
+export default async function OrganizationPage({ params }: PageProps<"/app/[slug]">) {
   const user = await requireUser();
   const { slug } = await params;
   const supabase = await createClient();
 
   // RLS hides tenants the user isn't a member of, so a slug the user can't
-  // access and a slug that doesn't exist both end up here as "no row".
+  // access and a slug that doesn't exist both end up here as "no row", and
+  // get the same 404.
   const { data: tenant, error: tenantError } = await supabase
     .from("tenants")
     .select("id, name, slug")
     .eq("slug", slug)
-    .maybeSingle<Tenant>();
+    .maybeSingle<Organization>();
   if (tenantError) throw tenantError;
   if (!tenant) notFound();
 
@@ -79,22 +65,15 @@ export default async function TenantPage({ params }: PageProps<"/app/[slug]">) {
   if (runsResult.error) throw runsResult.error;
   if (fieldsResult.error) throw fieldsResult.error;
 
-  // Only decides what to render. The database enforces who can delete.
-  const isAdmin = membership.data?.role === "owner" || membership.data?.role === "admin";
-  const documents = (documentsResult.data ?? []) as DocumentRow[];
-
-  // Runs are ordered newest first, so the first one seen per document is
-  // its latest. Fields are ordered by the schema's field list.
-  const latestRun = new Map<string, RunRow>();
-  for (const run of (runsResult.data ?? []) as RunRow[]) {
-    if (run.document_id && !latestRun.has(run.document_id)) latestRun.set(run.document_id, run);
-  }
-  const fieldsByDocument = new Map<string, FieldRow[]>();
-  for (const field of (fieldsResult.data ?? []) as FieldRow[]) {
-    const list = fieldsByDocument.get(field.document_id) ?? [];
-    list.push(field);
-    fieldsByDocument.set(field.document_id, list);
-  }
+  // Only decides what to render. The database enforces who can extract
+  // and delete.
+  const role = toRole(membership.data?.role);
+  const entries = buildEntries(
+    (documentsResult.data ?? []) as DocumentRow[],
+    (runsResult.data ?? []) as RunRow[],
+    (fieldsResult.data ?? []) as FieldRow[],
+    requestTime(),
+  );
 
   return (
     <>
@@ -102,77 +81,9 @@ export default async function TenantPage({ params }: PageProps<"/app/[slug]">) {
         <AccountControls email={user.email} />
       </SiteHeader>
       <main className={pageClass}>
-        <p className={hintClass}>
-          <Link href="/app" className={linkClass}>
-            Organizations
-          </Link>
-          <span className="mx-2">/</span>
-          {tenant.name}
-        </p>
-
-        <h1 className={`mt-2 ${pageTitleClass}`}>{tenant.name}</h1>
-
-        <section className="mt-6">
-          <h2 className={sectionTitleClass}>Upload a document</h2>
-          <UploadForm tenantId={tenant.id} />
-        </section>
-
-        <section className="mt-10">
-          <h2 className={sectionTitleClass}>Documents</h2>
-          {documents.length === 0 ? (
-            <p className="mt-2 text-muted">No documents yet.</p>
-          ) : (
-            <table className={`mt-4 max-w-4xl ${tableClass}`}>
-              <thead>
-                <tr>
-                  <th className={thClass}>Filename</th>
-                  <th className={thClass}>Status</th>
-                  <th className={thClass}>Size</th>
-                  <th className={thClass}>Uploaded</th>
-                  <th className={thClass}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {documents.map((doc) => (
-                  <tr key={doc.id}>
-                    <td className={tdClass}>{doc.filename}</td>
-                    <td className={tdClass}>{doc.status}</td>
-                    <td className={`${tdClass} tabular-nums`}>{formatSize(doc.size_bytes)}</td>
-                    <td className={`${tdClass} text-muted tabular-nums`}>
-                      {new Date(doc.created_at).toLocaleString("en-GB", { timeZone: "UTC" })} UTC
-                    </td>
-                    <td className={tdClass}>
-                      <DocumentActions
-                        id={doc.id}
-                        slug={tenant.slug}
-                        filename={doc.filename}
-                        storagePath={doc.storage_path}
-                        status={doc.status}
-                        uploaded={doc.status !== "uploading"}
-                        canDelete={isAdmin}
-                        canExtract={isAdmin}
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </section>
-
-        {documents.some((doc) => latestRun.has(doc.id) || fieldsByDocument.has(doc.id)) && (
-          <section className="mt-10">
-            <h2 className={sectionTitleClass}>Extraction</h2>
-            {documents.map((doc) => (
-              <ExtractionPanel
-                key={doc.id}
-                filename={doc.filename}
-                run={latestRun.get(doc.id) ?? null}
-                fields={fieldsByDocument.get(doc.id) ?? []}
-              />
-            ))}
-          </section>
-        )}
+        <LiveOperations>
+          <OrganizationView organization={tenant} role={role} entries={entries} />
+        </LiveOperations>
       </main>
     </>
   );

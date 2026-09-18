@@ -1,8 +1,6 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { deleteDocument } from "@/app/app/actions";
-import { extractDocument } from "@/app/app/extract-action";
 import {
   buttonClass,
   dangerButtonClass,
@@ -10,7 +8,7 @@ import {
   hintClass,
   secondaryButtonClass,
 } from "@/app/ui";
-import { createClient } from "@/lib/supabase/client";
+import { useOperations } from "./operations";
 
 type Props = {
   id: string;
@@ -33,25 +31,15 @@ export function DocumentActions({
   canDelete,
   canExtract,
 }: Props) {
+  const operations = useOperations();
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [deleteState, deleteAction, deleting] = useActionState(deleteDocument, {});
-  const [extractState, extractAction, extracting] = useActionState(extractDocument, {});
+  const [deleteState, deleteAction, deleting] = useActionState(operations.deleteAction, {});
+  const [extractState, extractAction, extracting] = useActionState(operations.extractAction, {});
 
-  // The signed URL is minted on click and used at once, so it never sits in
-  // the page's HTML. It is a bearer token valid for 60 seconds.
   async function download() {
     setDownloadError(null);
-    const supabase = createClient();
-    const { data, error } = await supabase.storage
-      .from("documents")
-      .createSignedUrl(storagePath, 60, { download: filename });
-    if (error || !data) {
-      setDownloadError(error?.message ?? "Couldn't create a download link.");
-      return;
-    }
-    // Content-Disposition: attachment, so the browser saves the file and
-    // stays on this page.
-    window.location.assign(data.signedUrl);
+    const result = await operations.download(storagePath, filename);
+    if (result.error) setDownloadError(result.error);
   }
 
   const processing = status === "processing";
