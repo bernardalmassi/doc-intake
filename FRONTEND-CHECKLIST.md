@@ -24,7 +24,7 @@ written under the item and the item is skipped.
 - [x] 1. Design tokens and theme. Light and dark, toggle in the header, remembered, dark default, no flash on load. Near-black, off-white, one orange accent used only for primary actions, focus rings and needs_review. No purple, no indigo, no gradients, no glass. One type family, four sizes, tabular numbers for money, tokens and latency.
 - [x] 2. Landing page at /. What the app does in one line, three sentences of architecture, a link to the GitHub repo, sign in and sign up.
 - [x] 3. Sign in page. Real labels, inline errors from the Server Action, disabled state while submitting, link to sign up.
-- [ ] 4. Sign up page. Same, plus the 15 character password rule shown before submit and the server's reason shown when it rejects.
+- [x] 4. Sign up page. Same, plus the 15 character password rule shown before submit and the server's reason shown when it rejects.
 - [ ] 5. /app organizations list and create organization. Empty state that explains what an organization is.
 - [ ] 6. /app/[slug]. Header, upload, document list, 404 for unknown and non-member slugs.
 - [ ] 7. Upload states: idle, chosen, uploading, rejected type, too large, failed.

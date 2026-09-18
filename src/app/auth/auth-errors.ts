@@ -7,6 +7,8 @@
 // The Supabase messages are the Auth server's own strings
 // (github.com/supabase/auth, internal/api), matched exactly.
 
+import { tooLongMessage } from "./password-length";
+
 export type Field = "email" | "password";
 
 // At most one message per place. "form" is the message by the submit
@@ -50,6 +52,53 @@ const rules: Rule[] = [
     match: /^(fetch failed|HTTP 5\d\d|Internal Server Error|Bad Gateway|Service Unavailable|Gateway Timeout)$/,
     text: SERVICE_UNAVAILABLE,
   },
+
+  // Sign-up. With email confirmation on, Supabase answers a sign-up for an
+  // existing address as if it were new, so this only appears when it's off.
+  {
+    match: "User already registered",
+    field: "email",
+    text: "There’s already an account with this email address. Sign in instead.",
+  },
+  {
+    match: /^Unable to validate email address/,
+    field: "email",
+    text: "Enter a full email address, like name@example.com.",
+  },
+  {
+    match: /^Email address ".*" is invalid$/,
+    field: "email",
+    text: "This email address can’t be used. Check it for typos, or use a different one.",
+  },
+  // Supabase's built-in email service only sends to addresses the project
+  // allows; anything else is refused before an account is made.
+  {
+    match: /^Email address ".*" cannot be used as it is not authorized$/,
+    field: "email",
+    text: "For now, only approved email addresses can sign up, and this isn’t one of them.",
+  },
+  {
+    match: "An email address is too long",
+    field: "email",
+    text: "That email address is too long.",
+  },
+  {
+    match: "email rate limit exceeded",
+    text: "Too many sign-up emails have gone out in the last hour. Try again later.",
+  },
+  {
+    match: /^(Signups not allowed for this instance|Email signups are disabled)$/,
+    text: "New accounts can’t be created right now.",
+  },
+  {
+    match: /^Password cannot be longer than \d+ characters$/,
+    field: "password",
+    text: tooLongMessage(),
+  },
+  // The action's own sentences about a rejected password ("Password
+  // rejected: it must…", "Password is too short.") and Supabase's
+  // ("Password should be at least…"), shown as they are, on the field.
+  { match: /^Password\b/, field: "password" },
 ];
 
 function matches(rule: Rule, raw: string) {

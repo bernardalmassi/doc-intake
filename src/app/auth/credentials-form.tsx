@@ -2,10 +2,13 @@
 
 import { unstable_rethrow } from "next/navigation";
 import { useActionState, useEffect, useId, useMemo, useRef, useState } from "react";
-import { errorClass, hintClass, inputClass, labelClass, submitButtonClass } from "@/app/ui";
+import { errorClass, inputClass, labelClass, submitButtonClass } from "@/app/ui";
 import { MIN_PASSWORD_LENGTH } from "@/lib/password";
 import type { FormState } from "./actions";
 import { CONNECTION_ERROR, describeAuthError, type Problems } from "./auth-errors";
+import { CheckEmail } from "./check-email";
+import { lengthStatus, measurePassword, tooLongMessage } from "./password-length";
+import { PasswordRule, usePasswordLength } from "./password-rule";
 
 export type AuthAction = (prev: FormState, formData: FormData) => Promise<FormState>;
 
@@ -61,16 +64,18 @@ type ViewProps = {
 // so every state can be rendered without submitting anything.
 export function CredentialsFormView({ mode, state, pending, formAction }: ViewProps) {
   const text = copy[mode];
+  const isSignUp = mode === "sign-up";
   const id = useId();
   const ids = {
     email: `${id}-email`,
     emailError: `${id}-email-error`,
     password: `${id}-password`,
     passwordError: `${id}-password-error`,
-    passwordHint: `${id}-password-hint`,
+    passwordRule: `${id}-password-rule`,
   };
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
+  const checkEmailRef = useRef<HTMLHeadingElement>(null);
 
   // Controlled so it survives the reset React applies to a form after its
   // action runs. The password stays uncontrolled: React would mirror a
@@ -78,16 +83,30 @@ export function CredentialsFormView({ mode, state, pending, formAction }: ViewPr
   // after a failed attempt is what people expect anyway.
   const [email, setEmail] = useState("");
 
+  // Sign-up: how long the password is as it's typed, for the rule under it.
+  const password = usePasswordLength();
+
   // Problems found in the browser on the last submit, before anything was
   // sent. Null once a submit goes through, so the server's answer shows.
   const [clientProblems, setClientProblems] = useState<Problems | null>(null);
   const serverProblems: Problems = state.error ? describeAuthError(state.error) : {};
   // While a submit is in flight the last answer no longer applies.
   const problems: Problems = pending ? {} : (clientProblems ?? serverProblems);
+  // Too long is shown as it happens rather than on submit, because nothing
+  // else on screen would say why the password will be refused.
+  const passwordProblem =
+    isSignUp && password.status === "long" ? tooLongMessage(password.length) : problems.password;
+
+  // Sign-up with email confirmation on: the action returns a message and
+  // the form gives way to "Check your email" until the visitor starts
+  // again, which dismisses that particular result.
+  const [dismissed, setDismissed] = useState<FormState | null>(null);
+  const showCheckEmail = isSignUp && !pending && Boolean(state.message) && state !== dismissed;
 
   // After a failed submit, focus goes to the field that needs fixing, whose
   // description now includes the error. A message for the whole form is
-  // announced by its alert region and focus stays on the button.
+  // announced by its alert region and focus stays on the button. After a
+  // sign-up that needs confirming, focus goes to the panel's heading.
   useEffect(() => {
     if (clientProblems) focusField(clientProblems, emailRef.current, passwordRef.current);
   }, [clientProblems]);
@@ -96,8 +115,16 @@ export function CredentialsFormView({ mode, state, pending, formAction }: ViewPr
   useEffect(() => {
     if (lastState.current === state) return;
     lastState.current = state;
-    if (state.error) focusField(describeAuthError(state.error), emailRef.current, passwordRef.current);
+    if (state.error) {
+      focusField(describeAuthError(state.error), emailRef.current, passwordRef.current);
+    } else if (state.message) {
+      checkEmailRef.current?.focus();
+    }
   }, [state]);
+
+  useEffect(() => {
+    if (dismissed) emailRef.current?.focus();
+  }, [dismissed]);
 
   function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     // The button stays focusable while pending (aria-disabled), so a second
@@ -111,16 +138,33 @@ export function CredentialsFormView({ mode, state, pending, formAction }: ViewPr
     setClientProblems(found);
   }
 
+  function startAgain() {
+    password.reset();
+    setClientProblems(null);
+    setDismissed(state);
+  }
+
+  if (showCheckEmail) {
+    return <CheckEmail email={email.trim()} headingRef={checkEmailRef} onStartAgain={startAgain} />;
+  }
+
   const passwordDescribedBy =
-    [mode === "sign-up" && ids.passwordHint, problems.password && ids.passwordError]
-      .filter(Boolean)
-      .join(" ") || undefined;
+    [passwordProblem && ids.passwordError, isSignUp && ids.passwordRule].filter(Boolean).join(" ") ||
+    undefined;
 
   return (
     // noValidate: the checks in validate() replace the browser's bubbles,
     // so errors look and read the same whether the browser or the server
     // found them. required and type="email" stay for their semantics.
-    <form noValidate action={formAction} onSubmit={onSubmit} className="mt-6">
+    <form
+      noValidate
+      action={formAction}
+      onSubmit={onSubmit}
+      // React resets the form once the action has run, which empties the
+      // uncontrolled password; the rule has to follow.
+      onReset={isSignUp ? password.reset : undefined}
+      className="mt-6"
+    >
       <div>
         <label htmlFor={ids.email} className={labelClass}>
           Email
@@ -156,21 +200,26 @@ export function CredentialsFormView({ mode, state, pending, formAction }: ViewPr
           type="password"
           autoComplete={text.passwordAutoComplete}
           required
-          // Read by password generators; validate() does the checking.
-          minLength={mode === "sign-up" ? MIN_PASSWORD_LENGTH : undefined}
-          aria-invalid={problems.password ? true : undefined}
+          // Read by password generators; validate() does the checking. No
+          // maxLength: it would cut a pasted password short without a word.
+          minLength={isSignUp ? MIN_PASSWORD_LENGTH : undefined}
+          onChange={isSignUp ? password.onChange : undefined}
+          aria-invalid={passwordProblem ? true : undefined}
           aria-describedby={passwordDescribedBy}
           className={inputClass}
         />
-        {problems.password && (
+        {passwordProblem && (
           <p id={ids.passwordError} className={`mt-1 ${errorClass}`}>
-            {problems.password}
+            {passwordProblem}
           </p>
         )}
-        {mode === "sign-up" && (
-          <p id={ids.passwordHint} className={`mt-1 ${hintClass}`}>
-            At least {MIN_PASSWORD_LENGTH} characters.
-          </p>
+        {isSignUp && (
+          <>
+            <PasswordRule id={ids.passwordRule} length={password.length} />
+            <p aria-live="polite" className="sr-only">
+              {password.announcement}
+            </p>
+          </>
         )}
       </div>
 
@@ -183,12 +232,8 @@ export function CredentialsFormView({ mode, state, pending, formAction }: ViewPr
         )}
       </div>
       {/* A label change on the focused button isn't reliably announced. */}
-      <div role="status">
-        {pending ? (
-          <span className="sr-only">{text.pending}</span>
-        ) : (
-          state.message && <p className="mt-5 max-w-sm text-sm">{state.message}</p>
-        )}
+      <div role="status" className="sr-only">
+        {pending ? text.pending : ""}
       </div>
 
       <button
@@ -214,11 +259,14 @@ function validate(
   } else if (email?.validity.typeMismatch) {
     problems.email = "Enter a full email address, like name@example.com.";
   }
-  const length = password?.value.length ?? 0;
-  if (length === 0) {
+  const length = measurePassword(password?.value ?? "");
+  const status = lengthStatus(length);
+  if (status === "empty") {
     problems.password = copy[mode].passwordMissing;
-  } else if (mode === "sign-up" && length < MIN_PASSWORD_LENGTH) {
-    problems.password = `Use at least ${MIN_PASSWORD_LENGTH} characters. This has ${length}.`;
+  } else if (mode === "sign-up" && status === "short") {
+    problems.password = `Use at least ${MIN_PASSWORD_LENGTH} characters. This has ${length.chars}.`;
+  } else if (mode === "sign-up" && status === "long") {
+    problems.password = tooLongMessage(length);
   }
   return Object.keys(problems).length > 0 ? problems : null;
 }
