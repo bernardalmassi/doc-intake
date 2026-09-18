@@ -74,7 +74,7 @@ describe("the abandoned-run estimate", () => {
 
   for (const fixture of FIXTURES) {
     it(`${fixture.id}: more than any recorded run of it`, async () => {
-      const pages = countPdfPages(committedPdf(fixture));
+      const pages = await countPdfPages(committedPdf(fixture));
       expect(pages).not.toBeNull();
       const estimate = abandonedRunCostUsd(pages);
       for (const provider of PROVIDERS) {

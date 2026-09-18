@@ -103,6 +103,8 @@ Every failure a user can hit, the code `src/lib/errors.ts` gives it, and the mes
 | Download of an upload that never finished | the document's status | `upload.incomplete` | no | This upload never finished, so there is no file to open. Upload the file again; an admin can remove this entry. |
 | Delete by a non-admin (Storage removes nothing and reports success; the row delete matches zero rows) | zero rows; 42501; Storage 403 on `remove` | `document.delete_not_allowed` | no | Only an admin can delete documents. |
 | Row delete refused because the file is still there (it landed after the remove) | 55000 from the `documents_keep_row_while_file_exists` trigger | `document.file_still_present` | yes | The document's file couldn't be removed, so the document was kept. Please try again. |
+| A PDF with more than 100 pages, refused at upload (in the browser) and again before a run is opened (the Extract action) | `checkPageCount` on the count from `src/lib/extraction/page-count.ts` | `document.too_many_pages` | no | Documents can have at most 100 pages. Split this one into parts of 100 pages or fewer and upload them separately. |
+| A PDF whose pages can't be counted, refused the same two ways | `checkPageCount` on a null count | `document.pages_unreadable` | no | We couldn't count this PDF's pages, so it can't be extracted. Save it again as a standard PDF (for example with Print to PDF) and upload that. |
 
 ## Extraction: starting a run
 

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import type { FormState } from "@/app/form-state";
 import { failureFields } from "@/app/log-fields";
 import { requireUser } from "@/lib/auth";
-import { classifyDatabaseError, classifyRunError, classifyStorageError } from "@/lib/errors";
+import { checkPageCount, classifyDatabaseError, classifyRunError, classifyStorageError } from "@/lib/errors";
 import { selectProviders } from "@/lib/extraction/providers/select";
 import { describeError } from "@/lib/extraction/providers/types";
 import { failedCloseAttempts, runExtraction, toCloseParams, type RunOutcome } from "@/lib/extraction/run";
@@ -76,11 +76,23 @@ export async function extractDocument(_prev: FormState, formData: FormData): Pro
   runLog = runLog.with({ tenant_id: doc.tenant_id });
 
   // 1. the bytes, with the caller's own session, and their page count if
-  //    they are what the row says they are (null otherwise: the database
-  //    then charges an abandoned run as the most pages a document can have)
+  //    they are what the row says they are. A document over the page limit,
+  //    or a PDF whose pages can't be counted, is refused here, before any
+  //    run is opened: the upload form checks the same in the browser, but
+  //    anyone can skip that, and no run may read more pages than the
+  //    stale-run reaper's estimate assumes (SECURITY.md, "Stale runs").
+  //    A file that fails to download or doesn't match its type opens a run
+  //    with no count, which is closed as failed below without a model call.
   const file = await downloadFile(supabase, doc, runLog);
-  const pageCount =
-    file.ok && file.detected !== null && file.detected === doc.mime_type ? countPages(file.bytes, file.detected) : null;
+  let pageCount: number | null = null;
+  if (file.ok && file.detected !== null && file.detected === doc.mime_type) {
+    pageCount = await countPages(file.bytes, file.detected);
+    const refused = checkPageCount(pageCount);
+    if (refused) {
+      runLog.warn("extraction.open_refused", { error_code: refused, mime_type: file.detected, size_bytes: file.bytes.length });
+      return { error: refused };
+    }
+  }
 
   // 2. open the run: limits are checked here, nothing is called yet
   const opened = await supabase.rpc("open_extraction_run", { p_document_id: doc.id, p_page_count: pageCount });

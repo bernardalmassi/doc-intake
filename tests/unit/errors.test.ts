@@ -35,6 +35,7 @@ import { runExtraction } from "@/lib/extraction/run";
 import {
   checkCredentials,
   checkFilename,
+  checkPageCount,
   checkTenantInput,
   checkUploadFile,
   CHECK_CONSTRAINTS,
@@ -528,6 +529,10 @@ const CHECK_CASES: CheckCase[] = [
   ["36 accented letters are 72 bytes", () => checkCredentials("a@example.com", "é".repeat(36), "sign_up"), null],
   ["37 accented letters are 74 bytes", () => checkCredentials("a@example.com", "é".repeat(37), "sign_up"), "auth.password_too_long"],
   ["19 emoji: 38 in the form's count, 76 bytes", () => checkCredentials("a@example.com", "😀".repeat(19), "sign_up"), "auth.password_too_long"],
+  ["one page", () => checkPageCount(1), null],
+  ["exactly the page limit", () => checkPageCount(EXTRACTION_LIMITS.maxPagesPerDocument), null],
+  ["one page over the limit", () => checkPageCount(EXTRACTION_LIMITS.maxPagesPerDocument + 1), "document.too_many_pages"],
+  ["pages that can't be counted", () => checkPageCount(null), "document.pages_unreadable"],
   ["organization ok", () => checkTenantInput("Acme", "acme-1"), null],
   ["organization name blank", () => checkTenantInput("  ", "acme"), "tenant.name_required"],
   ["slug too short", () => checkTenantInput("Acme", "ab"), "tenant.slug_invalid"],

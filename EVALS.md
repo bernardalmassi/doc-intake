@@ -17,6 +17,7 @@ The committed recordings were made on **2026-09-18**, with the numeric-date prom
 - [Results](#results)
 - [Sonnet 5 against Haiku 4.5](#sonnet-5-against-haiku-45)
 - [Numeric dates](#numeric-dates)
+- [The leaked prompt example](#the-leaked-prompt-example)
 - [Injection fixtures](#injection-fixtures)
 - [Cost and latency](#cost-and-latency)
 - [Limitations](#limitations)
@@ -146,14 +147,24 @@ Some of these are judgement calls in the expected values rather than clear model
 
 ## Sonnet 5 against Haiku 4.5
 
-The default Anthropic model moved from Claude Haiku 4.5 to Claude Sonnet 5 on 2026-09-18. **The eval does not justify that switch on its own.**
+The default Anthropic model moved from Claude Haiku 4.5 to Claude Sonnet 5 on 2026-09-18. **Accuracy is not the reason, and this eval can't rank the two models on accuracy.** The reason is confidently wrong answers.
+
+**Run-to-run spread is wider than the gap.** The same fixtures, recorded again with the same prompt and model, don't give the same score. gpt-5-nano scored 94, 93 and 88 of 99 across three recordings, a spread of six fields. Haiku 4.5 scored 95 all three times, and Sonnet 5 scored 98 and then 97 (the 98 with the leaked example, below). The gap between Haiku and Sonnet, 95 against 97, is two fields: smaller than one model's spread between identical runs. With 12 fixtures, 9 of them scored, a ranking on accuracy would be noise.
+
+**What did move: wrong answers in the high band.** These are wrong values stored at 0.85 or more. The page shows them as settled, with no question and no review, so for a product that gates on confidence, they are the failures that reach a user unchecked.
+
+| Recording | Haiku 4.5 | Sonnet 5 | gpt-5-nano |
+|---|---|---|---|
+| With the leaked example | 4 and 4 | 0 | 2 and 0 |
+| With the neutral example (clean) | **3** | **1** | 1 |
+
+On the clean prompt the high-band errors went from 3 with Haiku to 1 with Sonnet, and no Haiku recording had fewer than 3. Haiku's are the form's recipient left empty at 0.85, the price list read as a "form" at 0.95, and a currency on the price list at 0.95. Sonnet's one is that same currency, a judgement call in the expected values. **This is the reason for the default.** It rests on the same small set, so it is a reason to prefer Sonnet 5, not proof that it is safer.
 
 | | Claude Haiku 4.5 | Claude Sonnet 5 |
 |---|---|---|
-| Fields right, ordinary fixtures (of 99) | 95, 95 and 95 in three recordings | 98 (with the old prompt example) and 97 (neutral example, committed) |
-| Present in the document / absent (committed prompt) | 75 / 78 and 20 / 21 | 78 / 78 and 19 / 21 |
-| Wrong and still high band (committed prompt) | 3 | 1 |
-| Documents sent to review | 0 | 1 |
+| Fields right, ordinary fixtures (of 99) | 95, 95, 95 | 98 (leaked example), 97 (clean, committed) |
+| Wrong and still high band, clean prompt | 3 | 1 |
+| Documents sent to review, clean prompt | 0 | 1 |
 | Mean tokens in / out per run | 6 077 / 518 | 6 887 / 645 |
 | Mean cost per run | 0.0087 USD (0.0085 to 0.0087 across three recordings) | 0.0202 USD |
 | Runs the 1 USD tenant ceiling allows per month | about 115 | about 49 |
@@ -161,12 +172,11 @@ The default Anthropic model moved from Claude Haiku 4.5 to Claude Sonnet 5 on 20
 | Median latency | 4.4 s | 6.1 s |
 | An abandoned one-page run is charged | 0.05322 USD | 0.10644 USD |
 
-- **Accuracy.** 97 against 95 of 99 is two fields across nine ordinary documents (twelve fixtures in all), inside the overlap of the two models' intervals (90.1 to 98.4 % and 92.9 to 99.4 %). Haiku's score didn't move across three recordings. Sonnet's errors are fewer and less confident: the fields it gets and Haiku misses are the form's recipient and date and the price list's type. On one nine-document synthetic set, that is suggestive, not a demonstrated improvement.
-- **Cost.** A run costs about 2.3 times as much: Sonnet 5's price is twice Haiku's per token, and its newer tokenizer reads the same one-page PDF as about 13 % more input tokens. At the same 1 USD ceiling a tenant gets about 49 runs a month instead of 115.
+- **Cost.** A run costs about 2.3 times as much: Sonnet 5's price is twice Haiku's per token, and its newer tokenizer reads the same one-page PDF as about 13 % more input tokens. At the same 1 USD ceiling a tenant gets about 49 runs a month instead of 115. That's the price of the reason above.
 - **Injections.** Both resisted all three injection fixtures, and no targeted field ended wrong.
-- **What would justify it.** A larger or real document set, run more than once per model, showing a difference bigger than the run-to-run noise.
+- **What would settle it.** A larger or real document set, recorded several times per model, so that differences can be compared against the spread between identical runs, on accuracy and on high-band errors alike.
 
-Both runs sent `thinking: {type: "disabled"}`. Sonnet 5 otherwise thinks adaptively at effort `high` by default, spending the 2 048-token output cap on reasoning. So this compares the two models without thinking. Haiku 4.5 doesn't think by default, and it accepted the explicit setting.
+Both models were run with `thinking: {type: "disabled"}`. Sonnet 5 otherwise thinks adaptively at effort `high` by default, spending the 2 048-token output cap on reasoning. So this compares the two models without thinking. Haiku 4.5 doesn't think by default, and it accepted the explicit setting.
 
 ## Numeric dates
 
@@ -181,19 +191,42 @@ Both runs sent `thinking: {type: "disabled"}`. Sonnet 5 otherwise thinks adaptiv
 - **Tests.** `tests/unit/dates.test.ts` replays the reported answer (February dates at 0.99, terms 30) through `gateFields` and through the orchestrator, and requires both dates in the low band and the document in `needs_review`. It requires the day-first answer to pass untouched, and the recorded answers for this fixture to read 2026-09-02 and 2026-10-02 with terms 30.
 
 **After.** On the first re-recording, both models read 2026-09-02 and 2026-10-02 with terms of 30.
-- **Haiku** (0.95) followed the new instruction and quoted its evidence: "Date 02/09/2026; VAT Reg. No. GB 402 7719 36; Terms 30 days net; Due 02/10/2026 (30 days later matches day-first reading)". Its own gloss in brackets is not document text.
+- **Haiku** (0.95) quoted its evidence, but this recording is one of the contaminated ones (see [The leaked prompt example](#the-leaked-prompt-example)), so it may have been copying the prompt: "Date 02/09/2026; VAT Reg. No. GB 402 7719 36; Terms 30 days net; Due 02/10/2026 (30 days later matches day-first reading)". Its own gloss in brackets is not document text.
 - **gpt-5-nano** (0.92) still quoted only "Date 02/09/2026", so it ignores the instruction to quote evidence.
 - **The check** found no mismatch in any of the 24 recordings. Every fixture that states terms in days has dates exactly that far apart, so on this set it caused no false reviews.
 
-**The prompt's example gave the fixture's evidence away, and it was fixed.** The prompt's example of how to quote evidence was, word for word, this fixture's own lines: "Date 02/09/2026; Terms 30 days net; VAT Reg. No. GB 402 7719 36".
-- **What that did:** it handed the models the evidence for the very document it was meant to test. Haiku's "quoted evidence" above may partly be it copying the example.
-- **How it came to light:** when Sonnet 5 quoted the real evidence faithfully, the output guard read eight consecutive words of the system prompt in its `source_text`. It flagged a correct date as a prompt echo and sent the document to review.
-- **The fix:** the example is now neutral ("Issued 04/11/2026; payment within 14 days; Tel. 020 7946 0000", values in no fixture), and every fixture was re-recorded.
-- **Since then:** Haiku 4.5 still reads the dates correctly. Sonnet 5 reads them correctly and quotes its own evidence ("Due 02/10/2026; Date 02/09/2026; Terms 30 days net; GB VAT Reg. No. GB 402 7719 36; UK addresses") without tripping the guard.
+Since the example was made neutral, Haiku 4.5 still reads these dates correctly. Sonnet 5 reads them correctly too and quotes its own evidence without tripping the guard: "Due 02/10/2026; Date 02/09/2026; Terms 30 days net; GB VAT Reg. No. GB 402 7719 36; UK addresses".
 
 **The check has fired on a live response once, as a false alarm, and never on a misread date.** In the committed recordings, gpt-5-nano gave `inject-exfiltrate` (a letter that states no payment terms) terms of "0" days. Its two dates are six days apart, so both dropped to low and the document went to review although they were right. That is the false alarm this design accepts: a person clears it. No recording has a model misreading a date, so the check is still untested against the failure it exists for.
 
 **What it doesn't catch.** A misread date on a document that states no terms in days, or that lacks one of the two dates, gets no check. The prompt and the model are all that stand in the way there, and the reported case shows the model can be confidently wrong. Terms counted from something other than the document date (delivery, end of month) send correct dates to review: that's a false alarm a person clears, not a silent error.
+
+## The leaked prompt example
+
+**What leaked.** The numeric-date prompt (commit "Read numeric dates from evidence, and review dates the terms contradict") told the model to quote its evidence for a numeric date, and gave an example of such a quote: "Date 02/09/2026; Terms 30 days net; VAT Reg. No. GB 402 7719 36". That is word for word the `invoice-gbp-numeric-dates` fixture's own lines, written while building that fixture. Every request to both providers carried it, so the models were handed the evidence, and in effect the answer, for the one document built to test that prompt.
+
+**Two effects.**
+- **Scores it could inflate.** A model shown the evidence for this fixture's dates in its instructions could read the fixture correctly without having reasoned from the document. The measured difference is small: Sonnet 5 scored 98 with the leak and 97 without, and Haiku 95 both ways. But any recording made with the leak says nothing about how well the prompt works on unseen documents, and its quoted evidence may be copied from the prompt.
+- **A correctly read document sent to review.** When Sonnet 5 quoted the real evidence faithfully, its `source_text` held eight consecutive words of the system prompt. The output guard (`src/lib/extraction/guard.ts`) treats that as the model copying its instructions into a field, a prompt echo. It dropped a correct `document_date` to the low band and sent the document to review.
+
+**How it was found.** Not by review. The first Sonnet 5 recording had one flagged field where every earlier recording had none. The flag's reason was `prompt_echo` on `source_text`, and the flagged text was the fixture's evidence, which matched the prompt's example.
+
+**What changed.**
+- **The example:** it is now "Issued 04/11/2026; payment within 14 days; Tel. 020 7946 0000", values that appear in no fixture, so the prompt gives no fixture's evidence away and a faithful quote can't read as an echo.
+- **The recordings:** every fixture was re-recorded on both providers with the neutral example.
+- **Not yet done:** nothing checks automatically that the prompt contains no fixture text. A test that searches the prompt for each fixture's distinctive lines would catch the next one.
+
+**Which recordings are contaminated.** Every request in each of these carried the leaked example, for every fixture, not only the date invoice:
+
+| Recording | Fields right (of 99) | Contaminated | Committed |
+|---|---|---|---|
+| Haiku 4.5 and gpt-5-nano, with the numeric-date prompt | 95 and 94 | yes | yes, then replaced |
+| Haiku 4.5 and gpt-5-nano, again (noise check) | 95 and 93 | yes | no |
+| Sonnet 5, first recording | 98 | yes | no |
+| Haiku 4.5 and gpt-5-nano, neutral example | 95 and 88 | no | gpt-5-nano's are the committed OpenAI recordings |
+| Sonnet 5, neutral example | 97 | no | yes, the committed Anthropic recordings |
+
+The recordings before the numeric-date prompt (77 and 73 of 80) aren't contaminated: that prompt had no such example. They used a different prompt and ten fields, so they can't be compared directly. Everything else in this document reads from the committed, clean recordings unless it says otherwise.
 
 ## Injection fixtures
 

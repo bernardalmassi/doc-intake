@@ -4,7 +4,8 @@ import { useEffect, useId, useRef, useState } from "react";
 import { buttonClass, errorClass, ghostButtonClass, hintClass, secondaryButtonClass } from "@/app/ui";
 import { fileKind, formatBytes } from "./format";
 import { AlertIcon, CheckIcon, DotIcon, FileIcon, SpinnerIcon, UploadIcon } from "./icons";
-import { checkUploadFile, classifyThrown, UPLOAD_MIME_TYPES, userFacingError } from "@/lib/errors";
+import { checkPageCount, checkUploadFile, classifyThrown, UPLOAD_MIME_TYPES, userFacingError } from "@/lib/errors";
+import { countPdfPagesInBrowser } from "@/lib/page-count-browser";
 import { describeRejection, type RejectReason, UPLOAD_LIMIT_TEXT, UPLOAD_STEPS } from "./messages";
 import { type UploadFailure, type UploadStep, useOperations } from "./operations";
 
@@ -14,7 +15,8 @@ import { type UploadFailure, type UploadStep, useOperations } from "./operations
 // never leaves an unfinished entry behind; the bucket is what enforces them.
 const ACCEPT = [...UPLOAD_MIME_TYPES, ".pdf", ".png", ".jpg", ".jpeg"].join(",");
 
-export type PickedFile = { name: string; type: string; size: number };
+// pages: counted for a PDF before it is accepted, for the rejection message
+export type PickedFile = { name: string; type: string; size: number; pages?: number | null };
 
 export type UploadState =
   // `uploaded` names the file that just finished, for the confirmation
@@ -52,6 +54,9 @@ export function UploadForm({
   // and a keyboard user must not be dropped at the top of the page.
   const focusAfterRender = useRef<"choose" | "primary" | null>(null);
   const hintId = useId();
+  // bumped on every pick, so a page count that finishes after a newer pick
+  // is dropped
+  const pickId = useRef(0);
 
   useEffect(() => {
     const target = focusAfterRender.current;
@@ -76,8 +81,9 @@ export function UploadForm({
 
   const uploading = state.kind === "uploading";
 
-  function pick(files: FileList | null | undefined) {
+  async function pick(files: FileList | null | undefined) {
     if (!files || files.length === 0 || uploading) return;
+    const id = ++pickId.current;
     // A rejection shows the picker again; the button that opened the file
     // dialog may have been in the file card, which is now gone.
     if (files.length > 1) {
@@ -102,6 +108,20 @@ export function UploadForm({
       focusAfterRender.current = "choose";
       setState({ kind: "rejected", reason, file: info });
       return;
+    }
+    // A PDF over the page limit, or one whose pages can't be counted, would
+    // be refused at Extract; say so now. The Extract action checks again on
+    // the server, since this check can be skipped.
+    if (picked.type === "application/pdf") {
+      const pages = await countPdfPagesInBrowser(picked);
+      if (id !== pickId.current) return;
+      const tooMany = checkPageCount(pages);
+      if (tooMany) {
+        file.current = null;
+        focusAfterRender.current = "choose";
+        setState({ kind: "rejected", reason: tooMany === "document.too_many_pages" ? "pages" : "unreadable", file: { ...info, pages } });
+        return;
+      }
     }
     file.current = picked;
     focusAfterRender.current = "primary";

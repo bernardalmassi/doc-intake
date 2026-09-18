@@ -219,6 +219,17 @@ const CATALOG = {
     message: "The document's file couldn't be removed, so the document was kept. Please try again.",
     retryable: true,
   },
+  // checkPageCount: at upload in the browser, and again by the Extract
+  // action before a run is opened (SECURITY.md, "Stale runs")
+  "document.too_many_pages": {
+    message: `Documents can have at most ${EXTRACTION_LIMITS.maxPagesPerDocument} pages. Split this one into parts of ${EXTRACTION_LIMITS.maxPagesPerDocument} pages or fewer and upload them separately.`,
+    retryable: false,
+  },
+  "document.pages_unreadable": {
+    message:
+      "We couldn't count this PDF's pages, so it can't be extracted. Save it again as a standard PDF (for example with Print to PDF) and upload that.",
+    retryable: false,
+  },
 
   // Uploading and downloading
   "upload.no_file": { message: "Choose a file to upload.", retryable: false },
@@ -463,6 +474,17 @@ export function checkUploadFile(file: { type: string; size: number } | null | un
   if (!file) return "upload.no_file";
   if (!isSupportedMimeType(file.type)) return "upload.file_type_not_allowed";
   if (file.size > MAX_UPLOAD_BYTES) return "upload.file_too_large";
+  return null;
+}
+
+// A document may have at most EXTRACTION_LIMITS.maxPagesPerDocument pages,
+// and a PDF's pages must be countable (src/lib/extraction/page-count.ts),
+// so that no run can read more than the stale-run reaper's estimate
+// assumes. Images are one page. `pages` is the count, null when it couldn't
+// be read.
+export function checkPageCount(pages: number | null): ErrorCode | null {
+  if (pages === null) return "document.pages_unreadable";
+  if (pages > EXTRACTION_LIMITS.maxPagesPerDocument) return "document.too_many_pages";
   return null;
 }
 

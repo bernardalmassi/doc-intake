@@ -2,6 +2,7 @@
 // Database values (roles, status enums) never reach the screen as they are,
 // and errors arrive as codes whose words are src/lib/errors.ts's.
 
+import { EXTRACTION_LIMITS } from "@/lib/extraction/config";
 import type { FormState } from "@/app/form-state";
 import { userFacingError } from "@/lib/errors";
 import { formatBytes, NBSP } from "./format";
@@ -46,14 +47,17 @@ export const DOCUMENTS_HEADING_ID = "documents-heading";
 
 // ---------------------------------------------------------------- upload
 
-export const UPLOAD_LIMIT_TEXT = `PDF, PNG or JPEG, up to 10${NBSP}MB`;
+export const UPLOAD_LIMIT_TEXT = `PDF, PNG or JPEG, up to 10${NBSP}MB and ${EXTRACTION_LIMITS.maxPagesPerDocument}${NBSP}pages`;
 
 // What the browser refuses before anything is sent. Type and size are
 // checkUploadFile's rules (the bucket's, mirrored in src/lib/errors.ts) and
 // use its words; an empty file and several files at once are this form's own.
-export type RejectReason = "type" | "size" | "empty" | "several";
+export type RejectReason = "type" | "size" | "empty" | "several" | "pages" | "unreadable";
 
-export function describeRejection(reason: RejectReason, file: { name: string; size: number } | null): string {
+export function describeRejection(
+  reason: RejectReason,
+  file: { name: string; size: number; pages?: number | null } | null,
+): string {
   const name = file?.name ?? "That file";
   switch (reason) {
     case "type":
@@ -64,6 +68,10 @@ export function describeRejection(reason: RejectReason, file: { name: string; si
       return `${name} is empty.`;
     case "several":
       return "Drop one file at a time.";
+    case "pages":
+      return `${name} has ${file?.pages ?? "too many"} pages. ${userFacingError("document.too_many_pages").message}`;
+    case "unreadable":
+      return `${name} can't be uploaded. ${userFacingError("document.pages_unreadable").message}`;
   }
 }
 
