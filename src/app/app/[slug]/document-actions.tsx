@@ -48,7 +48,9 @@ type Notice = (Explained & { tone: "progress" | "done" | "error" }) | null;
 // them.
 export function DocumentActions({ id, slug, filename, storagePath, canDownload, canDelete, extract }: Props) {
   const operations = useOperations();
-  const messageId = `${useId()}-message`;
+  const baseId = useId();
+  const messageId = `${baseId}-message`;
+  const questionId = `${baseId}-question`;
   // The message shown is the one for the last thing the user did.
   const [last, setLast] = useState<"extract" | "delete" | "download" | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -191,7 +193,7 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
               onBlur={(event) => {
                 if (confirming && event.relatedTarget !== cancelButton.current) setConfirming(false);
               }}
-              aria-describedby={confirming ? messageId : undefined}
+              aria-describedby={confirming ? questionId : undefined}
               className={`${confirming ? armedDangerButtonClass : dangerButtonClass} min-w-24`}
             >
               {deleting ? "Deleting…" : confirming ? "Yes, delete" : "Delete"}
@@ -206,12 +208,18 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
       <div id={messageId} aria-live="polite" className="flex min-w-0 flex-1 basis-64 items-center text-sm sm:min-h-9">
         {confirming ? (
           <p>
-            Delete this document and everything extracted from it? This can&apos;t be undone.{" "}
+            <span id={questionId}>
+              Delete this document and everything extracted from it? This can&apos;t be undone.
+            </span>{" "}
             <button
               ref={cancelButton}
               type="button"
               onClick={cancelDelete}
               onKeyDown={onEscape}
+              onBlur={(event) => {
+                // Leaving the confirmation altogether disarms it too.
+                if (event.relatedTarget !== deleteButton.current) setConfirming(false);
+              }}
               className={linkClass}
             >
               Cancel
