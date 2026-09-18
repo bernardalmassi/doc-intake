@@ -1,0 +1,85 @@
+# Runs on every push and pull request: type check, lint, build, and the
+# tests that need no database and no network. Nothing here needs a secret.
+#
+# The Supabase suites (tests/tenant-isolation.test.ts, tests/extraction.test.ts)
+# sign up real users against a real project, so they need the SUPABASE_TEST_*
+# repository secrets and run only when started by hand (Actions → CI → Run
+# workflow → "Also run the Supabase suites"). They are serialized across the
+# whole repository because two concurrent runs would see each other's forged
+# spend in the global ceiling test, and they are never cancelled mid-run,
+# because cleanup runs in afterAll. See README, "Tests".
+
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      supabase:
+        description: Also run the Supabase suites against the test project (needs the SUPABASE_TEST_* secrets)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  # a newer push supersedes an older one; a manual run is never cancelled
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+jobs:
+  check:
+    name: Type check, lint, build, unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Type check
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Build
+        run: npm run build
+        env:
+          # Placeholders. The build only inlines them; nothing is contacted.
+          NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ci-placeholder-not-a-key
+      - name: Unit tests (no database, no network)
+        run: npm run test:unit
+
+  supabase:
+    name: Supabase suites (requires secrets)
+    if: github.event_name == 'workflow_dispatch' && inputs.supabase
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: supabase-test-project
+      cancel-in-progress: false
+    env:
+      SUPABASE_TEST_URL: ${{ secrets.SUPABASE_TEST_URL }}
+      SUPABASE_TEST_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_TEST_PUBLISHABLE_KEY }}
+      SUPABASE_TEST_EMAIL_DOMAIN: ${{ secrets.SUPABASE_TEST_EMAIL_DOMAIN }}
+    steps:
+      - name: Require the test project secrets
+        if: env.SUPABASE_TEST_URL == '' || env.SUPABASE_TEST_PUBLISHABLE_KEY == ''
+        run: |
+          echo "::error::Set the SUPABASE_TEST_URL and SUPABASE_TEST_PUBLISHABLE_KEY repository secrets (see README, Tests)."
+          exit 1
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: All Vitest suites, including the Supabase ones
+        run: npm test

@@ -10,16 +10,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 npm run dev      # Next.js dev server on http://localhost:3000
 npm run build    # production build (also type-checks)
 npm run lint     # ESLint 9 flat config (next core-web-vitals + typescript)
+npm run typecheck  # next typegen && tsc --noEmit (tsc alone fails without the generated route types)
 
 # Supabase CLI is a devDependency — run it through npx
 npx supabase start                  # local stack: API :54321, Postgres :54322, Studio :54323, Inbucket :54324
 npx supabase db reset               # drop local DB, re-apply every migration, then seed
 npx supabase migration new <name>   # new timestamped file in supabase/migrations/
 
-npm test                            # Vitest: tenant isolation + extraction suites against the project in .env.test
+npm run test:unit                   # tests/unit only: no database, no network, no secrets (what CI runs)
+npm test                            # everything: tests/unit plus the tenant isolation + extraction suites against the project in .env.test
 npx vitest run -t "cannot upload"   # run tests whose name matches
 npm run test:db                     # rolled-back SQL test of the stale-run reaper, via the CLI against the linked project
 ```
+
+CI (`.github/workflows/ci.yml`) runs typecheck, lint, build and `test:unit` on every push and pull request, with placeholder `NEXT_PUBLIC_*` values and no secrets. The Supabase suites run there only when started by hand with the `SUPABASE_TEST_*` repository secrets, serialized and never cancelled. Tests that need no database go in `tests/unit/` and must not import `server-only` modules.
 
 `npm test` hits a real Supabase project with real sign-ups (see README "Tests"): it needs `.env.test`, all migrations applied, and email confirmation off. It uses only the publishable key; keep it that way, since the point is to exercise RLS as a signed-in user. No test calls a model: the orchestrator is tested with fake providers, and Vitest only loads `SUPABASE_TEST_*` variables, so provider keys can't reach it.
 
