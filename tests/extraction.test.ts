@@ -30,7 +30,8 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { computeCostUsd, EXTRACTION_LIMITS, PRICING, priceForModel } from "@/lib/extraction/config";
-import { runExtraction, toCloseParams, type RunOutcome } from "@/lib/extraction/run";
+import { classifyRunError } from "@/lib/errors";
+import { failedCloseAttempts, runExtraction, toCloseParams, type RunOutcome } from "@/lib/extraction/run";
 import { FIELD_NAMES } from "@/lib/extraction/schema";
 import { answer, fakeProvider, pdfBytes, validJson } from "./helpers/fake-provider";
 
@@ -477,6 +478,46 @@ describe("run lifecycle in the database", () => {
     // that one forged run, at the clamp, is worth about 84 cents at Haiku rates
     expect(Number(run?.cost_usd)).toBe(0.84096);
     clampedRun = opened.run_id;
+  });
+
+  it("a refused close can be closed again as failed, which releases the document", async () => {
+    // its own tenant, so this run counts toward no other test's hourly limit
+    const tenant = await createTenant(x(), "refused");
+    tenants.push(tenant);
+    const doc = await uploadDocument(x(), tenant, "refused.pdf");
+    const opened = await mustOpen(x(), doc.id);
+    expect((await readDocument(x(), doc.id))?.status).toBe("processing");
+
+    // a success the database refuses to record: no price on file for the model
+    const refusedOutcome = {
+      status: "succeeded",
+      documentStatus: "extracted",
+      fields: [
+        { name: "title", value: "Invoice 7", confidence: 0.95, band: "high", source_text: "Invoice 7", clarifying_question: null },
+      ],
+      provider: "anthropic",
+      model: "claude-unpriced-9",
+      attempts: 1,
+      inputTokens: 1000,
+      outputTokens: 10,
+      latencyMs: 5,
+    } as unknown as RunOutcome;
+    const refused = await close(x(), opened.run_id, opened.close_token, refusedOutcome);
+    expect(refused.error?.code).toBe("22023");
+    expect((await readRun(x(), opened.run_id))?.status).toBe("running");
+
+    // what the Extract action does next: the same usage is refused again
+    // for the same reason, then the close without a model is accepted
+    const [withUsage, withoutUsage] = failedCloseAttempts(refusedOutcome, refused.error?.code ?? null);
+    expect((await close(x(), opened.run_id, opened.close_token, withUsage)).error?.code).toBe("22023");
+    expect((await close(x(), opened.run_id, opened.close_token, withoutUsage)).error).toBeNull();
+
+    const run = await readRun(x(), opened.run_id);
+    expect(run).toMatchObject({ status: "failed", model: null });
+    expect(Number(run?.cost_usd ?? 0)).toBe(0);
+    expect(classifyRunError(run?.error)).toBe("extraction.result_not_saved");
+    expect((await readDocument(x(), doc.id))?.status).toBe("pending");
+    expect(await readFields(x(), doc.id)).toEqual([]);
   });
 
   it("a successful run writes gated fields; a low field sends the document to review", async () => {

@@ -84,7 +84,7 @@ The Supabase suites sign up five throwaway users per run with only the publishab
 1. Apply every migration to the project (above).
 2. Turn email confirmation off (Authentication → Sign In / Providers → Email), since the tests need a session straight from sign-up.
 3. Copy `.env.test.example` to `.env.test` and fill in the project URL and publishable key. Never the service role key. Vitest loads only `SUPABASE_TEST_*` variables and blanks both provider keys, so a provider key can't reach a test even from the shell.
-4. Run `npm test`: 776 unit tests and 55 Supabase tests, about 30 seconds. Sign-ups count toward the project's auth rate limit, so many runs in a row may be throttled.
+4. Run `npm test`: 788 unit tests and 56 Supabase tests, about 30 seconds. Sign-ups count toward the project's auth rate limit, so many runs in a row may be throttled.
 
 **CI** (`.github/workflows/ci.yml`) runs type check, lint, build, the unit tests and the offline evals on every push and pull request, with no secrets. The Supabase suites need the `SUPABASE_TEST_URL` and `SUPABASE_TEST_PUBLISHABLE_KEY` repository secrets and run only when started by hand (Actions → CI → Run workflow → "Also run the Supabase suites"), one at a time, never cancelled mid-run. Those secrets aren't set yet, so the Supabase suites have so far been run locally only.
 

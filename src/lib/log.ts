@@ -76,6 +76,7 @@ export const LOG_EVENTS = [
   "extraction.unexpected_error",
   "extraction.run_closed",
   "extraction.close_failed",
+  "extraction.close_retried",
   // src/app/auth/actions.ts
   "auth.sign_up_refused",
   "auth.signed_up",

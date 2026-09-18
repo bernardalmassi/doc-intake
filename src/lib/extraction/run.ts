@@ -28,6 +28,7 @@
 // counts and error kinds (src/lib/log.ts). Never a field value, the file
 // name, the model's answer or an error message.
 
+import { RUN_ERROR_MARKERS } from "../errors";
 import { log, type Logger, type LogFields } from "../log";
 import { redact } from "../redact";
 import { MAX_OUTPUT_TOKENS, MAX_VALIDATION_RETRIES, type ProviderName } from "./config";
@@ -307,4 +308,32 @@ export function toCloseParams(runId: string, closeToken: string, outcome: RunOut
           }))
         : null,
   };
+}
+
+// What to close a run with when close_extraction_run refused to record its
+// outcome: a model it has no price for, a check this code doesn't know, a
+// dropped connection. A refused close changes nothing, so the run is still
+// open and its token still valid; closing it as failed with no fields puts
+// the document back to how it was instead of leaving it in processing
+// until the stale-run reaper frees it. First with the run's usage, so its
+// spend is recorded; then, if the run had any, without a model or token
+// counts, which the close accepts for any run. A failed run keeps its own
+// error; a successful one's fields are lost, and its error says so with the
+// SQLSTATE of the refusal (never its message), for classifyRunError.
+export function failedCloseAttempts(outcome: RunOutcome, sqlState: string | null): RunOutcome[] {
+  const error =
+    outcome.status === "failed"
+      ? outcome.error
+      : `${RUN_ERROR_MARKERS.resultNotRecorded}: ${sqlState ?? "no answer from the database"}`;
+  const usage: Usage = {
+    provider: outcome.provider,
+    model: outcome.model,
+    attempts: outcome.attempts,
+    inputTokens: outcome.inputTokens,
+    outputTokens: outcome.outputTokens,
+    latencyMs: outcome.latencyMs,
+  };
+  const withUsage: RunOutcome = { ...usage, status: "failed", error, rawResponse: null };
+  if (usage.model === null && usage.inputTokens === 0 && usage.outputTokens === 0) return [withUsage];
+  return [withUsage, { ...withUsage, provider: null, model: null, inputTokens: 0, outputTokens: 0 }];
 }

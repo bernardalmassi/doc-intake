@@ -136,7 +136,8 @@ These come from the text stored in `extraction_runs.error` (and returned as the 
 | The answer failed validation and the retry call failed | starts "retry after invalid response (": the provider error after the last ") failed: " decides, as above; if it can't be read, this | `extraction.invalid_answer` | yes | The extraction service's answer failed our checks, even after a second attempt. You can try again or review the document yourself. |
 | A run left `running` past the stale limit, failed by the next open | starts "abandoned: still running after" (the reaper in `open_extraction_run`) | `extraction.abandoned` | yes | This extraction stopped before it finished and was cancelled. Please try again. |
 | An SDK error with no HTTP status (a bug, or a response without usage) | ProviderError `client` without a status, other than the row above | `unknown` | yes | Something went wrong. Please try again. |
-| The outcome couldn't be recorded, so the document stays `processing` until the reaper frees it | any error from `close_extraction_run`, including a lost connection | `extraction.record_failed` | yes | The extraction ran, but its result couldn't be saved. You can try again in about 10 minutes. |
+| The service refused to record a successful run, so the Extract action closed it as failed instead and the document went back to how it was | starts "the result could not be recorded" | `extraction.result_not_saved` | yes | The extraction ran, but its result couldn't be saved. Please try again. |
+| Neither the outcome nor the failed close tried after it could be recorded, so the document stays `processing` until the reaper frees it | any error from `close_extraction_run` on the first close and on each retry, including a lost connection | `extraction.record_failed` | yes | The extraction ran, but its result couldn't be saved. You can try again in about 10 minutes. |
 
 ## Anywhere
 

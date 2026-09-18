@@ -7,7 +7,7 @@ import { requireUser } from "@/lib/auth";
 import { classifyDatabaseError, classifyRunError, classifyStorageError } from "@/lib/errors";
 import { selectProviders } from "@/lib/extraction/providers/select";
 import { describeError } from "@/lib/extraction/providers/types";
-import { runExtraction, toCloseParams, type RunOutcome } from "@/lib/extraction/run";
+import { failedCloseAttempts, runExtraction, toCloseParams, type RunOutcome } from "@/lib/extraction/run";
 import { detectMimeType, isSupportedMimeType } from "@/lib/extraction/sniff";
 import { log } from "@/lib/log";
 import { registerSecret } from "@/lib/redact";
@@ -26,7 +26,10 @@ type DocumentRow = {
 // before any model is called: open_extraction_run checks the caller is an
 // admin, the document has a file and isn't already running, and the spend
 // ceilings and the hourly limit. The run is then closed with whatever
-// happened, in one transaction, so it never half-commits.
+// happened, in one transaction, so it never half-commits. If the database
+// refuses that close, the run is closed again as failed with no fields, so
+// the document goes back to how it was instead of sitting in processing
+// until the stale-run reaper frees it.
 //
 // Every failure is returned as a code from src/lib/errors.ts. The text
 // stored on a failed run is for engineers, and the page shows it only as
@@ -170,13 +173,15 @@ async function runAndClose({ supabase, doc, slug, runId, closeToken, runLog }: R
   //    one transaction
   const closed = await supabase.rpc("close_extraction_run", toCloseParams(runId, closeToken, outcome));
   if (closed.error) {
+    const failure = failureFields(closed.error, closed.status);
     runLog.error("extraction.close_failed", {
+      retry: 0,
       run_status: outcome.status,
       error_code: "extraction.record_failed",
-      ...failureFields(closed.error, closed.status),
+      ...failure,
       ...usage,
     });
-    return { error: classifyDatabaseError({ ...closed.error, status: closed.status }, "close_extraction_run") };
+    return closeAsFailed({ supabase, slug, runId, closeToken, runLog }, outcome, failure.db_code ?? null);
   }
 
   revalidatePath(`/app/${slug}`);
@@ -198,4 +203,41 @@ async function runAndClose({ supabase, doc, slug, runId, closeToken, runLog }: R
         ? "Extraction finished. Some fields need checking."
         : "Extraction finished.",
   };
+}
+
+// The database refused to record what happened. Close the run again as
+// failed, as failedCloseAttempts plans it (src/lib/extraction/run.ts), so
+// the document goes back to how it was. The code returned is what the page
+// will show for the stored run: the run's own failure, or
+// extraction.result_not_saved for a success that couldn't be recorded. Only
+// when every close is refused does the run stay open for the reaper.
+async function closeAsFailed(
+  { supabase, slug, runId, closeToken, runLog }: Omit<RunContext, "doc">,
+  outcome: RunOutcome,
+  sqlState: string | null,
+): Promise<FormState> {
+  for (const [index, attempt] of failedCloseAttempts(outcome, sqlState).entries()) {
+    const retry = index + 1;
+    const closed = await supabase.rpc("close_extraction_run", toCloseParams(runId, closeToken, attempt));
+    if (!closed.error) {
+      const code = attempt.status === "failed" ? classifyRunError(attempt.error) : "unknown";
+      runLog.warn("extraction.close_retried", {
+        retry,
+        run_status: "failed",
+        error_code: code,
+        model: attempt.model,
+        input_tokens: attempt.inputTokens,
+        output_tokens: attempt.outputTokens,
+      });
+      revalidatePath(`/app/${slug}`);
+      return { error: code };
+    }
+    runLog.error("extraction.close_failed", {
+      retry,
+      run_status: "failed",
+      error_code: "extraction.record_failed",
+      ...failureFields(closed.error, closed.status),
+    });
+  }
+  return { error: "extraction.record_failed" };
 }

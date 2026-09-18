@@ -370,6 +370,7 @@ const PROVIDER_CASES: ProviderCase[] = [
 const RUN_STRING_CASES: [label: string, error: string | null, ErrorCode][] = [
   ["download failed", "could not download the file: Object not found", "extraction.download_failed"],
   ["download returned nothing", "could not download the file: no data", "extraction.download_failed"],
+  ["close refused, closed as failed", "the result could not be recorded: 22023", "extraction.result_not_saved"],
   ["magic bytes", "file content (unrecognized) does not match its declared type (application/pdf)", "extraction.file_type_mismatch"],
   ["magic bytes, other type", "file content (image/png) does not match its declared type (image/jpeg)", "extraction.file_type_mismatch"],
   ["no key", describeError(new Error("extraction is not configured: ANTHROPIC_API_KEY is not set")), "extraction.not_configured"],
@@ -782,6 +783,8 @@ describe("the sources that write run errors", () => {
     expect(run).toContain(RUN_ERROR_MARKERS.retryFailedSeparator);
     expect(run).toContain(RUN_ERROR_MARKERS.fallbackFailed);
     expect(run).toContain(RUN_ERROR_MARKERS.noFallback);
+    // failedCloseAttempts writes it through the constant
+    expect(run).toContain("RUN_ERROR_MARKERS.resultNotRecorded");
 
     const select = read("src/lib/extraction/providers/select.ts");
     expect(select).toContain(RUN_ERROR_MARKERS.notConfigured);

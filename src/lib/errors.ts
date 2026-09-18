@@ -324,6 +324,10 @@ const CATALOG = {
     message: "This extraction stopped before it finished and was cancelled. Please try again.",
     retryable: true,
   },
+  "extraction.result_not_saved": {
+    message: "The extraction ran, but its result couldn't be saved. Please try again.",
+    retryable: true,
+  },
   "extraction.record_failed": {
     message: `The extraction ran, but its result couldn't be saved. You can try again in about ${STALE_MINUTES} minutes.`,
     retryable: true,
@@ -380,8 +384,9 @@ export const CHECK_CONSTRAINTS = {
 // The pieces of a failed run's error, as extraction_runs.error stores it.
 // downloadFailed and typeMismatch start errors written by the Extract Server
 // Action; the next five are the orchestrator's (src/lib/extraction/run.ts);
-// notConfigured and providerNotSelected come from selectProviders, and
-// abandoned from open_extraction_run's stale-run reaper. The test checks
+// notConfigured and providerNotSelected come from selectProviders; abandoned
+// from open_extraction_run's stale-run reaper; and resultNotRecorded from
+// failedCloseAttempts in run.ts, for a run whose close was refused. The test checks
 // each against its source, and drives the real orchestrator with fake
 // providers to classify what it actually stores.
 export const RUN_ERROR_MARKERS = {
@@ -398,6 +403,9 @@ export const RUN_ERROR_MARKERS = {
   notConfigured: "extraction is not configured",
   providerNotSelected: `${PROVIDER_ENV_VAR} must be`,
   abandoned: "abandoned: still running after",
+  // failedCloseAttempts (run.ts), when close_extraction_run refused a
+  // successful run and the Extract action closed it as failed instead
+  resultNotRecorded: "the result could not be recorded",
 } as const;
 
 // How a ProviderError's message starts, where its kind and status alone
@@ -932,6 +940,7 @@ function runCode(error: string | null | undefined): ErrorCode {
 
   if (error.startsWith(RUN_ERROR_MARKERS.abandoned)) return "extraction.abandoned";
   if (error.startsWith(RUN_ERROR_MARKERS.downloadFailed)) return "extraction.download_failed";
+  if (error.startsWith(RUN_ERROR_MARKERS.resultNotRecorded)) return "extraction.result_not_saved";
   if (error.startsWith(RUN_ERROR_MARKERS.typeMismatch)) return "extraction.file_type_mismatch";
   // The validation error is built from the validator's own wording, but a
   // stored error can come from anywhere (an admin can close a run with any
