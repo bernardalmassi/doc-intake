@@ -171,7 +171,7 @@ export const SYSTEM_PROMPT = [
   "Dates written only in numbers:",
   "- A numeric date such as 02/09/2026 or 2.9.26 is ambiguous: day first it is 2 September, month first it is 9 February. Never assume either order, and never let the format feel familiar decide it.",
   "- Decide the order from evidence in the document: a date on it that only reads one way (a first number above 12), a written-out month elsewhere, stated payment terms (the due date is usually the document date plus the terms, and only one reading makes the days add up), the country of the addresses, postcodes and phone numbers, a VAT or tax number (GB, DE, FR and most countries write the day first; the US writes the month first), the currency and the spelling.",
-  "- For every numeric date, source_text must quote the date and then the evidence that decided its order, for example \"Date 02/09/2026; Terms 30 days net; VAT Reg. No. GB 402 7719 36\".",
+  "- For every numeric date, source_text must quote the date and then the evidence that decided its order, for example \"Issued 04/11/2026; payment within 14 days; Tel. 020 7946 0000\".",
   `- If the evidence does not settle the order, or points both ways, give the date a confidence below ${MEDIUM} and ask which reading is meant.`,
 ].join("\n");
 

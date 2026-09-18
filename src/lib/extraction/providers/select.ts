@@ -3,10 +3,12 @@ import "server-only";
 import { log } from "../../log";
 import { registerSecret } from "../../redact";
 import {
+  ANTHROPIC_MODEL_ENV_VAR,
   DEFAULT_MODELS,
   DEFAULT_PROVIDER,
   PROVIDER_ENV_VAR,
   PROVIDER_TIMEOUT_MS,
+  selectableAnthropicModels,
   type ProviderName,
 } from "../config";
 import { createAnthropicProvider } from "./anthropic";
@@ -36,8 +38,23 @@ function build(name: ProviderName): ExtractionProvider | null {
   const apiKey = process.env[KEY_ENV_VARS[name]];
   if (!apiKey) return null;
   registerSecret(apiKey);
-  const options = { apiKey, model: DEFAULT_MODELS[name], timeoutMs: PROVIDER_TIMEOUT_MS };
+  const options = { apiKey, model: modelFor(name), timeoutMs: PROVIDER_TIMEOUT_MS };
   return name === "anthropic" ? createAnthropicProvider(options) : createOpenAIProvider(options);
+}
+
+// The Anthropic model: EXTRACTION_ANTHROPIC_MODEL if set, which must name a
+// priced Anthropic model (claude-haiku-4-5-20251001 to go back to Haiku),
+// else the default.
+function modelFor(name: ProviderName): string {
+  if (name !== "anthropic") return DEFAULT_MODELS[name];
+  const configured = process.env[ANTHROPIC_MODEL_ENV_VAR];
+  if (configured === undefined || configured === "") return DEFAULT_MODELS.anthropic;
+  if (!selectableAnthropicModels().includes(configured)) {
+    // not the value itself: it is whatever someone typed into the env
+    log.error("extraction.not_configured", { error_code: "invalid_model_setting" });
+    throw new Error(`${ANTHROPIC_MODEL_ENV_VAR} must be one of ${selectableAnthropicModels().join(", ")}`);
+  }
+  return configured;
 }
 
 export function selectProviders(): ProviderPair {

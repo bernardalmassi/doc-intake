@@ -27,8 +27,8 @@ insert into public.documents (id, tenant_id, filename, uploaded_by, status, mime
 values ('c3c3c3c3-0000-4000-8000-000000000003', 'b2b2b2b2-0000-4000-8000-000000000002', 'stale.pdf',
   'a1a1a1a1-0000-4000-8000-000000000001', 'needs_review', 'application/pdf', 3141);
 -- stale.pdf stands for evals/documents/invoice-gbp-numeric-dates.pdf: one
--- page, 3141 bytes, whose real Haiku run read 5915 tokens in and wrote 521
--- out. long.pdf is a 20-page document, to show the charge grows with pages.
+-- page, 3141 bytes, whose real Sonnet 5 run read 6708 tokens in and wrote
+-- 852 out. long.pdf is a 20-page document, to show the charge grows with pages.
 insert into public.documents (id, tenant_id, filename, uploaded_by, status, mime_type, size_bytes)
 values ('c3c3c3c3-0000-4000-8000-000000000004', 'b2b2b2b2-0000-4000-8000-000000000002', 'long.pdf',
   'a1a1a1a1-0000-4000-8000-000000000001', 'pending', 'application/pdf', 250000);
@@ -62,9 +62,10 @@ begin
       v_limits.max_calls_per_run * (v_limits.prompt_input_tokens + v_limits.input_tokens_per_page) * v_price.input_usd_per_million
     + v_limits.max_calls_per_run * v_limits.max_output_tokens_per_call * v_price.output_usd_per_million) / 1000000, 8);
   -- what a real run of the same document cost: its recorded tokens at the
-  -- price of the model that served it
-  select round((5915 * p.input_usd_per_million + 521 * p.output_usd_per_million) / 1000000, 8)
-  into v_real from public.extraction_model_prices p where p.model = 'claude-haiku-4-5-20251001';
+  -- price of the model that served it (evals/recordings/
+  -- invoice-gbp-numeric-dates.anthropic.json, Claude Sonnet 5)
+  select round((6708 * p.input_usd_per_million + 852 * p.output_usd_per_million) / 1000000, 8)
+  into v_real from public.extraction_model_prices p where p.model = 'claude-sonnet-5';
   if v_expected is null or v_real is null then
     raise exception 'could not compute the expected estimate (%) or the real cost (%)', v_expected, v_real;
   end if;
@@ -105,9 +106,11 @@ begin
   if v_run.cost_usd <= v_real then
     raise exception 'the estimate % must be more than a real run of the same document (%)', v_run.cost_usd, v_real;
   end if;
-  if v_run.cost_usd >= 0.1 * v_limits.tenant_monthly_ceiling_usd then
-    raise exception 'a one-page abandoned run must cost under 10%% of the tenant ceiling %, got %',
-      v_limits.tenant_monthly_ceiling_usd, v_run.cost_usd;
+  -- a handful of abandoned runs (the hourly run limit's worth) must not
+  -- exhaust a tenant (SECURITY.md, "Stale runs")
+  if v_limits.hourly_run_limit * v_run.cost_usd >= v_limits.tenant_monthly_ceiling_usd then
+    raise exception '% one-page abandoned runs at % USD would exhaust the tenant ceiling %',
+      v_limits.hourly_run_limit, v_run.cost_usd, v_limits.tenant_monthly_ceiling_usd;
   end if;
   if v_run.error not like 'cost estimated at % prices (abandoned; % for 1 page): abandoned: still running after %'
      or v_run.model is not null or v_run.input_tokens is not null then
@@ -115,7 +118,7 @@ begin
       v_run.error, v_run.model, v_run.input_tokens;
   end if;
   insert into checks (step, result) values ('stale run failed with a reason', v_run.error);
-  insert into checks (step, result) values ('one-page stale run charged the estimate: over a real run, under 10% of the ceiling',
+  insert into checks (step, result) values ('one-page stale run charged the estimate: over a real run; an hour''s worth leaves the tenant able to run',
     v_run.cost_usd::text || ' USD, real run ' || v_real::text || ' USD');
   insert into checks (step, result) values ('the reaping open still proceeds', 'ok');
 

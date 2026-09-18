@@ -4,26 +4,26 @@
   "provider": "openai",
   "requestedModel": "gpt-5-nano",
   "reportedModel": "gpt-5-nano-2025-08-07",
-  "recordedAt": "2026-09-18T16:53:34.118Z",
+  "recordedAt": "2026-09-18T21:32:22.236Z",
   "calls": [
     {
       "fingerprint": {
-        "hash": "86b791846cb3e49c71917c07eb139e43e7eb980fed2e4b38095c932c43d043aa",
+        "hash": "1560e5c1ce97be29901b6a206bcb1109288fd1d5ba3539bf63fd71c8e84b0941",
         "parts": {
           "provider": "949f3b150a8ebc7f9db3253456e1895e74d60e8325b663f5b643ec88a2797c4d",
           "file": "725854db58ff1e7b9061000c524e9c79df9cb7a1121521a365072f0c5cfa4269",
-          "systemPrompt": "89af19158b4fba209eb364ec958459f5204538651d828e73c48f31be90a05b28",
+          "systemPrompt": "d60b954388bf89ae1b25ed99370bf4aec4c2b8fb93164a762a77561c434837f1",
           "userPrompt": "06190f813bb9a716a9ccffaca12f85f5d7e4b7755880b5a25c346bf989b9bb96",
           "schema": "a89d1cb83efb753843268d47b892064ce1ad3621e2a7e73599e7fa98d0ff612f",
           "maxOutputTokens": "bfa0ec8bdf2946547879d50a68687ea32e2fa628db187357415858b633d194d9",
           "previousAttempt": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
         }
       },
-      "latencyMs": 3716,
+      "latencyMs": 4374,
       "response": {
-        "text": "{\"document_type\":{\"value\":\"receipt\",\"confidence\":0.72,\"source_text\":\"Kassenbon / Receipt\",\"clarifying_question\":\"Is the document type interpreted as 'receipt'?\"},\"title\":{\"value\":\"Kassenbon / Receipt\",\"confidence\":0.82,\"source_text\":\"Kassenbon / Receipt\",\"clarifying_question\":\"\"},\"sender_name\":{\"value\":\"Keller Werkzeuge GmbH\",\"confidence\":0.92,\"source_text\":\"Keller Werkzeuge GmbH\",\"clarifying_question\":\"\"},\"recipient_name\":{\"value\":\"\",\"confidence\":0.40,\"source_text\":\"\",\"clarifying_question\":\"To whom is this receipt addressed (if stated)?\"},\"document_date\":{\"value\":\"2026-09-12\",\"confidence\":0.92,\"source_text\":\"Datum 12.09.2026 14:32\",\"clarifying_question\":\"\"},\"due_date\":{\"value\":\"\",\"confidence\":0.40,\"source_text\":\"\",\"clarifying_question\":\"Is there a due date stated anywhere on the document?\"},\"payment_terms_days\":{\"value\":\"\",\"confidence\":0.40,\"source_text\":\"\",\"clarifying_question\":\"Are there payment terms specified (e.g., Net 14/30)?\"},\"reference_number\":{\"value\":\"2026-004511\",\"confidence\":0.92,\"source_text\":\"Beleg-Nr. 2026-004511\",\"clarifying_question\":\"\"},\"total_amount\":{\"value\":\"1141.40\",\"confidence\":0.92,\"source_text\":\"Summe EUR 1.141,40\",\"clarifying_question\":\"\"},\"currency\":{\"value\":\"EUR\",\"confidence\":0.92,\"source_text\":\"Summe EUR 1.141,40\",\"clarifying_question\":\"\"},\"summary\":{\"value\":\"Receipt from Keller Werkzeuges GmbH listing itemized purchase and total including VAT.\",\"confidence\":0.48,\"source_text\":\"Kassenbon / Receipt\",\"clarifying_question\":\"\"} }",
-        "inputTokens": 2660,
-        "outputTokens": 406,
+        "text": "{\"document_type\":{\"value\":\"receipt\",\"confidence\":0.78,\"source_text\":\"Kassenbon / Receipt\",\"clarifying_question\":\"\"},\"title\":{\"value\":\"\",\"confidence\":0.55,\"source_text\":\"\",\"clarifying_question\":\"If no clear title, should be left empty.\"},\"sender_name\":{\"value\":\"Keller Werkzeuge GmbH\",\"confidence\":0.92,\"source_text\":\"Keller Werkzeuge GmbH\",\"clarifying_question\":\"\"},\"recipient_name\":{\"value\":\"\",\"confidence\":0.60,\"source_text\":\"\",\"clarifying_question\":\"Is the recipient the same as the purchaser at the counter, or is there a specified recipient on the receipt?\"},\"document_date\":{\"value\":\"2026-09-12\",\"confidence\":0.88,\"source_text\":\"Datum 12.09.2026 14:32\",\"clarifying_question\":\"\"},\"due_date\":{\"value\":\"\",\"confidence\":0.40,\"source_text\":\"\",\"clarifying_question\":\"Is there a due date mentioned elsewhere on the receipt (e.g., for return/exchange)?\"},\"payment_terms_days\":{\"value\":\"\",\"confidence\":0.40,\"source_text\":\"\",\"clarifying_question\":\"If there are any stated terms like '14 days', please specify the number of days.\"},\"reference_number\":{\"value\":\"2026-004511\",\"confidence\":0.92,\"source_text\":\"Beleg-Nr. 2026-004511\",\"clarifying_question\":\"\"},\"total_amount\":{\"value\":\"1141.40\",\"confidence\":0.95,\"source_text\":\"Summe EUR 1.141,40\",\"clarifying_question\":\"\"},\"currency\":{\"value\":\"EUR\",\"confidence\":0.95,\"source_text\":\"Summe EUR 1.141,40\",\"clarifying_question\":\"\"},\"summary\":{\"value\":\"Keller Werkzeuge GmbH receipt showing purchase of tools and accessories with total amount 1141.40 EUR.\",\"confidence\":0.84,\"source_text\":\"Kassenbon / Receipt\\nBeleg-Nr. 2026-004511\\nDatum 12.09.2026 14:32\\nKasse 3\\n1 x Tischkreissäge TKS 2000 1.049,00\\n2 x Sägeblatt-Set 254 mm à 39,95 79,90\\n1 x Schutzbrille klar 12,50\\nSumme EUR 1.141,40\\ndarin MwSt. 19 % 182,24\\nNetto 959,16\\nBezahlt: girocard 1.141,40\\nVielen Dank für Ihren Einkauf!\\nUmtausch innerhalb von 14 Tagen nur mit Beleg.\" ,\"clarifying_question\":\"\"}}",
+        "inputTokens": 2657,
+        "outputTokens": 565,
         "model": "gpt-5-nano-2025-08-07"
       },
       "error": null

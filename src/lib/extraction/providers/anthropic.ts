@@ -5,6 +5,7 @@ import { classifyAnthropicError } from "./classify";
 import { interpretAnthropicMessage } from "./interpret";
 import type { ExtractionProvider, ExtractionRequest, ProviderResponse } from "./types";
 import { toBase64 } from "./types";
+import { ANTHROPIC_THINKING } from "../config";
 
 // Messages API with a schema-constrained output (output_config.format).
 // Reference: https://platform.claude.com/docs/en/build-with-claude/structured-outputs
@@ -48,6 +49,7 @@ export function createAnthropicProvider(options: {
         response = await client.messages.create({
           model: options.model,
           max_tokens: request.maxOutputTokens,
+          thinking: ANTHROPIC_THINKING,
           system: request.systemPrompt,
           messages,
           output_config: { format: { type: "json_schema", schema: request.schema } },

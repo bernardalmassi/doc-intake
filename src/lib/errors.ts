@@ -45,7 +45,7 @@
 // value from outside is checked with isErrorCode before it is looked up.
 
 import type { WeakPasswordReasons } from "@supabase/supabase-js";
-import { DEFAULT_MODELS, EXTRACTION_LIMITS, PROVIDER_ENV_VAR, type ProviderName } from "@/lib/extraction/config";
+import { ANTHROPIC_MODEL_ENV_VAR, DEFAULT_MODELS, EXTRACTION_LIMITS, PROVIDER_ENV_VAR, type ProviderName } from "@/lib/extraction/config";
 import type { ProviderErrorKind } from "@/lib/extraction/providers/types";
 import { isSupportedMimeType, SUPPORTED_MIME_TYPES, type SupportedMimeType } from "@/lib/extraction/sniff";
 import { MAX_PASSWORD_BYTES, MIN_PASSWORD_LENGTH } from "@/lib/password";
@@ -384,7 +384,7 @@ export const CHECK_CONSTRAINTS = {
 // The pieces of a failed run's error, as extraction_runs.error stores it.
 // downloadFailed and typeMismatch start errors written by the Extract Server
 // Action; the next five are the orchestrator's (src/lib/extraction/run.ts);
-// notConfigured and providerNotSelected come from selectProviders; abandoned
+// notConfigured, providerNotSelected and modelNotSelected come from selectProviders; abandoned
 // from open_extraction_run's stale-run reaper; and resultNotRecorded from
 // failedCloseAttempts in run.ts, for a run whose close was refused. The test checks
 // each against its source, and drives the real orchestrator with fake
@@ -402,6 +402,7 @@ export const RUN_ERROR_MARKERS = {
   noFallback: "; no fallback provider is configured",
   notConfigured: "extraction is not configured",
   providerNotSelected: `${PROVIDER_ENV_VAR} must be`,
+  modelNotSelected: `${ANTHROPIC_MODEL_ENV_VAR} must be`,
   abandoned: "abandoned: still running after",
   // failedCloseAttempts (run.ts), when close_extraction_run refused a
   // successful run and the Extract action closed it as failed instead
@@ -984,7 +985,8 @@ function runCode(error: string | null | undefined): ErrorCode {
   const unwrapped = error.replace(/^[A-Za-z]*Error: /, "");
   if (
     unwrapped.startsWith(RUN_ERROR_MARKERS.notConfigured) ||
-    unwrapped.startsWith(RUN_ERROR_MARKERS.providerNotSelected)
+    unwrapped.startsWith(RUN_ERROR_MARKERS.providerNotSelected) ||
+    unwrapped.startsWith(RUN_ERROR_MARKERS.modelNotSelected)
   ) {
     return "extraction.not_configured";
   }

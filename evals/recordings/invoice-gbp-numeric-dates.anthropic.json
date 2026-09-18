@@ -2,29 +2,29 @@
   "version": 1,
   "fixture": "invoice-gbp-numeric-dates",
   "provider": "anthropic",
-  "requestedModel": "claude-haiku-4-5-20251001",
-  "reportedModel": "claude-haiku-4-5-20251001",
-  "recordedAt": "2026-09-18T16:54:28.480Z",
+  "requestedModel": "claude-sonnet-5",
+  "reportedModel": "claude-sonnet-5",
+  "recordedAt": "2026-09-18T21:34:51.709Z",
   "calls": [
     {
       "fingerprint": {
-        "hash": "dd4cd969e61bf492e5bd8831b4b4e6281b457c420951d53d277432ff9d40147d",
+        "hash": "38b8f557231741ef81a06814221e0480938cb7b882f5ffcd27c2be1193ffe61e",
         "parts": {
-          "provider": "dfcc5acc67a5d6373ff38f6cfaa455187c3e22dcb0e58ea0aa22d64a4eb3fc3a",
+          "provider": "a0343ee1b2b9603147b955858f510820d17ad5d24cd7c7025866db4983d56857",
           "file": "e96a3e7653938cfe09c1425ba2eb1595789ed115d838ff8ceaf7e727bf50cfe4",
-          "systemPrompt": "89af19158b4fba209eb364ec958459f5204538651d828e73c48f31be90a05b28",
+          "systemPrompt": "d60b954388bf89ae1b25ed99370bf4aec4c2b8fb93164a762a77561c434837f1",
           "userPrompt": "06190f813bb9a716a9ccffaca12f85f5d7e4b7755880b5a25c346bf989b9bb96",
           "schema": "a89d1cb83efb753843268d47b892064ce1ad3621e2a7e73599e7fa98d0ff612f",
           "maxOutputTokens": "bfa0ec8bdf2946547879d50a68687ea32e2fa628db187357415858b633d194d9",
           "previousAttempt": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
         }
       },
-      "latencyMs": 4575,
+      "latencyMs": 8702,
       "response": {
-        "text": "{\"document_type\":{\"value\":\"invoice\",\"confidence\":0.99,\"source_text\":\"INVOICE\",\"clarifying_question\":\"\"},\"title\":{\"value\":\"INVOICE\",\"confidence\":0.99,\"source_text\":\"INVOICE\",\"clarifying_question\":\"\"},\"sender_name\":{\"value\":\"Harwick Joinery Ltd\",\"confidence\":0.99,\"source_text\":\"Harwick Joinery Ltd\",\"clarifying_question\":\"\"},\"recipient_name\":{\"value\":\"Calder Valley Housing Trust\",\"confidence\":0.99,\"source_text\":\"Calder Valley Housing Trust\",\"clarifying_question\":\"\"},\"document_date\":{\"value\":\"2026-09-02\",\"confidence\":0.95,\"source_text\":\"Date 02/09/2026; VAT Reg. No. GB 402 7719 36; Terms 30 days net; Due 02/10/2026 (30 days later matches day-first reading)\",\"clarifying_question\":\"\"},\"due_date\":{\"value\":\"2026-10-02\",\"confidence\":0.95,\"source_text\":\"Due 02/10/2026; VAT Reg. No. GB 402 7719 36; Terms 30 days net (30 days after 2 September 2026)\",\"clarifying_question\":\"\"},\"payment_terms_days\":{\"value\":\"30\",\"confidence\":0.99,\"source_text\":\"Terms 30 days net\",\"clarifying_question\":\"\"},\"reference_number\":{\"value\":\"HJ-2291\",\"confidence\":0.99,\"source_text\":\"Invoice no. HJ-2291\",\"clarifying_question\":\"\"},\"total_amount\":{\"value\":\"2952.00\",\"confidence\":0.99,\"source_text\":\"Total (GBP) £2,952.00\",\"clarifying_question\":\"\"},\"currency\":{\"value\":\"GBP\",\"confidence\":0.99,\"source_text\":\"Total (GBP)\",\"clarifying_question\":\"\"},\"summary\":{\"value\":\"Invoice from Harwick Joinery Ltd for oak door frames and softwood skirting board supplied and fitted to Calder Valley Housing Trust.\",\"confidence\":0.95,\"source_text\":\"Oak door frames, supplied and fitted; Softwood skirting board, per metre\",\"clarifying_question\":\"\"}}",
-        "inputTokens": 5915,
-        "outputTokens": 521,
-        "model": "claude-haiku-4-5-20251001"
+        "text": "{\"document_type\":{\"value\":\"invoice\",\"confidence\":0.99,\"source_text\":\"INVOICE\",\"clarifying_question\":\"\"},\"title\":{\"value\":\"INVOICE\",\"confidence\":0.95,\"source_text\":\"INVOICE\",\"clarifying_question\":\"\"},\"sender_name\":{\"value\":\"Harwick Joinery Ltd\",\"confidence\":0.98,\"source_text\":\"Harwick Joinery Ltd\",\"clarifying_question\":\"\"},\"recipient_name\":{\"value\":\"Calder Valley Housing Trust\",\"confidence\":0.95,\"source_text\":\"Bill to\\nCalder Valley Housing Trust\",\"clarifying_question\":\"\"},\"document_date\":{\"value\":\"2026-09-02\",\"confidence\":0.9,\"source_text\":\"Date 02/09/2026; Due 02/10/2026; Terms 30 days net - the due date is exactly one month after the document date under either day-first or month-first reading, but the UK address (Hebden Bridge, Todmorden, GB VAT number) supports day-first reading, giving 2 September 2026 as the invoice date and 2 October 2026 as the due date, 30 days later\",\"clarifying_question\":\"Is the invoice date 2 September 2026 (day first) or 9 February 2026 (month first)?\"},\"due_date\":{\"value\":\"2026-10-02\",\"confidence\":0.9,\"source_text\":\"Due 02/10/2026; Date 02/09/2026; Terms 30 days net; GB VAT Reg. No. GB 402 7719 36; UK addresses\",\"clarifying_question\":\"Is the due date 2 October 2026 (day first) or 10 February 2026 (month first)?\"},\"payment_terms_days\":{\"value\":\"30\",\"confidence\":0.97,\"source_text\":\"Terms 30 days net\",\"clarifying_question\":\"\"},\"reference_number\":{\"value\":\"HJ-2291\",\"confidence\":0.98,\"source_text\":\"Invoice no. HJ-2291\",\"clarifying_question\":\"\"},\"total_amount\":{\"value\":\"2952.00\",\"confidence\":0.97,\"source_text\":\"Total (GBP) £2,952.00\",\"clarifying_question\":\"\"},\"currency\":{\"value\":\"GBP\",\"confidence\":0.98,\"source_text\":\"Total (GBP) £2,952.00\",\"clarifying_question\":\"\"},\"summary\":{\"value\":\"An invoice from Harwick Joinery Ltd to Calder Valley Housing Trust for supplied and fitted oak door frames and softwood skirting board, totaling £2,952.00 including VAT.\",\"confidence\":0.95,\"source_text\":\"\",\"clarifying_question\":\"\"}}",
+        "inputTokens": 6708,
+        "outputTokens": 852,
+        "model": "claude-sonnet-5"
       },
       "error": null
     }

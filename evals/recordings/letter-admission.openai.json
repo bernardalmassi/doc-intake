@@ -4,26 +4,26 @@
   "provider": "openai",
   "requestedModel": "gpt-5-nano",
   "reportedModel": "gpt-5-nano-2025-08-07",
-  "recordedAt": "2026-09-18T16:53:51.779Z",
+  "recordedAt": "2026-09-18T21:32:40.757Z",
   "calls": [
     {
       "fingerprint": {
-        "hash": "12a44de18f0abafd5d097b14d9d47a5c3bf16cb9989ec83fd0119943c33fc83b",
+        "hash": "aa1124a252618cca19c357479677627ece9f1f292abf08b3847061979b644a8b",
         "parts": {
           "provider": "949f3b150a8ebc7f9db3253456e1895e74d60e8325b663f5b643ec88a2797c4d",
           "file": "f8aa8d8e03c492a95e3fc53bbcc9860b382036efb211b7da34e260df293bf673",
-          "systemPrompt": "89af19158b4fba209eb364ec958459f5204538651d828e73c48f31be90a05b28",
+          "systemPrompt": "d60b954388bf89ae1b25ed99370bf4aec4c2b8fb93164a762a77561c434837f1",
           "userPrompt": "06190f813bb9a716a9ccffaca12f85f5d7e4b7755880b5a25c346bf989b9bb96",
           "schema": "a89d1cb83efb753843268d47b892064ce1ad3621e2a7e73599e7fa98d0ff612f",
           "maxOutputTokens": "bfa0ec8bdf2946547879d50a68687ea32e2fa628db187357415858b633d194d9",
           "previousAttempt": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
         }
       },
-      "latencyMs": 3737,
+      "latencyMs": 3630,
       "response": {
-        "text": "{\"document_type\":{\"value\":\"letter\",\"confidence\":0.70,\"source_text\":\"Offer of Admission\",\"clarifying_question\":\"\"},\"title\":{\"value\":\"Offer of Admission\",\"confidence\":0.70,\"source_text\":\"Offer of Admission\",\"clarifying_question\":\"\"},\"sender_name\":{\"value\":\"Greenfield University, Office of Graduate Admissions\",\"confidence\":0.80,\"source_text\":\"Greenfield University\\nOffice of Graduate Admissions\",\"clarifying_question\":\"\"},\"recipient_name\":{\"value\":\"Ms. Amara Okonkwo\",\"confidence\":0.95,\"source_text\":\"Ms. Amara Okonkwo\",\"clarifying_question\":\"\"},\"document_date\":{\"value\":\"2026-08-20\",\"confidence\":0.95,\"source_text\":\"August 20, 2026\",\"clarifying_question\":\"\"},\"due_date\":{\"value\":\"\",\"confidence\":0.60,\"source_text\":\"\",\"clarifying_question\":\"No explicit due date mentioned in the document\"},\"payment_terms_days\":{\"value\":\"\",\"confidence\":0.60,\"source_text\":\"\",\"clarifying_question\":\"No payment terms stated in the document\"},\"reference_number\":{\"value\":\"Application GU-26-18842\",\"confidence\":0.90,\"source_text\":\"Application GU-26-18842\",\"clarifying_question\":\"\"},\"total_amount\":{\"value\":\"\",\"confidence\":0.60,\"source_text\":\"\",\"clarifying_question\":\"No total amount stated\"},\"currency\":{\"value\":\"\",\"confidence\":0.60,\"source_text\":\"\",\"clarifying_question\":\"No currency stated\"},\"summary\":{\"value\":\"Offer of admission to the Master of Science in Environmental Engineering program at Greenfield University.\",\"confidence\":0.90,\"source_text\":\"Offer of Admission\\nDear Ms. Okonkwo,\",\"clarifying_question\":\"\"}}",
-        "inputTokens": 2635,
-        "outputTokens": 371,
+        "text": "{\"document_type\":{\"value\":\"letter\",\"confidence\":0.85,\"source_text\":\"Offer of Admission\",\"clarifying_question\":\"\"},\"title\":{\"value\":\"Offer of Admission\",\"confidence\":0.85,\"source_text\":\"Offer of Admission\",\"clarifying_question\":\"\"},\"sender_name\":{\"value\":\"Greenfield University, Office of Graduate Admissions\",\"confidence\":0.85,\"source_text\":\"Greenfield University\\nOffice of Graduate Admissions\",\"clarifying_question\":\"\"},\"recipient_name\":{\"value\":\"Ms. Amara Okonkwo\",\"confidence\":0.95,\"source_text\":\"Ms. Amara Okonkwo\",\"clarifying_question\":\"\"},\"document_date\":{\"value\":\"2026-08-20\",\"confidence\":0.95,\"source_text\":\"August 20, 2026\",\"clarifying_question\":\"\"},\"due_date\":{\"value\":\"\",\"confidence\":0.6,\"source_text\":\"\",\"clarifying_question\":\"Document does not specify a payment or response deadline.\"},\"payment_terms_days\":{\"value\":\"\",\"confidence\":0.6,\"source_text\":\"\",\"clarifying_question\":\"Document does not specify payment terms.\"},\"reference_number\":{\"value\":\"Application GU-26-18842\",\"confidence\":0.95,\"source_text\":\"Application GU-26-18842\",\"clarifying_question\":\"\"},\"total_amount\":{\"value\":\"\",\"confidence\":0.6,\"source_text\":\"\",\"clarifying_question\":\"Document does not state a total amount.\"},\"currency\":{\"value\":\"\",\"confidence\":0.6,\"source_text\":\"\",\"clarifying_question\":\"Document does not specify a total currency.\"},\"summary\":{\"value\":\"Admission offer letter from Greenfield University to Ms. Amara Okonkwo for MS in Environmental Engineering, commencing spring semester.\",\"confidence\":0.85,\"source_text\":\"Offer of Admission\\nDear Ms. Okonkwo,\" ,\"clarifying_question\":\"\"}}",
+        "inputTokens": 2632,
+        "outputTokens": 386,
         "model": "gpt-5-nano-2025-08-07"
       },
       "error": null

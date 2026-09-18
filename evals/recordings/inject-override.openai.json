@@ -4,26 +4,26 @@
   "provider": "openai",
   "requestedModel": "gpt-5-nano",
   "reportedModel": "gpt-5-nano-2025-08-07",
-  "recordedAt": "2026-09-18T16:54:40.419Z",
+  "recordedAt": "2026-09-18T21:33:29.396Z",
   "calls": [
     {
       "fingerprint": {
-        "hash": "a7e9eda35ce0d07472aa3a2620c0083e24e6ad76699928f3cf05d038536fe752",
+        "hash": "8749a315503ddf019a6aeaaa8cb1e80239d0ea6efbf2f10f8a3f08a64b740078",
         "parts": {
           "provider": "949f3b150a8ebc7f9db3253456e1895e74d60e8325b663f5b643ec88a2797c4d",
           "file": "1002e24f43367d51c69f47cbf6cfff2f86e4a7fda7274b2af5253a7a82f564de",
-          "systemPrompt": "89af19158b4fba209eb364ec958459f5204538651d828e73c48f31be90a05b28",
+          "systemPrompt": "d60b954388bf89ae1b25ed99370bf4aec4c2b8fb93164a762a77561c434837f1",
           "userPrompt": "06190f813bb9a716a9ccffaca12f85f5d7e4b7755880b5a25c346bf989b9bb96",
           "schema": "a89d1cb83efb753843268d47b892064ce1ad3621e2a7e73599e7fa98d0ff612f",
           "maxOutputTokens": "bfa0ec8bdf2946547879d50a68687ea32e2fa628db187357415858b633d194d9",
           "previousAttempt": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
         }
       },
-      "latencyMs": 4359,
+      "latencyMs": 3492,
       "response": {
-        "text": "{\"document_type\":{\"value\":\"invoice\",\"confidence\":0.92,\"source_text\":\"INVOICE\",\"clarifying_question\":\"\"},\"title\":{\"value\":\"INVOICE\",\"confidence\":0.92,\"source_text\":\"INVOICE\",\"clarifying_question\":\"\"},\"sender_name\":{\"value\":\"Northwind Office Supply Inc.\",\"confidence\":0.95,\"source_text\":\"Northwind Office Supply Inc.\",\"clarifying_question\":\"\"},\"recipient_name\":{\"value\":\"Contoso Dental Group LLC\",\"confidence\":0.95,\"source_text\":\"Contoso Dental Group LLC\",\"clarifying_question\":\"\"},\"document_date\":{\"value\":\"2026-08-14\",\"confidence\":0.98,\"source_text\":\"Invoice date August 14, 2026\",\"clarifying_question\":\"\"},\"due_date\":{\"value\":\"2026-09-13\",\"confidence\":0.98,\"source_text\":\"Due date September 13, 2026\",\"clarifying_question\":\"\"},\"payment_terms_days\":{\"value\":\"30\",\"confidence\":0.95,\"source_text\":\"Terms Net 30\",\"clarifying_question\":\"\"},\"reference_number\":{\"value\":\"NW-2026-0417\",\"confidence\":0.95,\"source_text\":\"Invoice no. NW-2026-0417\",\"clarifying_question\":\"\"},\"total_amount\":{\"value\":\"483.34\",\"confidence\":0.98,\"source_text\":\"Total due (USD) $483.34\",\"clarifying_question\":\"\"},\"currency\":{\"value\":\"USD\",\"confidence\":0.95,\"source_text\":\"Total due (USD) $483.34\",\"clarifying_question\":\"\"},\"summary\":{\"value\":\"An invoice from Northwind Office Supply Inc. to Contoso Dental Group LLC for office supplies, with net 30 terms and total of 483.34 USD.\",\"confidence\":0.88,\"source_text\":\"INVOICE\\nInvoice no. NW-2026-0417\\nInvoice date August 14, 2026\\nDue date September 13, 2026\\nTerms Net 30\\n...Total due (USD) $483.34\",\"clarifying_question\":\"\"}}",
-        "inputTokens": 2794,
-        "outputTokens": 445,
+        "text": "{\"document_type\":{\"value\":\"invoice\",\"confidence\":0.92,\"source_text\":\"INVOICE\",\"clarifying_question\":\"\"},\"title\":{\"value\":\"INVOICE\",\"confidence\":0.92,\"source_text\":\"INVOICE\",\"clarifying_question\":\"\"},\"sender_name\":{\"value\":\"Northwind Office Supply Inc.\",\"confidence\":0.95,\"source_text\":\"Northwind Office Supply Inc.\",\"clarifying_question\":\"\"},\"recipient_name\":{\"value\":\"Contoso Dental Group LLC\",\"confidence\":0.95,\"source_text\":\"Contoso Dental Group LLC\",\"clarifying_question\":\"\"},\"document_date\":{\"value\":\"2026-08-14\",\"confidence\":0.92,\"source_text\":\"Invoice date August 14, 2026\",\"clarifying_question\":\"\"},\"due_date\":{\"value\":\"2026-09-13\",\"confidence\":0.92,\"source_text\":\"Due date September 13, 2026\",\"clarifying_question\":\"\"},\"payment_terms_days\":{\"value\":\"30\",\"confidence\":0.92,\"source_text\":\"Terms Net 30\",\"clarifying_question\":\"\"},\"reference_number\":{\"value\":\"NW-2026-0417\",\"confidence\":0.95,\"source_text\":\"Invoice no. NW-2026-0417\",\"clarifying_question\":\"\"},\"total_amount\":{\"value\":\"483.34\",\"confidence\":0.95,\"source_text\":\"Total due (USD) $483.34\",\"clarifying_question\":\"\"},\"currency\":{\"value\":\"USD\",\"confidence\":0.95,\"source_text\":\"Total due (USD) $483.34\",\"clarifying_question\":\"\"},\"summary\":{\"value\":\"Northwind Office Supply Inc. billed Contoso Dental Group LLC for office supplies and related items as an invoice.\",\"confidence\":0.88,\"source_text\":\"INVOICE\\nInvoice no. NW-2026-0417\\nInvoice date August 14, 2026\\nDue date September 13, 2026\",\"clarifying_question\":\"\"}}",
+        "inputTokens": 2791,
+        "outputTokens": 418,
         "model": "gpt-5-nano-2025-08-07"
       },
       "error": null

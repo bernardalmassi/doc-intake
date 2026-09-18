@@ -2,29 +2,29 @@
   "version": 1,
   "fixture": "price-list-sparse",
   "provider": "anthropic",
-  "requestedModel": "claude-haiku-4-5-20251001",
-  "reportedModel": "claude-haiku-4-5-20251001",
-  "recordedAt": "2026-09-18T16:54:21.113Z",
+  "requestedModel": "claude-sonnet-5",
+  "reportedModel": "claude-sonnet-5",
+  "recordedAt": "2026-09-18T21:34:47.203Z",
   "calls": [
     {
       "fingerprint": {
-        "hash": "6d4f7dfa15ae064aba4dbe6a0e16433b3947f08f88e305c60cd133385fb64e6c",
+        "hash": "dda8478bb4260e1b79c81890681e0492c6b1325c5ea754cb9b904eeb49012c94",
         "parts": {
-          "provider": "dfcc5acc67a5d6373ff38f6cfaa455187c3e22dcb0e58ea0aa22d64a4eb3fc3a",
+          "provider": "a0343ee1b2b9603147b955858f510820d17ad5d24cd7c7025866db4983d56857",
           "file": "cc9d4f15d8a8e38dbd2601b4145bda28f98916e158ed6a19f499b504ec6af936",
-          "systemPrompt": "89af19158b4fba209eb364ec958459f5204538651d828e73c48f31be90a05b28",
+          "systemPrompt": "d60b954388bf89ae1b25ed99370bf4aec4c2b8fb93164a762a77561c434837f1",
           "userPrompt": "06190f813bb9a716a9ccffaca12f85f5d7e4b7755880b5a25c346bf989b9bb96",
           "schema": "a89d1cb83efb753843268d47b892064ce1ad3621e2a7e73599e7fa98d0ff612f",
           "maxOutputTokens": "bfa0ec8bdf2946547879d50a68687ea32e2fa628db187357415858b633d194d9",
           "previousAttempt": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
         }
       },
-      "latencyMs": 3564,
+      "latencyMs": 4505,
       "response": {
-        "text": "{\"document_type\": {\"value\": \"form\", \"confidence\": 0.9, \"source_text\": \"Wholesale Price List\", \"clarifying_question\": \"\"}, \"title\": {\"value\": \"Wholesale Price List\", \"confidence\": 0.95, \"source_text\": \"Wholesale Price List\", \"clarifying_question\": \"\"}, \"sender_name\": {\"value\": \"Hillside Bakery Co-op\", \"confidence\": 0.95, \"source_text\": \"Hillside Bakery Co-op\", \"clarifying_question\": \"\"}, \"recipient_name\": {\"value\": \"\", \"confidence\": 0.9, \"source_text\": \"\", \"clarifying_question\": \"\"}, \"document_date\": {\"value\": \"\", \"confidence\": 0.85, \"source_text\": \"\", \"clarifying_question\": \"\"}, \"due_date\": {\"value\": \"\", \"confidence\": 0.85, \"source_text\": \"\", \"clarifying_question\": \"\"}, \"payment_terms_days\": {\"value\": \"\", \"confidence\": 0.85, \"source_text\": \"\", \"clarifying_question\": \"\"}, \"reference_number\": {\"value\": \"\", \"confidence\": 0.85, \"source_text\": \"\", \"clarifying_question\": \"\"}, \"total_amount\": {\"value\": \"\", \"confidence\": 0.85, \"source_text\": \"\", \"clarifying_question\": \"\"}, \"currency\": {\"value\": \"USD\", \"confidence\": 0.9, \"source_text\": \"$27.00, $25.50, $38.40, $21.60, $22.00, $19.80\", \"clarifying_question\": \"\"}, \"summary\": {\"value\": \"A wholesale price list for baked goods offered by Hillside Bakery Co-op.\", \"confidence\": 0.95, \"source_text\": \"Wholesale Price List\", \"clarifying_question\": \"\"}}",
-        "inputTokens": 5881,
-        "outputTokens": 433,
-        "model": "claude-haiku-4-5-20251001"
+        "text": "{\"document_type\":{\"value\":\"other\",\"confidence\":0.9,\"source_text\":\"Wholesale Price List\",\"clarifying_question\":\"\"},\"title\":{\"value\":\"Wholesale Price List\",\"confidence\":0.97,\"source_text\":\"Wholesale Price List\",\"clarifying_question\":\"\"},\"sender_name\":{\"value\":\"Hillside Bakery Co-op\",\"confidence\":0.95,\"source_text\":\"Hillside Bakery Co-op\",\"clarifying_question\":\"\"},\"recipient_name\":{\"value\":\"\",\"confidence\":0.95,\"source_text\":\"\",\"clarifying_question\":\"\"},\"document_date\":{\"value\":\"\",\"confidence\":0.9,\"source_text\":\"\",\"clarifying_question\":\"\"},\"due_date\":{\"value\":\"\",\"confidence\":0.95,\"source_text\":\"\",\"clarifying_question\":\"\"},\"payment_terms_days\":{\"value\":\"\",\"confidence\":0.9,\"source_text\":\"\",\"clarifying_question\":\"\"},\"reference_number\":{\"value\":\"\",\"confidence\":0.9,\"source_text\":\"\",\"clarifying_question\":\"\"},\"total_amount\":{\"value\":\"\",\"confidence\":0.85,\"source_text\":\"\",\"clarifying_question\":\"\"},\"currency\":{\"value\":\"USD\",\"confidence\":0.9,\"source_text\":\"$27.00\",\"clarifying_question\":\"\"},\"summary\":{\"value\":\"A wholesale price list from Hillside Bakery Co-op listing per-unit prices for bakery products.\",\"confidence\":0.95,\"source_text\":\"Wholesale Price List\",\"clarifying_question\":\"\"}}",
+        "inputTokens": 6647,
+        "outputTokens": 490,
+        "model": "claude-sonnet-5"
       },
       "error": null
     }

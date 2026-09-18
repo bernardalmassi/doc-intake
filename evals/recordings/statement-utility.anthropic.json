@@ -2,29 +2,29 @@
   "version": 1,
   "fixture": "statement-utility",
   "provider": "anthropic",
-  "requestedModel": "claude-haiku-4-5-20251001",
-  "reportedModel": "claude-haiku-4-5-20251001",
-  "recordedAt": "2026-09-18T16:53:55.518Z",
+  "requestedModel": "claude-sonnet-5",
+  "reportedModel": "claude-sonnet-5",
+  "recordedAt": "2026-09-18T21:34:27.648Z",
   "calls": [
     {
       "fingerprint": {
-        "hash": "0e730bd67a538c1f1381d1cd9b6423c7fd8dcb8eee0ce9e5d64ec1be4aedb304",
+        "hash": "054baf5393727ff32eb4cd9bce567c2605c327baf991eea47d59bf3a771703bf",
         "parts": {
-          "provider": "dfcc5acc67a5d6373ff38f6cfaa455187c3e22dcb0e58ea0aa22d64a4eb3fc3a",
+          "provider": "a0343ee1b2b9603147b955858f510820d17ad5d24cd7c7025866db4983d56857",
           "file": "3d2871bd418d32256286a8a6cb26a1d4f5f19bafb2191341fe2c7cc4a13aa48e",
-          "systemPrompt": "89af19158b4fba209eb364ec958459f5204538651d828e73c48f31be90a05b28",
+          "systemPrompt": "d60b954388bf89ae1b25ed99370bf4aec4c2b8fb93164a762a77561c434837f1",
           "userPrompt": "06190f813bb9a716a9ccffaca12f85f5d7e4b7755880b5a25c346bf989b9bb96",
           "schema": "a89d1cb83efb753843268d47b892064ce1ad3621e2a7e73599e7fa98d0ff612f",
           "maxOutputTokens": "bfa0ec8bdf2946547879d50a68687ea32e2fa628db187357415858b633d194d9",
           "previousAttempt": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
         }
       },
-      "latencyMs": 4011,
+      "latencyMs": 6549,
       "response": {
-        "text": "{\"document_type\": {\"value\": \"statement\", \"confidence\": 0.95, \"source_text\": \"Electricity Statement\", \"clarifying_question\": \"\"}, \"title\": {\"value\": \"Electricity Statement\", \"confidence\": 0.95, \"source_text\": \"Electricity Statement\", \"clarifying_question\": \"\"}, \"sender_name\": {\"value\": \"Cascade Power & Light\", \"confidence\": 0.95, \"source_text\": \"Cascade Power & Light\", \"clarifying_question\": \"\"}, \"recipient_name\": {\"value\": \"Jordan Ellis\", \"confidence\": 0.95, \"source_text\": \"Jordan Ellis\", \"clarifying_question\": \"\"}, \"document_date\": {\"value\": \"2026-09-05\", \"confidence\": 0.95, \"source_text\": \"Statement date September 5, 2026\", \"clarifying_question\": \"\"}, \"due_date\": {\"value\": \"2026-09-25\", \"confidence\": 0.95, \"source_text\": \"Due date September 25, 2026\", \"clarifying_question\": \"\"}, \"payment_terms_days\": {\"value\": \"\", \"confidence\": 0.9, \"source_text\": \"\", \"clarifying_question\": \"\"}, \"reference_number\": {\"value\": \"4402-118-2093\", \"confidence\": 0.95, \"source_text\": \"Account number 4402-118-2093\", \"clarifying_question\": \"\"}, \"total_amount\": {\"value\": \"142.87\", \"confidence\": 0.95, \"source_text\": \"Amount due $142.87\", \"clarifying_question\": \"\"}, \"currency\": {\"value\": \"USD\", \"confidence\": 0.95, \"source_text\": \"$142.87\", \"clarifying_question\": \"\"}, \"summary\": {\"value\": \"Electricity utility statement for August 2026 showing charges and amount due.\", \"confidence\": 0.9, \"source_text\": \"Electricity Statement\", \"clarifying_question\": \"\"}}",
-        "inputTokens": 5972,
-        "outputTokens": 462,
-        "model": "claude-haiku-4-5-20251001"
+        "text": "{\"document_type\":{\"value\":\"statement\",\"confidence\":0.95,\"source_text\":\"Electricity Statement\",\"clarifying_question\":\"\"},\"title\":{\"value\":\"Electricity Statement\",\"confidence\":0.95,\"source_text\":\"Electricity Statement\",\"clarifying_question\":\"\"},\"sender_name\":{\"value\":\"Cascade Power & Light\",\"confidence\":0.95,\"source_text\":\"Cascade Power & Light\",\"clarifying_question\":\"\"},\"recipient_name\":{\"value\":\"Jordan Ellis\",\"confidence\":0.95,\"source_text\":\"Jordan Ellis\",\"clarifying_question\":\"\"},\"document_date\":{\"value\":\"2026-09-05\",\"confidence\":0.9,\"source_text\":\"Statement date September 5, 2026\",\"clarifying_question\":\"\"},\"due_date\":{\"value\":\"2026-09-25\",\"confidence\":0.9,\"source_text\":\"Due date September 25, 2026\",\"clarifying_question\":\"\"},\"payment_terms_days\":{\"value\":\"20\",\"confidence\":0.6,\"source_text\":\"Statement date September 5, 2026; Due date September 25, 2026\",\"clarifying_question\":\"Is the payment term implicitly 20 days from the statement date, or is there a stated payment term elsewhere?\"},\"reference_number\":{\"value\":\"4402-118-2093\",\"confidence\":0.95,\"source_text\":\"Account number 4402-118-2093\",\"clarifying_question\":\"\"},\"total_amount\":{\"value\":\"142.87\",\"confidence\":0.95,\"source_text\":\"Amount due $142.87\",\"clarifying_question\":\"\"},\"currency\":{\"value\":\"USD\",\"confidence\":0.95,\"source_text\":\"$142.87\",\"clarifying_question\":\"\"},\"summary\":{\"value\":\"This is an electricity statement from Cascade Power & Light billing Jordan Ellis $142.87 for the August 2026 billing period, due September 25, 2026.\",\"confidence\":0.9,\"source_text\":\"\",\"clarifying_question\":\"\"}}",
+        "inputTokens": 6764,
+        "outputTokens": 630,
+        "model": "claude-sonnet-5"
       },
       "error": null
     }

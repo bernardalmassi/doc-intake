@@ -37,7 +37,7 @@ const architecture = [
   {
     term: "Extraction",
     sentence:
-      "Before any model is called, SQL enforces the spend limits (1\u00a0USD per organization and 3\u00a0USD overall each month, 5\u00a0runs per organization per hour), then Claude Haiku\u00a04.5 returns eleven schema-validated fields, with GPT-5\u00a0nano as the fallback, and the database computes the cost from token counts instead of trusting the app.",
+      "Before any model is called, SQL enforces the spend limits (1\u00a0USD per organization and 3\u00a0USD overall each month, 5\u00a0runs per organization per hour), then Claude Sonnet\u00a05 returns eleven schema-validated fields, with GPT-5\u00a0nano as the fallback, and the database computes the cost from token counts instead of trusting the app.",
   },
 ];
 

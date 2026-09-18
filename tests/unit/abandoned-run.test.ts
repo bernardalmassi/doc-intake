@@ -1,8 +1,10 @@
 // What the stale-run reaper charges a run it abandons (migration
 // 20260918000003, mirrored by abandonedRunCostUsd in config.ts): an
 // estimate of the most that run could have consumed, from the page count
-// the Extract action sent with the run, at Haiku 4.5's price. Checked here
-// with no database: a one-page run stays under 10 % of the tenant ceiling,
+// the Extract action sent with the run, at the price of the dearest model
+// the app asks for. Checked here with no database: a one-page run costs the
+// measured figure and a handful of them (the hourly run limit) can't
+// exhaust a tenant,
 // the charge grows with pages instead of being flat (a large document may
 // legitimately cost most of the budget), and for every recorded eval run
 // the estimate is more than what the real run cost. The SQL itself is
@@ -41,11 +43,15 @@ describe("the abandoned-run estimate", () => {
     expect(PRICING[EXTRACTION_LIMITS.abandonedRunPriceModel]).toBeDefined();
   });
 
-  it("keeps an abandoned one-page run under 10 % of the tenant ceiling", () => {
-    // 3 calls of 4 500 + 3 000 tokens in and 2 048 out, at 1 / 5 USD per million
+  it("charges an abandoned one-page run the measured figure, and a handful of them can't exhaust a tenant", () => {
+    // 3 calls of 4 500 + 3 000 tokens in and 2 048 out, at Claude Sonnet 5's
+    // 2 / 10 USD per million (0.05322 when Haiku 4.5 was the default)
     expect(abandonedRunUsage(1)).toEqual({ pages: 1, inputTokens: 22_500, outputTokens: 6_144 });
-    expect(abandonedRunCostUsd(1)).toBe(0.05322);
-    expect(abandonedRunCostUsd(1)).toBeLessThan(0.1 * CEILING);
+    expect(abandonedRunCostUsd(1)).toBe(0.10644);
+    // The rule (SECURITY.md, "Stale runs"): a tenant can start at most the
+    // hourly run limit's worth of runs an hour, and that many abandoned
+    // one-page runs must leave it able to run
+    expect(EXTRACTION_LIMITS.hourlyRunLimit * abandonedRunCostUsd(1)).toBeLessThan(CEILING);
   });
 
   it("grows with the page count instead of charging every run the same", () => {
@@ -58,9 +64,9 @@ describe("the abandoned-run estimate", () => {
       expect(costs[pages - 1], `${pages} pages`).toBeGreaterThan(costs[pages - 2]);
     }
     expect(abandonedRunCostUsd(10)).toBeGreaterThan(2 * abandonedRunCostUsd(1));
-    // a genuinely large document may cost most of the budget, and does
+    // a genuinely large document may cost most of the budget, or at Sonnet 5
+    // prices more than all of it (1.26144 USD for 100 pages), and does
     expect(abandonedRunCostUsd(EXTRACTION_LIMITS.maxPagesPerDocument)).toBeGreaterThan(0.5 * CEILING);
-    expect(abandonedRunCostUsd(EXTRACTION_LIMITS.maxPagesPerDocument)).toBeLessThan(CEILING);
     // an unknown count is charged as the most pages a document can have
     expect(abandonedRunCostUsd(null)).toBe(abandonedRunCostUsd(EXTRACTION_LIMITS.maxPagesPerDocument));
     expect(abandonedRunUsage(5000).pages).toBe(EXTRACTION_LIMITS.maxPagesPerDocument);

@@ -29,7 +29,7 @@ export const EXTRACTION_LIMITS = {
   // Anthropic's per-request PDF page limit; also what an unknown count is
   // charged as
   maxPagesPerDocument: 100,
-  abandonedRunPriceModel: "claude-haiku-4-5-20251001",
+  abandonedRunPriceModel: "claude-sonnet-5",
 } as const;
 
 // Confidence gating. A field at or above `high` is written as is; at or
@@ -48,18 +48,40 @@ export function confidenceBand(confidence: number): ConfidenceBand {
   return "low";
 }
 
-// Providers and models. The cheapest model on each side that takes PDF and
-// image input and supports schema-constrained output. EXTRACTION_PROVIDER
-// picks the primary; the other is the fallback on timeout or 5xx.
+// Providers and models. EXTRACTION_PROVIDER picks the primary; the other is
+// the fallback on timeout or 5xx. On the Anthropic side the default is
+// Claude Sonnet 5 (EVALS.md, "Sonnet 5 against Haiku 4.5"); Claude Haiku
+// 4.5 stays selectable with EXTRACTION_ANTHROPIC_MODEL, which accepts any
+// Anthropic model priced below. The OpenAI side is the cheapest usable
+// model. Every model here must take PDF and image input and support
+// schema-constrained output.
 export type ProviderName = "anthropic" | "openai";
 
 export const PROVIDER_ENV_VAR = "EXTRACTION_PROVIDER";
 export const DEFAULT_PROVIDER: ProviderName = "anthropic";
 
 export const DEFAULT_MODELS: Record<ProviderName, string> = {
-  anthropic: "claude-haiku-4-5-20251001",
+  anthropic: "claude-sonnet-5",
   openai: "gpt-5-nano",
 };
+
+export const ANTHROPIC_MODEL_ENV_VAR = "EXTRACTION_ANTHROPIC_MODEL";
+
+// Anthropic models that EXTRACTION_ANTHROPIC_MODEL may name: those with a
+// price on file, so close_extraction_run can price every run.
+export function selectableAnthropicModels(): string[] {
+  return Object.entries(PRICING)
+    .filter(([, price]) => price.provider === "anthropic")
+    .map(([model]) => model)
+    .sort();
+}
+
+// Thinking is off for Claude: a fixed-schema extraction doesn't need it,
+// and Claude Sonnet 5 otherwise thinks adaptively at effort high by default,
+// spending the per-call output cap on reasoning (thinking tokens are output
+// tokens). Sent explicitly for every Claude model, Haiku included, so the
+// request is the same whichever is selected.
+export const ANTHROPIC_THINKING = { type: "disabled" } as const;
 
 // Hard cap on what a single model call may generate. The schema has ten
 // short fields; 2048 tokens is several times what a full answer needs.

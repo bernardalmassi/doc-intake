@@ -162,6 +162,7 @@ const model: Format<string> = (value) => {
 export const LOG_ERROR_CODES = [
   // extraction/providers/select.ts
   "invalid_provider_setting",
+  "invalid_model_setting",
   "primary_key_missing",
 ] as const;
 

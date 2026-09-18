@@ -4,7 +4,7 @@
 // made. No model, no database, no files written.
 
 import { describe, expect, it } from "vitest";
-import { computeCostUsd, MAX_OUTPUT_TOKENS } from "@/lib/extraction/config";
+import { computeCostUsd, DEFAULT_MODELS, MAX_OUTPUT_TOKENS } from "@/lib/extraction/config";
 import {
   type ExtractionProvider,
   type ExtractionRequest,
@@ -44,14 +44,14 @@ function fake(answers: (string | ProviderError)[]): ExtractionProvider & { reque
   const requests: ExtractionRequest[] = [];
   return {
     name: "anthropic",
-    model: "claude-haiku-4-5-20251001",
+    model: DEFAULT_MODELS.anthropic,
     requests,
     async extract(request): Promise<ProviderResponse> {
       requests.push(request);
       const next = answers.shift();
       if (next === undefined) throw new Error("fake has no answer left");
       if (next instanceof ProviderError) throw next;
-      return { text: next, inputTokens: 5000, outputTokens: 400, model: "claude-haiku-4-5-20251001" };
+      return { text: next, inputTokens: 5000, outputTokens: 400, model: DEFAULT_MODELS.anthropic };
     },
   };
 }
@@ -81,8 +81,8 @@ describe("record and replay", () => {
     expect(recorded.recording.calls).toHaveLength(2);
     expect(recorded.recording).toMatchObject({
       provider: "anthropic",
-      requestedModel: "claude-haiku-4-5-20251001",
-      reportedModel: "claude-haiku-4-5-20251001",
+      requestedModel: DEFAULT_MODELS.anthropic,
+      reportedModel: DEFAULT_MODELS.anthropic,
     });
 
     const replayed = await replay(recorded.recording);
@@ -101,7 +101,7 @@ describe("record and replay", () => {
   });
 
   it("a billed refusal keeps its usage through record and replay", async () => {
-    const usage = { inputTokens: 5000, outputTokens: 12, model: "claude-haiku-4-5-20251001" };
+    const usage = { inputTokens: 5000, outputTokens: 12, model: DEFAULT_MODELS.anthropic };
     const recorded = await record([new ProviderError("anthropic", "refusal", "declined", undefined, usage)]);
     expect(recorded.recording.calls[0].error?.usage).toEqual(usage);
     const replayed = await replay(recorded.recording);
@@ -225,7 +225,7 @@ describe("the live budget", () => {
     // the provider answers, but reports a model the price table doesn't know
     const inner: ExtractionProvider = {
       name: "anthropic",
-      model: "claude-haiku-4-5-20251001",
+      model: DEFAULT_MODELS.anthropic,
       async extract() {
         return { text: answer(), inputTokens: 5000, outputTokens: 400, model: "claude-unpriced-9" };
       },

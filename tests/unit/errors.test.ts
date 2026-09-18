@@ -28,7 +28,7 @@ import {
 import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
 import { describe, expect, it } from "vitest";
-import { EXTRACTION_LIMITS, PROVIDER_ENV_VAR } from "@/lib/extraction/config";
+import { ANTHROPIC_MODEL_ENV_VAR, EXTRACTION_LIMITS, PROVIDER_ENV_VAR } from "@/lib/extraction/config";
 import { describeError, ProviderError, type ProviderResponse } from "@/lib/extraction/providers/types";
 import { interpretAnthropicMessage, interpretOpenAIResponse } from "@/lib/extraction/providers/interpret";
 import { runExtraction } from "@/lib/extraction/run";
@@ -375,6 +375,7 @@ const RUN_STRING_CASES: [label: string, error: string | null, ErrorCode][] = [
   ["magic bytes, other type", "file content (image/png) does not match its declared type (image/jpeg)", "extraction.file_type_mismatch"],
   ["no key", describeError(new Error("extraction is not configured: ANTHROPIC_API_KEY is not set")), "extraction.not_configured"],
   ["bad provider setting", describeError(new Error(`${PROVIDER_ENV_VAR} must be "anthropic" or "openai"`)), "extraction.not_configured"],
+  ["bad Anthropic model setting", describeError(new Error(`${ANTHROPIC_MODEL_ENV_VAR} must be one of claude-haiku-4-5-20251001, claude-sonnet-5`)), "extraction.not_configured"],
   ["no key, unwrapped", "extraction is not configured: OPENAI_API_KEY is not set", "extraction.not_configured"],
   ["reaped", `abandoned: still running after ${EXTRACTION_LIMITS.staleRunMinutes} minutes; failed by a later open`, "extraction.abandoned"],
   ["both failed", "anthropic transport: request timed out; fallback openai server 503: Service Unavailable", "extraction.all_providers_failed"],
@@ -790,6 +791,7 @@ describe("the sources that write run errors", () => {
     const select = read("src/lib/extraction/providers/select.ts");
     expect(select).toContain(RUN_ERROR_MARKERS.notConfigured);
     expect(select).toContain("${PROVIDER_ENV_VAR} must be");
+    expect(select).toContain("${ANTHROPIC_MODEL_ENV_VAR} must be one of");
   });
 
   it("still start provider messages the way the module reads them", () => {

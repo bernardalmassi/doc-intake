@@ -16,7 +16,7 @@
 // deliberate re-record.
 
 import { createHash } from "node:crypto";
-import { DEFAULT_MODELS, OPENAI_REASONING_EFFORT, type ProviderName } from "@/lib/extraction/config";
+import { ANTHROPIC_THINKING, DEFAULT_MODELS, OPENAI_REASONING_EFFORT, type ProviderName } from "@/lib/extraction/config";
 import {
   type ExtractionProvider,
   type ExtractionRequest,
@@ -60,7 +60,7 @@ export type RequestFingerprint = {
 function providerSettings(provider: ProviderName, model: string): Record<string, string> {
   return provider === "openai"
     ? { provider, model, reasoningEffort: OPENAI_REASONING_EFFORT, attachmentFilename: ATTACHMENT_FILENAME }
-    : { provider, model };
+    : { provider, model, thinking: ANTHROPIC_THINKING.type };
 }
 
 export function fingerprintRequest(provider: ProviderName, model: string, request: ExtractionRequest): RequestFingerprint {

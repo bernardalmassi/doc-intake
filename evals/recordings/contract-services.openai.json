@@ -4,26 +4,26 @@
   "provider": "openai",
   "requestedModel": "gpt-5-nano",
   "reportedModel": "gpt-5-nano-2025-08-07",
-  "recordedAt": "2026-09-18T16:53:42.475Z",
+  "recordedAt": "2026-09-18T21:32:31.941Z",
   "calls": [
     {
       "fingerprint": {
-        "hash": "50b19b57d849a4c42c2da75e638761fd9f569f940fa7a32c94d786885389aa60",
+        "hash": "59a7cc359e08827e7b39f554738821da61c146bd67fc0990871915fd992467da",
         "parts": {
           "provider": "949f3b150a8ebc7f9db3253456e1895e74d60e8325b663f5b643ec88a2797c4d",
           "file": "59bae77326aa60c1feaaec3c7753f905215c09bb0db15020d3996f6d48b73bf3",
-          "systemPrompt": "89af19158b4fba209eb364ec958459f5204538651d828e73c48f31be90a05b28",
+          "systemPrompt": "d60b954388bf89ae1b25ed99370bf4aec4c2b8fb93164a762a77561c434837f1",
           "userPrompt": "06190f813bb9a716a9ccffaca12f85f5d7e4b7755880b5a25c346bf989b9bb96",
           "schema": "a89d1cb83efb753843268d47b892064ce1ad3621e2a7e73599e7fa98d0ff612f",
           "maxOutputTokens": "bfa0ec8bdf2946547879d50a68687ea32e2fa628db187357415858b633d194d9",
           "previousAttempt": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
         }
       },
-      "latencyMs": 4442,
+      "latencyMs": 4131,
       "response": {
-        "text": "{\"document_type\":{\"value\":\"contract\",\"confidence\":0.60,\"source_text\":\"CONSULTING SERVICES AGREEMENT\",\"clarifying_question\":\"\"},\"title\":{\"value\":\"CONSULTING SERVICES AGREEMENT\",\"confidence\":0.92,\"source_text\":\"CONSULTING SERVICES AGREEMENT\",\"clarifying_question\":\"\"},\"sender_name\":{\"value\":\"Halvorsen Analytics AS\",\"confidence\":0.95,\"source_text\":\"Halvorsen Analytics AS\",\"clarifying_question\":\"\"},\"recipient_name\":{\"value\":\"Brightwater Foods Inc.\",\"confidence\":0.95,\"source_text\":\"Brightwater Foods Inc.\",\"clarifying_question\":\"\"},\"document_date\":{\"value\":\"2026-09-15\",\"confidence\":0.92,\"source_text\":\"This Consulting Services Agreement (the \\\"Agreement\\\") is made on September 15, 2026\",\"clarifying_question\":\"\"},\"due_date\":{\"value\":\"\",\"confidence\":0.20,\"source_text\":\"\",\"clarifying_question\":\"Is there a payment due date specified (e.g., due date or terms tied to invoices)?\"},\"payment_terms_days\":{\"value\":\"\",\"confidence\":0.25,\"source_text\":\"\",\"clarifying_question\":\"Number of days for payment terms (e.g., Net 30) if stated.\"},\"reference_number\":{\"value\":\"HA-2026-031\",\"confidence\":0.92,\"source_text\":\"Agreement No. HA-2026-031\",\"clarifying_question\":\"\"},\"total_amount\":{\"value\":\"\",\"confidence\":0.30,\"source_text\":\"\",\"clarifying_question\":\"Total amount to be paid, if stated.\"},\"currency\":{\"value\":\"\",\"confidence\":0.30,\"source_text\":\"\",\"clarifying_question\":\"Currency for the total amount, if stated.\"},\"summary\":{\"value\":\"Consulting Services Agreement between Halvorsen Analytics AS and Brightwater Foods Inc. for demand forecasting and data analysis services, effective Oct 1, 2026 with 12-month term.\",\"confidence\":0.88,\"source_text\":\"This Consulting Services Agreement (the \\\"Agreement\\\") is made on September 15, 2026 between Halvorsen Analytics AS, Kongens gate 18, 0153 Oslo, Norway (the \\\"Consultant\\\"), and Brightwater Foods Inc., 2400 Harbor Drive, Portland, OR 97217, USA (the \\\"Client\\\"). Agreement takes effect on October 1, 2026 and continues for twelve months\",\"clarifying_question\":\"\"}}",
-        "inputTokens": 2965,
-        "outputTokens": 507,
+        "text": "{\"document_type\":{\"value\":\"contract\",\"confidence\":0.70,\"source_text\":\"CONSULTING SERVICES AGREEMENT\",\"clarifying_question\":\"\"},\"title\":{\"value\":\"CONSULTING SERVICES AGREEMENT\",\"confidence\":0.92,\"source_text\":\"CONSULTING SERVICES AGREEMENT\",\"clarifying_question\":\"\"},\"sender_name\":{\"value\":\"Halvorsen Analytics AS\",\"confidence\":0.88,\"source_text\":\"Halvorsen Analytics AS\",\"clarifying_question\":\"\"},\"recipient_name\":{\"value\":\"Brightwater Foods Inc.\",\"confidence\":0.92,\"source_text\":\"Brightwater Foods Inc., 2400 Harbor Drive, Portland, OR 97217, USA (the \\\"Client\\\").\",\"clarifying_question\":\"\"},\"document_date\":{\"value\":\"2026-09-15\",\"confidence\":0.92,\"source_text\":\"This Consulting Services Agreement (the \\\"Agreement\\\") is made on September 15, 2026\",\"clarifying_question\":\"\"},\"due_date\":{\"value\":\"\",\"confidence\":0.40,\"source_text\":\"\",\"clarifying_question\":\"Is there a stated due date for payment somewhere in the document (e.g., payment due 30 days after invoice)?\"},\"payment_terms_days\":{\"value\":\"\",\"confidence\":0.40,\"source_text\":\"\",\"clarifying_question\":\"What are the payment terms in days if stated (e.g., Net 30)?\"},\"reference_number\":{\"value\":\"HA-2026-031\",\"confidence\":0.92,\"source_text\":\"Agreement No. HA-2026-031\",\"clarifying_question\":\"\"},\"total_amount\":{\"value\":\"\",\"confidence\":0.40,\"source_text\":\"\",\"clarifying_question\":\"What is the total amount due, if specified in the document?\"},\"currency\":{\"value\":\"\",\"confidence\":0.40,\"source_text\":\"\",\"clarifying_question\":\"What currency is used for the total amount, if specified?\"},\"summary\":{\"value\":\"Consulting Services Agreement between Halvorsen Analytics AS and Brightwater Foods Inc. for twelve months starting October 1, 2026; governed by Oregon law.\",\"confidence\":0.78,\"source_text\":\"This Consulting Services Agreement... takes effect on October 1, 2026 and continues for twelve months unless terminated earlier... Signed for and on behalf of the parties: Ingrid Halvorsen... Date: September 15, 2026; Marcus Bell... Date: September 15, 2026\",\"clarifying_question\":\"\"}}",
+        "inputTokens": 2962,
+        "outputTokens": 509,
         "model": "gpt-5-nano-2025-08-07"
       },
       "error": null
