@@ -1,0 +1,37 @@
+{
+  "fixture": "form-supplier",
+  "kind": "ordinary",
+  "description": "A filled-in supplier registration form with a return-by date and a reference.",
+  "expected": {
+    "document_type": "form",
+    "title": "Supplier Registration Form",
+    "sender_name": {
+      "value": "Tallis & Byrne Ltd",
+      "accept": [
+        "Tallis & Byrne",
+        "Harbour City Council",
+        "Harbour City Council Procurement Office"
+      ]
+    },
+    "recipient_name": {
+      "value": "Harbour City Council",
+      "accept": [
+        "Harbour City Council Procurement Office",
+        "Procurement Office",
+        "Tallis & Byrne Ltd",
+        "Tallis & Byrne"
+      ]
+    },
+    "document_date": "2026-09-03",
+    "due_date": "2026-09-30",
+    "reference_number": {
+      "value": "SR-2026-0932",
+      "accept": [
+        "PRC-7"
+      ]
+    },
+    "total_amount": null,
+    "currency": null,
+    "summary": "A supplier registration form submitted by Tallis & Byrne to Harbour City Council."
+  }
+}

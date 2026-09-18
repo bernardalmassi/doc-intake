@@ -1,0 +1,17 @@
+{
+  "fixture": "price-list-sparse",
+  "kind": "ordinary",
+  "description": "A wholesale price list: prices but no total, date, recipient, due date or reference.",
+  "expected": {
+    "document_type": "other",
+    "title": "Wholesale Price List",
+    "sender_name": "Hillside Bakery Co-op",
+    "recipient_name": null,
+    "document_date": null,
+    "due_date": null,
+    "reference_number": null,
+    "total_amount": null,
+    "currency": null,
+    "summary": "A wholesale price list of breads and pastries from Hillside Bakery Co-op."
+  }
+}

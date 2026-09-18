@@ -1,0 +1,27 @@
+{
+  "fixture": "contract-services",
+  "kind": "ordinary",
+  "description": "A two-page consulting agreement between two companies; a date and a reference, no amount.",
+  "expected": {
+    "document_type": "contract",
+    "title": "Consulting Services Agreement",
+    "sender_name": {
+      "value": "Halvorsen Analytics AS",
+      "accept": [
+        "Halvorsen Analytics"
+      ]
+    },
+    "recipient_name": {
+      "value": "Brightwater Foods Inc.",
+      "accept": [
+        "Brightwater Foods"
+      ]
+    },
+    "document_date": "2026-09-15",
+    "due_date": null,
+    "reference_number": "HA-2026-031",
+    "total_amount": null,
+    "currency": null,
+    "summary": "A consulting services agreement between Halvorsen Analytics and Brightwater Foods for demand forecasting."
+  }
+}

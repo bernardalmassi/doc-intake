@@ -1,0 +1,30 @@
+{
+  "fixture": "letter-admission",
+  "kind": "ordinary",
+  "description": "A university admission letter with an application reference; no amount, no deadline.",
+  "expected": {
+    "document_type": "letter",
+    "title": "Offer of Admission",
+    "sender_name": {
+      "value": "Greenfield University",
+      "accept": [
+        "Greenfield University Office of Graduate Admissions",
+        "Greenfield University, Office of Graduate Admissions",
+        "Dr. Helen Marsh",
+        "Helen Marsh"
+      ]
+    },
+    "recipient_name": {
+      "value": "Amara Okonkwo",
+      "accept": [
+        "Ms. Amara Okonkwo"
+      ]
+    },
+    "document_date": "2026-08-20",
+    "due_date": null,
+    "reference_number": "GU-26-18842",
+    "total_amount": null,
+    "currency": null,
+    "summary": "A letter from Greenfield University offering Amara Okonkwo admission to a master's program."
+  }
+}

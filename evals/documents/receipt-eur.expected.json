@@ -1,0 +1,28 @@
+{
+  "fixture": "receipt-eur",
+  "kind": "ordinary",
+  "description": "A German tool-shop receipt with European number formatting; no recipient, no due date.",
+  "expected": {
+    "document_type": "receipt",
+    "title": {
+      "value": "Kassenbon / Receipt",
+      "accept": [
+        "Kassenbon",
+        "Receipt"
+      ]
+    },
+    "sender_name": {
+      "value": "Keller Werkzeuge GmbH",
+      "accept": [
+        "Keller Werkzeuge"
+      ]
+    },
+    "recipient_name": null,
+    "document_date": "2026-09-12",
+    "due_date": null,
+    "reference_number": "2026-004511",
+    "total_amount": "1141.40",
+    "currency": "EUR",
+    "summary": "A receipt from Keller Werkzeuge for a table saw, saw blades and safety glasses, paid by card."
+  }
+}

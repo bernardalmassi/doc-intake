@@ -1,5 +1,6 @@
-# Runs on every push and pull request: type check, lint, build, and the
-# tests that need no database and no network. Nothing here needs a secret.
+# Runs on every push and pull request: type check, lint, build, the tests
+# that need no database and no network, and the offline eval. Nothing here
+# needs a secret.
 #
 # The Supabase suites (tests/tenant-isolation.test.ts, tests/extraction.test.ts)
 # sign up real users against a real project, so they need the SUPABASE_TEST_*
@@ -55,6 +56,11 @@ jobs:
           NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ci-placeholder-not-a-key
       - name: Unit tests (no database, no network)
         run: npm run test:unit
+      # Replays the committed provider recordings (evals/recordings/): no
+      # key, no network, no cost. Fails on a stale recording, an injection
+      # that ends silently wrong, or accuracy under the floor. See EVALS.md.
+      - name: Offline eval (recorded provider answers)
+        run: npm run eval
 
   supabase:
     name: Supabase suites (requires secrets)

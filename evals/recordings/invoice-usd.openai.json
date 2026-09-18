@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "fixture": "invoice-usd",
+  "provider": "openai",
+  "requestedModel": "gpt-5-nano",
+  "reportedModel": "gpt-5-nano-2025-08-07",
+  "recordedAt": "2026-09-18T01:48:26.363Z",
+  "calls": [
+    {
+      "fingerprint": {
+        "hash": "14c1ce308183a5d1bcd850f6c027c119099f3dbcc6212496722d55192c8f282e",
+        "parts": {
+          "provider": "949f3b150a8ebc7f9db3253456e1895e74d60e8325b663f5b643ec88a2797c4d",
+          "file": "95c3849470fb637ba562c2b7b90521fc7144a47bff40355b5e2368dc7c245f1f",
+          "systemPrompt": "e4f37056bda0d913a5fcd76949657d78030c380dafee425c0e68f8fa3b70cc9d",
+          "userPrompt": "410c0726d2ae7417550d3dd4517e349de14d09d3410a90613011ddde84a6f539",
+          "schema": "775cfadc46fcda6766678543c94c01239445ce8906a1da05ce22449e3757e6cc",
+          "maxOutputTokens": "bfa0ec8bdf2946547879d50a68687ea32e2fa628db187357415858b633d194d9",
+          "previousAttempt": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        }
+      },
+      "latencyMs": 5339,
+      "response": {
+        "text": "{\"document_type\":{\"value\":\"invoice\",\"confidence\":0.92,\"source_text\":\"INVOICE\",\"clarifying_question\":\"\"},\"title\":{\"value\":\"INVOICE\",\"confidence\":0.92,\"source_text\":\"INVOICE\",\"clarifying_question\":\"\"},\"sender_name\":{\"value\":\"Pinecrest Landscaping LLC\",\"confidence\":0.95,\"source_text\":\"Pinecrest Landscaping LLC\",\"clarifying_question\":\"\"},\"recipient_name\":{\"value\":\"Maple Court Homeowners Association\",\"confidence\":0.92,\"source_text\":\"Maple Court Homeowners Association\",\"clarifying_question\":\"\"},\"document_date\":{\"value\":\"2026-07-31\",\"confidence\":0.93,\"source_text\":\"Invoice date July 31, 2026\",\"clarifying_question\":\"\"},\"due_date\":{\"value\":\"2026-08-30\",\"confidence\":0.93,\"source_text\":\"Due date August 30, 2026\",\"clarifying_question\":\"\"},\"reference_number\":{\"value\":\"INV-20417\",\"confidence\":0.94,\"source_text\":\"Invoice no. INV-20417\",\"clarifying_question\":\"\"},\"total_amount\":{\"value\":\"2145.00\",\"confidence\":0.95,\"source_text\":\"Total due (USD) $2,145.00\",\"clarifying_question\":\"\"},\"currency\":{\"value\":\"USD\",\"confidence\":0.92,\"source_text\":\"Total due (USD) $2,145.00\",\"clarifying_question\":\"\"},\"summary\":{\"value\":\"Invoice from Pinecrest Landscaping LLC to Maple Court Homeowners Association for monthly maintenance and mulch installation services.\",\"confidence\":0.88,\"source_text\":\"INVOICE ... Notes Please make checks payable to Pinecrest Landscaping LLC.\",\"clarifying_question\":\"\"}}",
+        "inputTokens": 2198,
+        "outputTokens": 370,
+        "model": "gpt-5-nano-2025-08-07"
+      },
+      "error": null
+    }
+  ]
+}
