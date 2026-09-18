@@ -109,3 +109,12 @@ export const badgeClass = `${badgeBase} border-line-strong text-muted`;
 
 // needs_review, and only that. The accent marks what a person must look at.
 export const reviewBadgeClass = `${badgeBase} border-accent font-medium text-accent`;
+
+// ---- public pages
+
+// The primary button of a form that submits through a Server Action. While
+// the form is pending, set aria-disabled="true" and ignore the submit,
+// rather than setting disabled: in Chromium a focused button that becomes
+// disabled drops keyboard focus to <body>, and it doesn't come back when
+// the button is enabled again. Looks the same as a disabled buttonClass.
+export const submitButtonClass = `${buttonClass} aria-disabled:cursor-not-allowed aria-disabled:bg-line aria-disabled:text-muted`;

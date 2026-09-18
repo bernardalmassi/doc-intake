@@ -14,11 +14,7 @@ export default async function SignUpPage() {
       <SiteHeader />
       <main className={pageClass}>
         <h1 className={pageTitleClass}>Sign up</h1>
-        <CredentialsForm
-          action={signUp}
-          submitLabel="Sign up"
-          passwordAutoComplete="new-password"
-        />
+        <CredentialsForm mode="sign-up" action={signUp} />
         <p className="mt-6 text-muted">
           Already have an account?{" "}
           <Link href="/sign-in" className={linkClass}>

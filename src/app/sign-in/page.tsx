@@ -1,10 +1,14 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { signIn } from "@/app/auth/actions";
 import { CredentialsForm } from "@/app/auth/credentials-form";
 import { SiteHeader } from "@/app/components/site-header";
-import { errorClass, linkClass, pageClass, pageTitleClass } from "@/app/ui";
+import { linkClass, pageClass, pageTitleClass } from "@/app/ui";
 import { getCurrentUser } from "@/lib/auth";
+import { ConfirmLinkNotice } from "./confirm-link-notice";
+
+export const metadata: Metadata = { title: "Sign in · doc-intake" };
 
 export default async function SignInPage({ searchParams }: PageProps<"/sign-in">) {
   if (await getCurrentUser()) redirect("/app");
@@ -15,23 +19,17 @@ export default async function SignInPage({ searchParams }: PageProps<"/sign-in">
     <>
       <SiteHeader />
       <main className={pageClass}>
-        <h1 className={pageTitleClass}>Sign in</h1>
-        {error === "confirm" && (
-          <p role="alert" className={`mt-4 ${errorClass}`}>
-            That confirmation link is invalid or expired. Try signing in, or sign up again.
+        <div className="max-w-sm">
+          <h1 className={pageTitleClass}>Sign in</h1>
+          {error === "confirm" && <ConfirmLinkNotice />}
+          <CredentialsForm mode="sign-in" action={signIn} />
+          <p className="mt-8 text-muted">
+            No account yet?{" "}
+            <Link href="/sign-up" className={linkClass}>
+              Create an account
+            </Link>
           </p>
-        )}
-        <CredentialsForm
-          action={signIn}
-          submitLabel="Sign in"
-          passwordAutoComplete="current-password"
-        />
-        <p className="mt-6 text-muted">
-          No account?{" "}
-          <Link href="/sign-up" className={linkClass}>
-            Sign up
-          </Link>
-        </p>
+        </div>
       </main>
     </>
   );
