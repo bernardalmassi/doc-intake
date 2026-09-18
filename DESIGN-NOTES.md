@@ -117,10 +117,10 @@ What each page does beyond the primitives, and why.
 ### Landing (/)
 
 - The one line is also the meta description. "Create an account" is the primary action; "Sign in" is secondary.
-- Three architecture sentences as a definition list (Isolation, Uploads, Extraction). A fourth sentence on tests was cut to keep to three; the link reads "Source and tests on GitHub".
+- Three architecture sentences as a definition list (Isolation, Uploads, Extraction). A fourth sentence on tests was cut to keep to three; the link reads "Source and tests on GitHub" when there is one.
 - "Every table of organization data", not "every table": the limits and prices tables carry no organization id.
 - Non-breaking spaces keep numbers with units and products with versions; the heading uses text-wrap: balance.
-- The GitHub repository is private at the time of writing, so the link 404s for visitors without access.
+- The source link renders only when `NEXT_PUBLIC_REPO_URL` is set to an http or https URL, and names GitHub only when it points there. A deployment of the private repository leaves it unset, so no visitor meets a 404.
 
 ### Sign in and sign up
 

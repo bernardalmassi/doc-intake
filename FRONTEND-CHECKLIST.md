@@ -37,7 +37,7 @@ written under the item and the item is skipped.
 
 ## Blockers
 
-- Item 2: the GitHub repo is private, so the landing page link returns a 404 for anyone without access. Making it public is the owner's call; the link is in place either way.
+- Item 2: the GitHub repo is private, so the landing page link returned a 404 for anyone without access. Resolved 2026-09-18: the link renders only when `NEXT_PUBLIC_REPO_URL` is set.
 
 ## Notes
 

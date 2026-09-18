@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { MAIN_ID, SiteHeader } from "@/app/components/site-header";
 import { getCurrentUser } from "@/lib/auth";
-import { SITE_SUMMARY } from "./site";
+import { REPO_URL, repoLinkLabel, SITE_SUMMARY } from "./site";
 import {
   buttonClass,
   linkClass,
@@ -13,7 +13,6 @@ import {
   textTargetClass,
 } from "./ui";
 
-const repoUrl = "https://github.com/bernardalmassi/doc-intake";
 
 // No metadata of its own: the root layout's default title (the app's name)
 // and description (SITE_SUMMARY, the heading below) are this page's.
@@ -75,11 +74,13 @@ export default async function Home() {
                 </div>
               ))}
             </dl>
-            <p className="mt-6">
-              <a href={repoUrl} className={`${linkClass} ${textTargetClass} inline-block`}>
-                Source and tests on GitHub
-              </a>
-            </p>
+            {REPO_URL && (
+              <p className="mt-6">
+                <a href={REPO_URL} className={`${linkClass} ${textTargetClass} inline-block`}>
+                  {repoLinkLabel(REPO_URL)}
+                </a>
+              </p>
+            )}
           </section>
         </div>
       </main>

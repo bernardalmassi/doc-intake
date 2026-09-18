@@ -5,3 +5,26 @@ export const SITE_NAME = "doc-intake";
 
 export const SITE_SUMMARY =
   "doc-intake pulls the key details out of uploaded documents and flags anything uncertain for review.";
+
+// Where the source lives, from NEXT_PUBLIC_REPO_URL, which Next inlines at
+// build time. The landing page links to it only when this is set: unset,
+// blank, or anything but an http or https URL gives null and no link, so a
+// deployment of a private repository doesn't send visitors to a 404.
+export function parseRepoUrl(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+export const REPO_URL = parseRepoUrl(process.env.NEXT_PUBLIC_REPO_URL);
+
+// "Source and tests on GitHub" when it is on GitHub, otherwise without the
+// name of a host it may not be on.
+export function repoLinkLabel(url: string): string {
+  return new URL(url).hostname === "github.com" ? "Source and tests on GitHub" : "Source and tests";
+}
