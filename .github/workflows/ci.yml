@@ -1,0 +1,102 @@
+# Runs on every push and pull request: type check, lint, build, the tests
+# that need no database and no network, and the offline eval. Nothing here
+# needs a secret.
+#
+# The Supabase suites (tests/tenant-isolation.test.ts, tests/extraction.test.ts)
+# sign up real users against a real project, so they need the SUPABASE_TEST_*
+# repository secrets and run only when started by hand (Actions → CI → Run
+# workflow → "Also run the Supabase suites"). They are serialized across the
+# whole repository because two concurrent runs would see each other's forged
+# spend in the global ceiling test, and they are never cancelled mid-run,
+# because cleanup runs in afterAll. See README, "Tests".
+
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      supabase:
+        description: Also run the Supabase suites against the test project (needs the SUPABASE_TEST_* secrets)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  # a newer push supersedes an older one; a manual run is never cancelled
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+jobs:
+  check:
+    name: Type check, lint, build, unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Type check
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Build
+        run: npm run build
+        env:
+          # Placeholders. The build only inlines them; nothing is contacted.
+          NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ci-placeholder-not-a-key
+      - name: Unit tests (no database, no network)
+        run: npm run test:unit
+      # Replays the committed provider recordings (evals/recordings/): no
+      # key, no network, no cost. Fails on a stale recording, an injection
+      # that fails or ends silently wrong, or a result off its recorded
+      # baseline. See EVALS.md.
+      - name: Offline eval (recorded provider answers)
+        run: npm run eval
+
+  supabase:
+    name: Supabase suites (requires secrets)
+    if: github.event_name == 'workflow_dispatch' && inputs.supabase
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: supabase-test-project
+      cancel-in-progress: false
+    steps:
+      # The secrets are exposed only to the two steps that need them, not to
+      # npm ci and its install scripts.
+      - name: Require the test project secrets
+        env:
+          SUPABASE_TEST_URL: ${{ secrets.SUPABASE_TEST_URL }}
+          SUPABASE_TEST_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_TEST_PUBLISHABLE_KEY }}
+        run: |
+          if [ -z "$SUPABASE_TEST_URL" ] || [ -z "$SUPABASE_TEST_PUBLISHABLE_KEY" ]; then
+            echo "::error::Set the SUPABASE_TEST_URL and SUPABASE_TEST_PUBLISHABLE_KEY repository secrets (see README, Tests)."
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: All Vitest suites, including the Supabase ones
+        env:
+          SUPABASE_TEST_URL: ${{ secrets.SUPABASE_TEST_URL }}
+          SUPABASE_TEST_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_TEST_PUBLISHABLE_KEY }}
+          SUPABASE_TEST_EMAIL_DOMAIN: ${{ secrets.SUPABASE_TEST_EMAIL_DOMAIN }}
+        run: npm test

@@ -2,13 +2,19 @@
   "name": "doc-intake",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22.12"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
-    "test:db": "supabase db query --linked -f supabase/tests/extraction_stale_runs.sql"
+    "test:unit": "vitest run tests/unit",
+    "test:db": "supabase db query --linked -f supabase/tests/extraction_stale_runs.sql",
+    "eval": "node evals/run.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.126.0",

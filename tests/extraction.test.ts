@@ -1,22 +1,27 @@
-// The LLM harness, from the database side and the orchestrator side:
+// The LLM harness, from the database side:
 //
+//   - the limits and prices in config.ts match the tables the database
+//     enforces and charges from
 //   - the spend ceilings and the hourly rate limit refuse a run before any
 //     model call, in open_extraction_run
-//   - a run is closed in one transaction and a failed run leaves the
-//     document exactly as it was
-//   - the orchestrator retries an invalid answer once with the validation
-//     error, then fails cleanly with the raw answer kept
+//   - a run is closed in one transaction, the database prices it from its
+//     own table, and a failed run leaves the document exactly as it was
 //   - runs and fields are readable by tenant members only; anon and other
 //     tenants are refused; nobody writes them directly
-//   - cost is computed from the pricing table
 //
-// No model is called: the orchestrator is exercised with fake providers, and
-// the RPCs are driven directly with real signed-in sessions against the
-// project in .env.test, using only the publishable key. Runs are "forged"
-// with chosen token counts to reach the ceilings; that is also a
-// demonstration that a tenant admin can do the same, within the clamp (see
-// SECURITY.md). The stale-run reaper needs a run older than ten minutes, so
-// it is tested in SQL instead: supabase/tests/extraction_stale_runs.sql.
+// The database-free half (validation, the orchestrator's fallback and retry,
+// provider error classification, cost arithmetic, magic bytes) is in
+// tests/unit/, which needs no secrets: `npx vitest run tests/unit`. Both use
+// the fake providers in tests/helpers/fake-provider.ts.
+//
+// No model is called: runs are produced by the orchestrator with fake
+// providers, and the RPCs are driven directly with real signed-in sessions
+// against the project in .env.test, using only the publishable key. Runs
+// are "forged" with chosen token counts to reach the ceilings; that is also
+// a demonstration that a tenant admin can do the same, within the clamp
+// (see SECURITY.md). The stale-run reaper needs a run older than ten
+// minutes, so it is tested in SQL instead:
+// supabase/tests/extraction_stale_runs.sql.
 //
 // Like tenant-isolation.test.ts, tests here are order-dependent and users
 // are signed up once per run.
@@ -24,19 +29,10 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  computeCostUsd,
-  CONFIDENCE_THRESHOLDS,
-  EXTRACTION_LIMITS,
-  MAX_OUTPUT_TOKENS,
-  PRICING,
-  priceForModel,
-} from "@/lib/extraction/config";
-import type { ExtractionProvider, ExtractionRequest, ProviderResponse } from "@/lib/extraction/providers/types";
-import { ProviderError } from "@/lib/extraction/providers/types";
+import { computeCostUsd, EXTRACTION_LIMITS, PRICING, priceForModel } from "@/lib/extraction/config";
 import { runExtraction, toCloseParams, type RunOutcome } from "@/lib/extraction/run";
-import { buildJsonSchema, FIELD_NAMES, validateExtraction } from "@/lib/extraction/schema";
-import { detectMimeType } from "@/lib/extraction/sniff";
+import { FIELD_NAMES } from "@/lib/extraction/schema";
+import { answer, fakeProvider, pdfBytes, validJson } from "./helpers/fake-provider";
 
 const url = process.env.SUPABASE_TEST_URL;
 const publishableKey = process.env.SUPABASE_TEST_PUBLISHABLE_KEY;
@@ -90,12 +86,6 @@ function newClient() {
   return createClient(url!, publishableKey!, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-}
-
-function pdfBytes(marker: string) {
-  return new TextEncoder().encode(
-    `%PDF-1.4\n% doc-intake extraction test ${marker}\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n`,
-  );
 }
 
 async function signUpUser(label: string): Promise<TestUser> {
@@ -220,43 +210,6 @@ async function forgeRun(user: TestUser, documentId: string, costUsd: number) {
   return opened.run_id;
 }
 
-// Fake providers ---------------------------------------------------------
-
-function fakeProvider(
-  name: "anthropic" | "openai",
-  model: string,
-  answers: (ProviderResponse | ProviderError)[],
-): ExtractionProvider & { requests: ExtractionRequest[] } {
-  const requests: ExtractionRequest[] = [];
-  return {
-    name,
-    model,
-    requests,
-    async extract(request) {
-      requests.push(request);
-      const next = answers.shift();
-      if (!next) throw new Error(`fake ${name} provider has no answer left`);
-      if (next instanceof ProviderError) throw next;
-      return next;
-    },
-  };
-}
-
-function answer(text: string, model = "claude-haiku-4-5-20251001", inputTokens = 1000, outputTokens = 100): ProviderResponse {
-  return { text, inputTokens, outputTokens, model };
-}
-
-function validJson(overrides: Record<string, { value: string | null; confidence: number }> = {}) {
-  const fields: Record<string, unknown> = {};
-  for (const name of FIELD_NAMES) {
-    fields[name] = { value: null, confidence: 0.9, source_text: null, clarifying_question: null };
-  }
-  for (const [name, override] of Object.entries(overrides)) {
-    fields[name] = { ...override, source_text: override.value, clarifying_question: null };
-  }
-  return JSON.stringify(fields);
-}
-
 // Setup --------------------------------------------------------------------
 
 let userX: TestUser | undefined; // owner of every tenant below
@@ -372,153 +325,6 @@ describe("configuration", () => {
       ]),
     );
     expect(fromDb).toEqual(PRICING);
-  });
-
-  it("cost is computed from the pricing table for a known token count", () => {
-    // Haiku 4.5: $1 per million in, $5 per million out
-    expect(PRICING["claude-haiku-4-5-20251001"]).toMatchObject({ inputUsdPerMillion: 1, outputUsdPerMillion: 5 });
-    expect(computeCostUsd("claude-haiku-4-5-20251001", 10_000, 500)).toBe(0.0125);
-    // gpt-5-nano: $0.05 in, $0.40 out; the served snapshot id carries a date
-    expect(computeCostUsd("gpt-5-nano-2025-08-07", 200_000, 1_000)).toBe(0.0104);
-    expect(computeCostUsd("gpt-5-nano", 0, 0)).toBe(0);
-    // clamped to the per-run maximum
-    expect(computeCostUsd("claude-haiku-4-5-20251001", 5_000_000, 100_000)).toBe(
-      computeCostUsd("claude-haiku-4-5-20251001", EXTRACTION_LIMITS.maxInputTokensPerRun, EXTRACTION_LIMITS.maxOutputTokensPerRun),
-    );
-    expect(() => computeCostUsd("no-such-model", 1, 1)).toThrow(/no price on file/);
-    expect(() => computeCostUsd("gpt-5-nano", -1, 1)).toThrow();
-  });
-
-  it("magic bytes decide the type, not the declared one", () => {
-    expect(detectMimeType(pdfBytes("x"))).toBe("application/pdf");
-    expect(detectMimeType(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0]))).toBe("image/png");
-    expect(detectMimeType(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]))).toBe("image/jpeg");
-    expect(detectMimeType(new TextEncoder().encode("hello"))).toBeNull();
-    expect(detectMimeType(new Uint8Array([]))).toBeNull();
-  });
-});
-
-describe("validation", () => {
-  it("rejects malformed answers with a specific message", () => {
-    expect(validateExtraction("not json")).toMatchObject({ ok: false, error: expect.stringMatching(/not valid JSON/) });
-    expect(validateExtraction("[]")).toMatchObject({ ok: false, error: expect.stringMatching(/JSON object/) });
-    const missing = validateExtraction("{}");
-    expect(missing.ok).toBe(false);
-    if (!missing.ok) expect(missing.error).toMatch(/document_type is missing/);
-
-    const badDate = validateExtraction(validJson({ document_date: { value: "2026-02-30", confidence: 0.9 } }));
-    expect(badDate).toMatchObject({ ok: false, error: expect.stringMatching(/document_date.*YYYY-MM-DD/) });
-    const badAmount = validateExtraction(validJson({ total_amount: { value: "1,234.00", confidence: 0.9 } }));
-    expect(badAmount).toMatchObject({ ok: false, error: expect.stringMatching(/total_amount/) });
-    const badCurrency = validateExtraction(validJson({ currency: { value: "dollars", confidence: 0.9 } }));
-    expect(badCurrency).toMatchObject({ ok: false, error: expect.stringMatching(/currency/) });
-    const badEnum = validateExtraction(validJson({ document_type: { value: "memo", confidence: 0.9 } }));
-    expect(badEnum).toMatchObject({ ok: false, error: expect.stringMatching(/document_type.*one of/) });
-    const badConfidence = validateExtraction(validJson({ title: { value: "x", confidence: 1.5 } }));
-    expect(badConfidence).toMatchObject({ ok: false, error: expect.stringMatching(/confidence/) });
-  });
-
-  it("treats empty strings as absent and the schema has no unions", () => {
-    const text = validJson({ title: { value: "", confidence: 0.9 }, currency: { value: "   ", confidence: 0.5 } });
-    const result = validateExtraction(text);
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.fields.find((f) => f.name === "title")).toMatchObject({ value: null, source_text: null });
-      expect(result.fields.find((f) => f.name === "currency")?.value).toBeNull();
-    }
-    // Anthropic rejects schemas with more than 16 union-typed parameters
-    expect(JSON.stringify(buildJsonSchema())).not.toMatch(/anyOf|oneOf|"null"/);
-  });
-
-  it("accepts a well-formed answer", () => {
-    const result = validateExtraction(
-      validJson({ document_date: { value: "2026-09-18", confidence: 0.95 }, total_amount: { value: "1234.56", confidence: 0.7 } }),
-    );
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.fields).toHaveLength(FIELD_NAMES.length);
-      expect(result.fields.find((f) => f.name === "total_amount")).toMatchObject({ value: "1234.56", confidence: 0.7 });
-    }
-  });
-});
-
-describe("orchestrator (fake providers)", () => {
-  const input = { bytes: pdfBytes("fake"), mimeType: "application/pdf" as const, filename: "fake.pdf" };
-
-  it("an invalid answer is retried once with the validation error, then the run fails cleanly", async () => {
-    const primary = fakeProvider("anthropic", "claude-haiku-4-5-20251001", [
-      answer("{ this is not json"),
-      answer('{"still": "wrong"}', "claude-haiku-4-5-20251001", 1200, 50),
-    ]);
-    const outcome = await runExtraction({ ...input, primary, fallback: null });
-
-    expect(primary.requests).toHaveLength(2);
-    expect(primary.requests[0].previousAttempt).toBeUndefined();
-    expect(primary.requests[0].maxOutputTokens).toBe(MAX_OUTPUT_TOKENS);
-    // the retry carries the previous answer and what was wrong with it
-    expect(primary.requests[1].previousAttempt?.rawResponse).toBe("{ this is not json");
-    expect(primary.requests[1].previousAttempt?.retryPrompt).toMatch(/not valid JSON/);
-
-    expect(outcome.status).toBe("failed");
-    if (outcome.status !== "failed") return;
-    expect(outcome.attempts).toBe(2);
-    expect(outcome.error).toMatch(/after 1 retry/);
-    expect(outcome.error).toMatch(/document_type is missing/);
-    expect(outcome.rawResponse).toBe('{"still": "wrong"}');
-    // both calls are paid for
-    expect(outcome.inputTokens).toBe(2200);
-    expect(outcome.outputTokens).toBe(150);
-    expect(outcome.provider).toBe("anthropic");
-  });
-
-  it("a valid answer is gated by confidence", async () => {
-    const text = validJson({
-      title: { value: "Invoice 42", confidence: 0.99 },
-      total_amount: { value: "10.00", confidence: 0.7 },
-      due_date: { value: "2026-10-01", confidence: 0.2 },
-    });
-    const primary = fakeProvider("openai", "gpt-5-nano", [answer(text, "gpt-5-nano-2025-08-07", 500, 80)]);
-    const outcome = await runExtraction({ ...input, primary, fallback: null });
-
-    expect(outcome.status).toBe("succeeded");
-    if (outcome.status !== "succeeded") return;
-    expect(outcome.attempts).toBe(1);
-    expect(outcome.model).toBe("gpt-5-nano-2025-08-07");
-    const byName = Object.fromEntries(outcome.fields.map((f) => [f.name, f]));
-    expect(byName.title).toMatchObject({ band: "high", clarifying_question: null });
-    expect(byName.total_amount.band).toBe("medium");
-    expect(byName.total_amount.clarifying_question).toMatch(/10\.00/);
-    expect(byName.due_date).toMatchObject({ band: "low", value: "2026-10-01" });
-    expect(outcome.documentStatus).toBe("needs_review");
-    expect(CONFIDENCE_THRESHOLDS.medium).toBeLessThanOrEqual(0.7);
-  });
-
-  it("a timeout or 5xx on the primary falls back to the other provider", async () => {
-    const primary = fakeProvider("anthropic", "claude-haiku-4-5-20251001", [
-      new ProviderError("anthropic", "transport", "request timed out"),
-    ]);
-    const fallback = fakeProvider("openai", "gpt-5-nano", [answer(validJson(), "gpt-5-nano-2025-08-07", 700, 60)]);
-    const outcome = await runExtraction({ ...input, primary, fallback });
-
-    expect(primary.requests).toHaveLength(1);
-    expect(fallback.requests).toHaveLength(1);
-    expect(outcome).toMatchObject({ status: "succeeded", provider: "openai", attempts: 2, inputTokens: 700 });
-
-    const server = fakeProvider("openai", "gpt-5-nano", [new ProviderError("openai", "server", "bad gateway", 502)]);
-    const second = fakeProvider("anthropic", "claude-haiku-4-5-20251001", [answer(validJson())]);
-    const outcome2 = await runExtraction({ ...input, primary: server, fallback: second });
-    expect(outcome2).toMatchObject({ status: "succeeded", provider: "anthropic", attempts: 2 });
-  });
-
-  it("a 4xx or a refusal fails without falling back", async () => {
-    const primary = fakeProvider("anthropic", "claude-haiku-4-5-20251001", [
-      new ProviderError("anthropic", "client", "invalid request", 400),
-    ]);
-    const fallback = fakeProvider("openai", "gpt-5-nano", [answer(validJson())]);
-    const outcome = await runExtraction({ ...input, primary, fallback });
-    expect(fallback.requests).toHaveLength(0);
-    expect(outcome).toMatchObject({ status: "failed", attempts: 1, inputTokens: 0, rawResponse: null });
-    if (outcome.status === "failed") expect(outcome.error).toMatch(/anthropic client 400/);
   });
 });
 

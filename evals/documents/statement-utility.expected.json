@@ -1,0 +1,17 @@
+{
+  "fixture": "statement-utility",
+  "kind": "ordinary",
+  "description": "An electricity statement with a previous balance, a payment, new charges, an account number and a due date.",
+  "expected": {
+    "document_type": "statement",
+    "title": "Electricity Statement",
+    "sender_name": "Cascade Power & Light",
+    "recipient_name": "Jordan Ellis",
+    "document_date": "2026-09-05",
+    "due_date": "2026-09-25",
+    "reference_number": "4402-118-2093",
+    "total_amount": "142.87",
+    "currency": "USD",
+    "summary": "An electricity statement from Cascade Power & Light to Jordan Ellis for August 2026 usage."
+  }
+}

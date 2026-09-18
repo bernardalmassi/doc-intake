@@ -1,0 +1,22 @@
+{
+  "fixture": "invoice-usd",
+  "kind": "ordinary",
+  "description": "A US landscaping invoice to a homeowners association; every field present.",
+  "expected": {
+    "document_type": "invoice",
+    "title": "Invoice",
+    "sender_name": {
+      "value": "Pinecrest Landscaping LLC",
+      "accept": [
+        "Pinecrest Landscaping"
+      ]
+    },
+    "recipient_name": "Maple Court Homeowners Association",
+    "document_date": "2026-07-31",
+    "due_date": "2026-08-30",
+    "reference_number": "INV-20417",
+    "total_amount": "2145.00",
+    "currency": "USD",
+    "summary": "An invoice from Pinecrest Landscaping to Maple Court Homeowners Association for July grounds maintenance."
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "fixture": "invoice-vat-gbp",
+  "kind": "ordinary",
+  "description": "A UK invoice with subtotal, VAT and total, an invoice date, a due date and a delivery date.",
+  "expected": {
+    "document_type": "invoice",
+    "title": {
+      "value": "Tax Invoice",
+      "accept": [
+        "Invoice"
+      ]
+    },
+    "sender_name": {
+      "value": "Ashdown Print Studio Ltd",
+      "accept": [
+        "Ashdown Print Studio"
+      ]
+    },
+    "recipient_name": {
+      "value": "Meridian Events Ltd",
+      "accept": [
+        "Meridian Events"
+      ]
+    },
+    "document_date": "2026-09-02",
+    "due_date": "2026-10-02",
+    "reference_number": "ASP-5521",
+    "total_amount": "4548.00",
+    "currency": "GBP",
+    "summary": "A tax invoice from Ashdown Print Studio to Meridian Events for banners, programmes and design work."
+  }
+}
