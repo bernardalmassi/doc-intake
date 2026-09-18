@@ -10,6 +10,15 @@ import { LiveOperations } from "./live-operations";
 import { OrganizationView } from "./organization-view";
 import { type DocumentRow, type FieldRow, type Organization, type Role, type RunRecord, toRunRow } from "./types";
 
+// Seconds this page's function may run, which Next.js applies to every
+// Server Action used on the page, the Extract action included. A run's
+// model calls are bounded at 180 s (three calls of 60 s, config.ts); this
+// leaves a minute for the download and the open and close RPCs, stays under
+// the host's 300 s ceiling, and ends well before the stale-run reaper
+// (10 minutes) could fail a run still in flight. A literal, because Next.js
+// reads it statically; tests/unit/max-duration.test.ts checks the bounds.
+export const maxDuration = 240;
+
 function toRole(value: string | undefined): Role {
   return value === "owner" || value === "admin" ? value : "member";
 }
