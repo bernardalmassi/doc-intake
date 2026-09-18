@@ -52,3 +52,62 @@ export function DocumentsIcon({ className }: IconProps) {
     </svg>
   );
 }
+
+// An arrow rising out of a tray: the upload area.
+export function UploadIcon({ className }: IconProps) {
+  return (
+    <Icon className={className} size={20}>
+      <path d="M8 10.5V2.5M5 5.5l3-3 3 3" />
+      <path d="M2.5 10v2.25c0 .69.56 1.25 1.25 1.25h8.5c.69 0 1.25-.56 1.25-1.25V10" />
+    </Icon>
+  );
+}
+
+// A page with a folded corner: a chosen file.
+export function FileIcon({ className }: IconProps) {
+  return (
+    <Icon className={className} size={20}>
+      <path d="M9.5 1.75H4.25c-.69 0-1.25.56-1.25 1.25v10c0 .69.56 1.25 1.25 1.25h7.5c.69 0 1.25-.56 1.25-1.25V5.25L9.5 1.75Z" />
+      <path d="M9.5 1.75v3.5H13" />
+    </Icon>
+  );
+}
+
+export function CheckIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
+    </Icon>
+  );
+}
+
+// A step not reached yet.
+export function DotIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <circle cx="8" cy="8" r="2.5" />
+    </Icon>
+  );
+}
+
+// Work in progress. Spins only when the visitor hasn't asked for reduced
+// motion; the text next to it says the same thing either way.
+export function SpinnerIcon({ className }: IconProps) {
+  return (
+    <Icon className={`motion-safe:animate-spin ${className ?? ""}`}>
+      <circle cx="8" cy="8" r="5.5" className="stroke-line-strong" />
+      <path d="M8 2.5a5.5 5.5 0 0 1 5.5 5.5" />
+    </Icon>
+  );
+}
+
+// An exclamation mark in a circle: something to look at.
+export function AlertIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <circle cx="8" cy="8" r="6" />
+      <path d="M8 4.75v3.75" />
+      <path d="M8 11.1v.15" strokeWidth="2" />
+    </Icon>
+  );
+}

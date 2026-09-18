@@ -32,6 +32,9 @@ export function LiveOperations({ children }: { children: React.ReactNode }) {
           return { ok: false, step: 1, message: created.error, rowCreated: false };
         }
 
+        // From here on the row exists. If a later step fails, refresh so the
+        // unfinished entry shows in the list next to the error that explains
+        // it; the error itself stays in the upload form's state.
         const supabase = createClient();
 
         // 2. the bytes, straight from the browser with the user's session.
@@ -46,6 +49,7 @@ export function LiveOperations({ children }: { children: React.ReactNode }) {
             cacheControl: "0",
           });
           if (upload.error) {
+            router.refresh();
             const { status, statusCode } = upload.error;
             const code = "code" in upload.error ? (upload.error.code as string | undefined) : undefined;
             return {
@@ -59,6 +63,7 @@ export function LiveOperations({ children }: { children: React.ReactNode }) {
             };
           }
         } catch (error) {
+          router.refresh();
           return { ok: false, step: 2, message: messageOf(error), network: true, rowCreated: true };
         }
 
@@ -69,9 +74,11 @@ export function LiveOperations({ children }: { children: React.ReactNode }) {
             p_document_id: created.id,
           });
           if (done.error) {
+            router.refresh();
             return { ok: false, step: 3, message: done.error.message, code: done.error.code, rowCreated: true };
           }
         } catch (error) {
+          router.refresh();
           return { ok: false, step: 3, message: messageOf(error), network: true, rowCreated: true };
         }
 

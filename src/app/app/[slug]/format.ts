@@ -21,12 +21,16 @@ export function formatCount(value: number): string {
   return integerFormat.format(value);
 }
 
+// Between a number and its unit, so "10 MB" never breaks across lines.
+export const NBSP = "\u00a0";
+
 // Binary units, as the 10 MB bucket limit is 10 × 1024 × 1024 bytes.
 export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} ${bytes === 1 ? "byte" : "bytes"}`;
+  if (bytes < 1024) return `${bytes}${NBSP}${bytes === 1 ? "byte" : "bytes"}`;
   const kb = bytes / 1024;
-  if (kb < 1024) return `${kb < 100 ? kb.toFixed(1) : Math.round(kb)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  // 1000 KB and up reads as MB, so a size never shows four digits of KB
+  if (kb < 999.5) return `${kb < 100 ? kb.toFixed(1) : Math.round(kb)}${NBSP}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}${NBSP}MB`;
 }
 
 const KIND_LABELS: Record<string, string> = {

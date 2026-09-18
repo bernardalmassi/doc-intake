@@ -27,7 +27,7 @@ written under the item and the item is skipped.
 - [x] 4. Sign up page. Same, plus the 15 character password rule shown before submit and the server's reason shown when it rejects.
 - [x] 5. /app organizations list and create organization. Empty state that explains what an organization is.
 - [x] 6. /app/[slug]. Header, upload, document list, 404 for unknown and non-member slugs.
-- [ ] 7. Upload states: idle, chosen, uploading, rejected type, too large, failed.
+- [x] 7. Upload states: idle, chosen, uploading, rejected type, too large, failed.
 - [ ] 8. Document states: pending, processing, extracted, needs_review, failed. needs_review sorts first and is visibly distinct. Buttons must not shift the row when a status message appears.
 - [ ] 9. Extraction panel. Field, value, confidence, band, source text, clarifying question when present. Plain English status line.
 - [ ] 10. Run history per document: provider, model, tokens, cost, latency, status, time.

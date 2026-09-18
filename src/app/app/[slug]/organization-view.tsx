@@ -47,7 +47,7 @@ export function OrganizationView({
         <h2 id="upload-heading" className={sectionTitleClass}>
           Upload a document
         </h2>
-        <UploadForm tenantId={organization.id} />
+        <UploadForm tenantId={organization.id} canManage={manage} />
       </section>
 
       <section aria-labelledby={DOCUMENTS_HEADING_ID} className="mt-10">

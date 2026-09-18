@@ -48,7 +48,7 @@ export function DocumentList({ entries, slug, canManage }: ListProps) {
 function EmptyDocuments({ canManage }: { canManage: boolean }) {
   const steps = [
     <>
-      <span className="font-medium">Upload</span> a PDF, PNG or JPEG of up to 10 MB, using the box above.
+      <span className="font-medium">Upload</span> a PDF, PNG or JPEG of up to 10&nbsp;MB, using the box above.
     </>,
     canManage ? (
       <>
@@ -110,8 +110,10 @@ function DocumentItem({ entry, slug, canManage }: { entry: DocumentEntry; slug: 
       </div>
       <p className={`mt-1 ${hintClass} tabular-nums`}>
         {meta.length > 0 && `${meta.join(" · ")} · `}
-        Uploaded <time dateTime={document.created_at}>{formatUtc(document.created_at)}</time>
+        {document.status === "uploading" ? "Upload started" : "Uploaded"}{" "}
+        <time dateTime={document.created_at}>{formatUtc(document.created_at)}</time>
       </p>
+      {document.status === "uploading" && <UnfinishedUpload canManage={canManage} />}
       <div className="mt-3">
         <DocumentActions
           id={document.id}
@@ -126,5 +128,20 @@ function DocumentItem({ entry, slug, canManage }: { entry: DocumentEntry; slug: 
       </div>
       <ExtractionPanel run={runs[0] ?? null} fields={fields} />
     </article>
+  );
+}
+
+// A row whose file never arrived: the upload was interrupted, or failed
+// after the row was created. There is nothing to download or extract, and
+// nothing sweeps these yet, so say what happened and who can tidy it up.
+function UnfinishedUpload({ canManage }: { canManage: boolean }) {
+  return (
+    <p className="mt-3 max-w-prose text-sm">
+      This upload never finished, so there is no file to download or extract. To add the document, upload it
+      again.{" "}
+      <span className="text-muted">
+        {canManage ? "You can delete this entry." : "An admin can delete this entry."}
+      </span>
+    </p>
   );
 }

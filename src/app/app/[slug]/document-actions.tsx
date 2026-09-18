@@ -48,22 +48,18 @@ export function DocumentActions({
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <button
-        type="button"
-        onClick={download}
-        disabled={!uploaded}
-        title={uploaded ? undefined : "This upload hasn't finished"}
-        className={secondaryButtonClass}
-      >
-        Download
-      </button>
-      {canExtract && (
+      {uploaded && (
+        <button type="button" onClick={download} className={secondaryButtonClass}>
+          Download
+        </button>
+      )}
+      {canExtract && uploaded && (
         <form action={extractAction}>
           <input type="hidden" name="id" value={id} />
           <input type="hidden" name="slug" value={slug} />
           <button
             type="submit"
-            disabled={!uploaded || extracting || processing}
+            disabled={extracting || processing}
             title={processing ? "An extraction is running" : undefined}
             className={buttonClass}
           >
