@@ -13,26 +13,42 @@ const RUN_STATUS_LABELS: Record<string, string> = {
   failed: "Failed",
 };
 
-// A run whose cost the database doesn't know: still running, or abandoned
-// and failed by the stale-run check. A run that failed before any model
-// call (a file whose contents didn't match its type) also has no cost, but
-// nothing was spent, so it counts as nothing.
-function costUnknown(run: RunRow): boolean {
-  return run.cost_usd === null && (run.status === "running" || run.error_code === "extraction.abandoned");
+// What the Cost cell can say about a run:
+//   recorded   the database priced it
+//   estimated  charged at the dearest price on file, because the database
+//              couldn't price the model that answered (see RunRow)
+//   unknown    a provider may have been paid but no cost was recorded: still
+//              running, abandoned and failed by the stale-run check, or a
+//              run that made model calls and was closed without its usage
+//              (the Extract action did that before it charged estimates)
+//   none       no model call was made (a file whose contents didn't match
+//              its type), so nothing was spent
+type CostState = "recorded" | "estimated" | "unknown" | "none";
+
+function costState(run: RunRow): CostState {
+  if (run.cost_usd !== null) return run.cost_estimated ? "estimated" : "recorded";
+  if (run.status === "running" || run.error_code === "extraction.abandoned" || run.attempts > 0) return "unknown";
+  return "none";
 }
 
 function runTotals(runs: RunRow[]) {
   const total = runs.reduce((sum, run) => sum + (run.cost_usd === null ? 0 : Number(run.cost_usd)), 0);
-  return { total, unknown: runs.filter(costUnknown).length };
+  const states = runs.map(costState);
+  return {
+    total,
+    estimated: states.filter((state) => state === "estimated").length,
+    unknown: states.filter((state) => state === "unknown").length,
+  };
 }
 
 // The closed disclosure's summary: "3 runs · $0.0231 total", and says so
-// when a cost isn't known rather than counting it as zero.
+// when a cost is an estimate or isn't known rather than counting it as zero.
 export function runHistoryMeta(runs: RunRow[]): string {
-  const { total, unknown } = runTotals(runs);
+  const { total, estimated, unknown } = runTotals(runs);
   const count = `${runs.length} ${runs.length === 1 ? "run" : "runs"}`;
   if (unknown === runs.length) return `${count} · cost not known yet`;
-  return `${count} · ${formatUsd(total)} total${unknown > 0 ? ` · ${unknown} not known` : ""}`;
+  const notes = [estimated > 0 ? `${estimated} estimated` : null, unknown > 0 ? `${unknown} not known` : null].filter(Boolean);
+  return `${count} · ${formatUsd(total)} total${notes.map((note) => ` · ${note}`).join("")}`;
 }
 
 // Header and body cells. From md up this is a table with right-aligned
@@ -52,7 +68,7 @@ const num = "tabular-nums md:text-right";
 // failed, as the catalog's sentence for its code (the stored text never
 // gets this far). The total is the sum of the recorded costs.
 export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filename: string; staleRun: boolean }) {
-  const { total, unknown } = runTotals(runs);
+  const { total, estimated, unknown } = runTotals(runs);
 
   return (
     <div className="mt-3">
@@ -99,7 +115,12 @@ export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filen
                     <span className="mt-1 block text-muted tabular-nums">{describeAttempts(run, stalled)}</span>
                   </td>
                   <td role="cell" data-label="Model" className={td}>
-                    {run.provider ? (
+                    {run.cost_estimated ? (
+                      <>
+                        Not on the price list
+                        <span className="block text-muted [overflow-wrap:anywhere]">charged at {run.model} rates</span>
+                      </>
+                    ) : run.provider ? (
                       <>
                         {PROVIDER_LABELS[run.provider] ?? run.provider}
                         <span className="block text-muted [overflow-wrap:anywhere]">{run.model}</span>
@@ -109,17 +130,13 @@ export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filen
                     )}
                   </td>
                   <td role="cell" data-label="Tokens in" className={`${td} ${num}`}>
-                    {run.input_tokens !== null ? formatCount(run.input_tokens) : <Missing label="None recorded" />}
+                    <Tokens run={run} count={run.input_tokens} />
                   </td>
                   <td role="cell" data-label="Tokens out" className={`${td} ${num}`}>
-                    {run.output_tokens !== null ? formatCount(run.output_tokens) : <Missing label="None recorded" />}
+                    <Tokens run={run} count={run.output_tokens} />
                   </td>
                   <td role="cell" data-label="Cost" className={`${td} ${num}`}>
-                    {run.cost_usd !== null ? (
-                      <span title={`${Number(run.cost_usd)} USD`}>{formatUsd(Number(run.cost_usd))}</span>
-                    ) : (
-                      <Missing label={costUnknown(run) ? "Not known" : "Nothing spent"} />
-                    )}
+                    <Cost run={run} />
                   </td>
                   <td role="cell" data-label="Time taken" className={`${td} ${num}`}>
                     {run.latency_ms !== null ? formatSeconds(run.latency_ms) : <Missing label="Not recorded" />}
@@ -145,6 +162,11 @@ export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filen
             <tr role="row" className="border-t border-line-strong max-md:flex max-md:items-baseline max-md:justify-between max-md:gap-4 max-md:py-3">
               <th scope="row" role="rowheader" colSpan={5} className="py-2 pr-4 font-medium max-md:p-0">
                 Total for {runs.length} runs
+                {estimated > 0 && (
+                  <span className="block font-normal text-muted">
+                    Includes {estimated} estimated {estimated === 1 ? "cost" : "costs"}.
+                  </span>
+                )}
                 {unknown > 0 && (
                   <span className="block font-normal text-muted">
                     Leaves out {unknown} {unknown === 1 ? "run" : "runs"} whose cost isn&apos;t known.
@@ -165,6 +187,35 @@ function describeAttempts(run: RunRow, stalled: boolean): string {
   if (stalled) return "Stopped responding";
   if (run.attempts === 0) return run.status === "running" ? "In progress" : "No model call";
   return `${run.attempts} model ${run.attempts === 1 ? "call" : "calls"}`;
+}
+
+// A paid run never reads as free: an estimate says so, and a cost that
+// wasn't recorded says it isn't known, in words, not a dash.
+function Cost({ run }: { run: RunRow }) {
+  const state = costState(run);
+  if (state === "recorded") return <span title={`${Number(run.cost_usd)} USD`}>{formatUsd(Number(run.cost_usd))}</span>;
+  if (state === "estimated") {
+    return (
+      <>
+        <span title={`About ${Number(run.cost_usd)} USD, charged at the dearest price on file`}>
+          <span aria-hidden="true">≈ </span>
+          <span className="sr-only">About </span>
+          {formatUsd(Number(run.cost_usd))}
+        </span>
+        <span className="block text-muted">Estimated</span>
+      </>
+    );
+  }
+  if (state === "unknown") return <span className="text-muted">Not known</span>;
+  return <Missing label="Nothing spent" />;
+}
+
+// Token counts. A run that made model calls but was closed without a model
+// (the Extract action did that before it charged estimates) stored 0 for
+// tokens that were never recorded, so those read as not known, not as 0.
+function Tokens({ run, count }: { run: RunRow; count: number | null }) {
+  if (run.model === null && run.attempts > 0 && run.status !== "running") return <span className="text-muted">Not known</span>;
+  return count !== null ? formatCount(count) : <Missing label="None recorded" />;
 }
 
 // An empty cell: a dash to see, words to hear.

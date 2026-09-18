@@ -1,4 +1,4 @@
-import { classifyRunError, type ErrorCode } from "@/lib/errors";
+import { classifyRunError, isCostEstimated, type ErrorCode } from "@/lib/errors";
 
 // What the organization page reads, and what its components take. page.tsx
 // fetches these rows and the components only render them, so the design
@@ -43,10 +43,18 @@ export type RunRecord = {
 // A run as the components get it: the stored error only as its code from
 // src/lib/errors.ts, so no component can render the stored text, and a
 // failure one admin's run recorded reads the same to every member.
-export type RunRow = Omit<RunRecord, "error"> & { error_code: ErrorCode | null };
+// cost_estimated: the run was charged at the dearest price on file because
+// the database couldn't price the model that answered it, so `model` names
+// the price it was charged at, not the model (failedCloseAttempts in
+// src/lib/extraction/run.ts).
+export type RunRow = Omit<RunRecord, "error"> & { error_code: ErrorCode | null; cost_estimated: boolean };
 
 export function toRunRow({ error, ...run }: RunRecord): RunRow {
-  return { ...run, error_code: error === null ? null : classifyRunError(error) };
+  return {
+    ...run,
+    error_code: error === null ? null : classifyRunError(error),
+    cost_estimated: run.cost_usd !== null && isCostEstimated(error),
+  };
 }
 
 export type FieldRow = {

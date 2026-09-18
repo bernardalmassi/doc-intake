@@ -4,6 +4,7 @@
 // leaves toRunRow carries a code from the catalog and nothing of the text.
 
 import { describe, expect, it } from "vitest";
+import { runHistoryMeta } from "@/app/app/[slug]/run-history";
 import { type RunRecord, toRunRow } from "@/app/app/[slug]/types";
 import { isErrorCode, RUN_ERROR_MARKERS } from "@/lib/errors";
 
@@ -51,4 +52,48 @@ describe("toRunRow", () => {
     expect(row.cost_usd).toBe("0.00123000");
     expect(row.started_at).toBe(base.started_at);
   });
+
+  it("marks a cost charged at the dearest price as estimated, and nothing else", () => {
+    const estimated = toRunRow({
+      ...base,
+      provider: "anthropic",
+      model: "claude-sonnet-5",
+      attempts: 1,
+      input_tokens: 1000,
+      output_tokens: 10,
+      cost_usd: "0.00210000",
+      error: `${RUN_ERROR_MARKERS.costEstimated} (22023; served by claude-unpriced-9): the result could not be recorded: 22023`,
+    });
+    expect(estimated.cost_estimated).toBe(true);
+    expect(estimated.error_code).toBe("extraction.result_not_saved");
+    expect(JSON.stringify(estimated)).not.toContain("claude-unpriced-9");
+
+    expect(toRunRow({ ...base, status: "succeeded", cost_usd: "0.00123000" }).cost_estimated).toBe(false);
+    // the marker anywhere but the start doesn't count
+    const inside = `anthropic transport: ${RUN_ERROR_MARKERS.costEstimated} (22023; served by x): y`;
+    expect(toRunRow({ ...base, cost_usd: "0.001", error: inside }).cost_estimated).toBe(false);
+    // no cost, nothing to call estimated
+    expect(toRunRow({ ...base, error: `${RUN_ERROR_MARKERS.costEstimated} (22023; served by x): y` }).cost_estimated).toBe(false);
+  });
 });
+
+describe("runHistoryMeta", () => {
+  it("never counts a paid run as free: estimates are named, unrecorded costs are not known", () => {
+    const recorded = toRunRow({ ...base, status: "succeeded", attempts: 1, cost_usd: "0.01000000" });
+    const estimated = toRunRow({
+      ...base,
+      attempts: 1,
+      cost_usd: "0.02000000",
+      error: `${RUN_ERROR_MARKERS.costEstimated} (22023; served by m): the result could not be recorded: 22023`,
+    });
+    // closed without its usage by the old fallback: calls made, no cost
+    const dropped = toRunRow({ ...base, attempts: 2, error: "the result could not be recorded: 22023" });
+    // failed before any call: nothing spent, not "not known"
+    const noCall = toRunRow({ ...base, error: `${RUN_ERROR_MARKERS.downloadFailed}: download.not_found` });
+
+    expect(runHistoryMeta([recorded, estimated, dropped, noCall])).toBe("4 runs · $0.0300 total · 1 estimated · 1 not known");
+    expect(runHistoryMeta([recorded, noCall])).toBe("2 runs · $0.0100 total");
+    expect(runHistoryMeta([dropped])).toBe("1 run · cost not known yet");
+  });
+});
+
