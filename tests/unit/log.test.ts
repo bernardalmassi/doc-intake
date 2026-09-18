@@ -37,6 +37,7 @@ import {
 } from "@/lib/extraction/providers/types";
 import { runExtraction } from "@/lib/extraction/run";
 import { FIELD_NAMES } from "@/lib/extraction/schema";
+import { ERROR_CODES } from "@/lib/errors";
 import { PRICING } from "@/lib/extraction/config";
 import {
   defaultLogSink,
@@ -485,6 +486,13 @@ describe("closed fields take only their listed values; shapes are bounded", () =
     log.info("extraction.run_finished", fields as LogFields);
     return lastLine().fields;
   }
+
+  it("error_code also takes each user-facing code a Server Action returns", () => {
+    for (const code of ERROR_CODES) expect(kept({ error_code: code })).toEqual({ error_code: code });
+    for (const text of ["auth.invalid_credentials.", "Auth.invalid_credentials", "tenant.slug_taken see https://x"]) {
+      expect(kept({ error_code: text })).toEqual({});
+    }
+  });
 
   it("error_code is one of LOG_ERROR_CODES, not any snake_case", () => {
     for (const code of LOG_ERROR_CODES) expect(kept({ error_code: code })).toEqual({ error_code: code });

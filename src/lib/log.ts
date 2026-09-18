@@ -1,7 +1,8 @@
-// The one logger. Code in src/lib writes logs through this module and
-// nothing else (eslint.config.mjs forbids every other route to a console, a
-// process stream or a file descriptor there), so this is the single place
-// that decides what can reach a log line.
+// The one logger. Code in src/lib and the Server Actions in src/app write
+// logs through this module and nothing else (eslint.config.mjs forbids
+// every other route to a console, a process stream or a file descriptor
+// there), so this is the single place that decides what can reach a log
+// line.
 //
 // What a line can contain, exactly:
 //
@@ -16,9 +17,9 @@
 //     key, whose name the caller controls). The formats are of two kinds:
 //       * closed sets: the five provider fields, run_status, document_status,
 //         mime_type and detected_mime_type, fallback_used, error_kind,
-//         error_code (LOG_ERROR_CODES), and model (an id priced in
-//         extraction/config.ts, optionally followed by a date snapshot such as
-//         -2025-08-07 or -20251001);
+//         error_code (LOG_ERROR_CODES and errors.ts's ERROR_CODES), and
+//         model (an id priced in extraction/config.ts, optionally followed
+//         by a date snapshot such as -2025-08-07 or -20251001);
 //       * shapes, which a caller misusing a field could fill with other data
 //         of that shape: run_id, document_id, tenant_id and user_id take any
 //         lowercase UUID (32 hex digits each); error_name takes 1 to 40 ASCII
@@ -47,6 +48,7 @@
 // No "server-only" import and no secrets of its own, so tests import it
 // directly; the sink is injectable so they can capture what it writes.
 
+import { ERROR_CODES } from "./errors";
 import { PRICING, type ProviderName } from "./extraction/config";
 import type { ProviderErrorKind } from "./extraction/providers/types";
 import { SUPPORTED_MIME_TYPES } from "./extraction/sniff";
@@ -66,14 +68,27 @@ export const LOG_EVENTS = [
   "extraction.fallback",
   "extraction.validation_retry",
   "extraction.run_finished",
-  // for src/app/app/extract-action.ts, which can't be edited while the UI
-  // is redesigned: one line per step around the RPCs
+  // src/app/app/extract-action.ts: one line per step around the RPCs
   "extraction.run_opened",
   "extraction.open_refused",
   "extraction.download_failed",
   "extraction.type_mismatch",
+  "extraction.unexpected_error",
   "extraction.run_closed",
   "extraction.close_failed",
+  // src/app/auth/actions.ts
+  "auth.sign_up_refused",
+  "auth.signed_up",
+  "auth.sign_in_refused",
+  "auth.signed_in",
+  "auth.signed_out",
+  // src/app/app/actions.ts
+  "tenant.create_refused",
+  "tenant.created",
+  "document.create_refused",
+  "document.created",
+  "document.delete_refused",
+  "document.deleted",
 ] as const;
 
 export type LogEvent = (typeof LOG_EVENTS)[number];
@@ -139,8 +154,10 @@ const model: Format<string> = (value) => {
     : undefined;
 };
 
-// Every error_code a line may carry. A closed list, so the field can't
-// become a channel for text: a new log call that needs a code adds it here.
+// Every error_code a line may carry besides the user-facing codes of
+// src/lib/errors.ts (ERROR_CODES), which a Server Action logs as it returns
+// them. Both are closed lists, so the field can't become a channel for
+// text: a new log call that needs a code of its own adds it here.
 export const LOG_ERROR_CODES = [
   // extraction/providers/select.ts
   "invalid_provider_setting",
@@ -202,7 +219,7 @@ const LOG_FIELDS = {
   // an Error subclass name, such as TypeError or APIConnectionTimeoutError:
   // a bounded identifier, not a closed list, because any library can throw
   error_name: matching(/^[A-Z][A-Za-z]{0,39}$/, 40),
-  error_code: oneOf(LOG_ERROR_CODES),
+  error_code: oneOf([...LOG_ERROR_CODES, ...ERROR_CODES]),
   // a Postgres SQLSTATE, such as 53400
   db_code: matching(/^[0-9A-Z]{5}$/, 5),
   http_status: (value: unknown) =>

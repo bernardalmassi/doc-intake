@@ -267,5 +267,5 @@ In rough order of value to someone using it:
 5. **This month's spend.** The limits and every run's cost are readable, so the organization page could show spend against the 1 USD ceiling before an admin hits it, instead of explaining it after.
 6. **A loading state that keeps real status codes.** The organization page shows the previous page until its data arrives. A skeleton is easy, but `loading.tsx` would turn its 404 into a 200 (see Error page). The fix is to decide access before streaming, for example a membership check in the proxy, then show the skeleton.
 7. **Tests for the interface.** The fixture pages are already a catalogue of states. Committing them behind a development-only guard and adding an accessibility checker and screenshot comparisons in CI would keep the states from regressing; both need new dev dependencies.
-8. **Small things.** A show-password toggle, given the 15 character minimum. Times in the reader's own time zone, rendered after hydration. `MAX_PASSWORD_BYTES` next to `MIN_PASSWORD_LENGTH` in `src/lib/password.ts`. Server Actions logging the raw error they no longer show.
+8. **Small things.** A show-password toggle, given the 15 character minimum. Times in the reader's own time zone, rendered after hydration. `MAX_PASSWORD_BYTES` next to `MIN_PASSWORD_LENGTH` in `src/lib/password.ts`.
 

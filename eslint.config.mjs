@@ -14,11 +14,20 @@ import nextTs from "eslint-config-next/typescript";
 // keys, documents and model output (src/lib/extraction, redact.ts,
 // errors.ts). The rest of src/lib, where the UI redesign may add browser
 // helpers that legitimately touch window or need an inline disable, gets
-// only the console and process-stream rules. Neither reaches src/app yet.
+// only the console and process-stream rules. In src/app the same two rules
+// cover the server-side code: the Server Actions and the auth route, which
+// log through the same module.
 const LOGGER = "src/lib/log.ts";
 const EXTENSIONS = "{js,mjs,cjs,ts,mts,cts,tsx,jsx}";
 const STRICT_FILES = [`src/lib/extraction/**/*.${EXTENSIONS}`, "src/lib/redact.ts", "src/lib/errors.ts"];
 const USE_LOGGER = `Log through ${LOGGER}.`;
+const SERVER_ACTIONS = [
+  "src/app/auth/actions.ts",
+  "src/app/auth/confirm/route.ts",
+  "src/app/app/actions.ts",
+  "src/app/app/extract-action.ts",
+  "src/app/log-fields.ts",
+];
 
 // Node modules that hand out the process or console, or can write to a
 // stream, a file descriptor or a child's stdio.
@@ -36,6 +45,13 @@ const eslintConfig = defineConfig([
   {
     files: [`src/lib/**/*.${EXTENSIONS}`],
     ignores: [LOGGER],
+    rules: {
+      "no-console": "error",
+      "no-restricted-properties": ["error", ...GLOBAL_WRITERS, ...PROCESS_STREAMS],
+    },
+  },
+  {
+    files: SERVER_ACTIONS,
     rules: {
       "no-console": "error",
       "no-restricted-properties": ["error", ...GLOBAL_WRITERS, ...PROCESS_STREAMS],
