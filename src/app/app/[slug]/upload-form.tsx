@@ -1,26 +1,18 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { buttonClass, errorClass, ghostButtonClass, hintClass, secondaryButtonClass, textTargetClass } from "@/app/ui";
+import { buttonClass, errorClass, ghostButtonClass, hintClass, secondaryButtonClass } from "@/app/ui";
 import { fileKind, formatBytes } from "./format";
 import { AlertIcon, CheckIcon, DotIcon, FileIcon, SpinnerIcon, UploadIcon } from "./icons";
-import {
-  describeRejection,
-  describeUploadFailure,
-  isRetryable,
-  type RejectReason,
-  UPLOAD_LIMIT_TEXT,
-  UPLOAD_STEPS,
-  uploadFailureDetail,
-} from "./messages";
+import { checkUploadFile, classifyThrown, UPLOAD_MIME_TYPES, userFacingError } from "@/lib/errors";
+import { describeRejection, type RejectReason, UPLOAD_LIMIT_TEXT, UPLOAD_STEPS } from "./messages";
 import { type UploadFailure, type UploadStep, useOperations } from "./operations";
 
-// Same limits as the bucket. Checked here only so an obviously wrong file
+// The bucket's types, from src/lib/errors.ts, and extensions too, so every
+// OS file picker filters to the right files. checkUploadFile applies the
+// bucket's limits before anything is sent, so an obviously wrong file
 // never leaves an unfinished entry behind; the bucket is what enforces them.
-const MAX_BYTES = 10 * 1024 * 1024;
-const ACCEPTED_TYPES = ["application/pdf", "image/png", "image/jpeg"];
-// Extensions too, so every OS file picker filters to the right files.
-const ACCEPT = [...ACCEPTED_TYPES, ".pdf", ".png", ".jpg", ".jpeg"].join(",");
+const ACCEPT = [...UPLOAD_MIME_TYPES, ".pdf", ".png", ".jpg", ".jpeg"].join(",");
 
 export type PickedFile = { name: string; type: string; size: number };
 
@@ -96,13 +88,15 @@ export function UploadForm({
     }
     const picked = files[0];
     const info = describe(picked);
-    const reason: RejectReason | null = !ACCEPTED_TYPES.includes(picked.type)
-      ? "type"
-      : picked.size === 0
-        ? "empty"
-        : picked.size > MAX_BYTES
-          ? "size"
-          : null;
+    const refused = checkUploadFile(picked);
+    const reason: RejectReason | null =
+      refused === "upload.file_type_not_allowed"
+        ? "type"
+        : picked.size === 0
+          ? "empty"
+          : refused === "upload.file_too_large"
+            ? "size"
+            : null;
     if (reason) {
       file.current = null;
       focusAfterRender.current = "choose";
@@ -135,12 +129,7 @@ export function UploadForm({
       });
       if (!result.ok) failure = result;
     } catch (error) {
-      failure = {
-        step,
-        message: error instanceof Error ? error.message : String(error),
-        network: true,
-        rowCreated: step > 1,
-      };
+      failure = { step, code: classifyThrown(error), rowCreated: step > 1 };
     }
 
     if (failure) {
@@ -231,7 +220,7 @@ export function UploadForm({
 
         {!showPicker && (
           <div className="mt-4 flex flex-wrap gap-2">
-            {state.kind === "failed" && !isRetryable(state.failure) ? (
+            {state.kind === "failed" && !userFacingError(state.failure.code).retryable ? (
               // Sending the same file again can't work: offer another one.
               <button
                 ref={primaryButton}
@@ -321,7 +310,7 @@ function ChosenFile({
           <p className={`mt-4 flex items-start gap-1.5 ${errorClass}`}>
             <AlertIcon className="mt-0.5" />
             <span className="min-w-0">
-              The upload didn&apos;t finish. {describeUploadFailure(state.failure)}
+              The upload didn&apos;t finish. {userFacingError(state.failure.code).message}
             </span>
           </p>
         )}
@@ -334,10 +323,6 @@ function ChosenFile({
               {canManage ? "You can delete it there." : "An admin can delete it."}
             </p>
           )}
-          <details className="mt-2 text-sm">
-            <summary className={`w-fit cursor-pointer text-muted ${textTargetClass}`}>Technical details</summary>
-            <p className="mt-1 text-muted [overflow-wrap:anywhere]">{uploadFailureDetail(state.failure)}</p>
-          </details>
         </>
       )}
     </>

@@ -14,8 +14,9 @@
 // An input nobody anticipated becomes "unknown"; its text is never echoed,
 // and an input that throws when read (a hostile getter) is "unknown" too.
 //
-// Not wired in yet: src/app is frozen during the UI redesign, so today's UI
-// still shows raw error text. ERRORS.md says so and lists the call sites.
+// Every Server Action returns a code from here, and every page renders
+// userFacingError(code).message; a stored run error reaches the page only
+// as classifyRunError's code.
 //
 // Classification goes by code first (SQLSTATE, Auth code, Storage code,
 // ProviderError kind), then by what was being attempted, because the same
@@ -157,12 +158,12 @@ const CATALOG = {
   },
   "tenant.name_required": { message: "Enter a name for the organization.", retryable: false },
   "tenant.slug_invalid": {
-    message: "The slug must be 3 to 48 characters long and use only lowercase letters, digits and hyphens.",
+    message: "The web address must be 3 to 48 characters long and use only lowercase letters, digits and hyphens.",
     retryable: false,
   },
-  "tenant.slug_taken": { message: "That slug is already in use. Choose a different one.", retryable: false },
+  "tenant.slug_taken": { message: "That web address is already in use. Choose a different one.", retryable: false },
   "tenant.update_not_allowed": {
-    message: "Only an admin can change this organization's name or slug.",
+    message: "Only an admin can change this organization's name or web address.",
     retryable: false,
   },
   "tenant.delete_not_owner": { message: "Only an owner can delete this organization.", retryable: false },

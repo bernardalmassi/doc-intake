@@ -5,7 +5,8 @@ import { ExtractionPanel } from "./extraction-panel";
 import { fieldSummary } from "./fields";
 import { fileKind, formatBytes, formatUtc } from "./format";
 import { AlertIcon, ChevronRightIcon, DocumentsIcon, SpinnerIcon } from "./icons";
-import { describeRunError, DOCUMENTS_HEADING_ID, runErrorAdvice, statusLabel } from "./messages";
+import { type ErrorCode, userFacingError } from "@/lib/errors";
+import { DOCUMENTS_HEADING_ID, statusLabel } from "./messages";
 import { RunHistory, runHistoryMeta } from "./run-history";
 import type { DocumentEntry } from "./types";
 
@@ -201,6 +202,8 @@ function StatusLine({ entry, canManage }: { entry: DocumentEntry; canManage: boo
   const latest = runs[0];
   const latestFailed = latest?.status === "failed";
   const retry = canManage ? "You can try again." : "An admin can try again.";
+  // The catalog's sentences speak to whoever can act; a member can't.
+  const memberNote = canManage ? null : "Only an admin can run extraction.";
 
   switch (document.status) {
     case "uploading":
@@ -208,7 +211,7 @@ function StatusLine({ entry, canManage }: { entry: DocumentEntry; canManage: boo
 
     case "pending":
       if (latestFailed) {
-        return <FailedRun lead="The last extraction failed." error={latest.error} next={retry} />;
+        return <FailedRun lead="The last extraction failed." code={latest.error_code} next={memberNote} />;
       }
       return (
         <p className={`mt-3 ${hintClass}`}>
@@ -237,7 +240,8 @@ function StatusLine({ entry, canManage }: { entry: DocumentEntry; canManage: boo
       );
 
     case "failed":
-      return <FailedRun lead="Extraction failed." error={latestFailed ? latest.error : null} next={retry} />;
+      if (!latestFailed) return <FailedRun lead="Extraction failed." code={null} next={retry} />;
+      return <FailedRun lead="Extraction failed." code={latest.error_code} next={memberNote} />;
 
     case "extracted":
     case "needs_review":
@@ -247,7 +251,7 @@ function StatusLine({ entry, canManage }: { entry: DocumentEntry; canManage: boo
           {latestFailed && (
             <FailedRun
               lead="The latest extraction failed."
-              error={latest.error}
+              code={latest.error_code}
               next="The results below are from an earlier run."
             />
           )}
@@ -274,17 +278,19 @@ function FieldsLine({ entry }: { entry: DocumentEntry }) {
   );
 }
 
-// A failed run: what failed and why in danger text, then what to do next.
-function FailedRun({ lead, error, next }: { lead: string; error: string | null; next: string }) {
-  const advice = runErrorAdvice(error);
+// A failed run: what failed and why in danger text (the catalog's sentence
+// for the run's error code, which says what to do next), then anything the
+// reader needs besides.
+function FailedRun({ lead, code, next }: { lead: string; code: ErrorCode | null; next: string | null }) {
   return (
     <p className="mt-3 flex max-w-prose items-start gap-1.5 text-sm">
       <AlertIcon className="mt-0.5 text-danger" />
       <span className="min-w-0">
         <span className={errorClass}>
-          {lead} {error !== null && describeRunError(error)}
-        </span>{" "}
-        <span className="text-muted">{advice ?? next}</span>
+          {lead}
+          {code !== null && ` ${userFacingError(code).message}`}
+        </span>
+        {next && <span className="text-muted"> {next}</span>}
       </span>
     </p>
   );

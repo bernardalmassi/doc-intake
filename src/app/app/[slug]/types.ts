@@ -1,3 +1,5 @@
+import { classifyRunError, type ErrorCode } from "@/lib/errors";
+
 // What the organization page reads, and what its components take. page.tsx
 // fetches these rows and the components only render them, so the design
 // preview can render the same components from fixture rows.
@@ -17,7 +19,11 @@ export type DocumentRow = {
   created_at: string;
 };
 
-export type RunRow = {
+// A run as page.tsx reads it. `error` is the text stored on a failed run,
+// written for engineers (src/lib/extraction/run.ts, extract-action.ts):
+// it can quote a provider's or Storage's message, so it never goes further
+// than page.tsx, which turns it into a code with toRunRow.
+export type RunRecord = {
   id: string;
   document_id: string | null;
   // running, succeeded, failed
@@ -33,6 +39,15 @@ export type RunRow = {
   error: string | null;
   started_at: string;
 };
+
+// A run as the components get it: the stored error only as its code from
+// src/lib/errors.ts, so no component can render the stored text, and a
+// failure one admin's run recorded reads the same to every member.
+export type RunRow = Omit<RunRecord, "error"> & { error_code: ErrorCode | null };
+
+export function toRunRow({ error, ...run }: RunRecord): RunRow {
+  return { ...run, error_code: error === null ? null : classifyRunError(error) };
+}
 
 export type FieldRow = {
   document_id: string;

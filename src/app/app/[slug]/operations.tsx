@@ -2,12 +2,14 @@
 
 import { createContext, useContext, useMemo, useState } from "react";
 import { flushSync } from "react-dom";
-import type { FormState } from "@/app/auth/actions";
+import type { FormState } from "@/app/form-state";
+import type { ErrorCode } from "@/lib/errors";
 
 // Everything the organization page does to a document, behind one context.
 // The real page provides LiveOperations (the Server Actions and Supabase
 // calls); the local design preview provides fakes, so the same components
-// can be clicked through every state without touching real data.
+// can be clicked through every state without touching real data. Failures
+// come back as codes from src/lib/errors.ts, never as a call's own text.
 
 // 1: the row (a Server Action, no bytes), 2: the bytes, straight to
 // Storage, 3: the confirmation RPC.
@@ -15,14 +17,7 @@ export type UploadStep = 1 | 2 | 3;
 
 export type UploadFailure = {
   step: UploadStep;
-  // what the failing call reported, kept for the technical details
-  message: string;
-  // HTTP status from Storage, when there was a response
-  status?: number;
-  // Storage error code or Postgres SQLSTATE, when known
-  code?: string;
-  // the call threw instead of answering (offline, connection dropped)
-  network?: boolean;
+  code: ErrorCode;
   // step 1 succeeded, so an unfinished entry now exists in the list
   rowCreated: boolean;
 };
@@ -33,8 +28,8 @@ export type DocumentOperations = {
   upload: (tenantId: string, file: File, onStep: (step: UploadStep) => void) => Promise<UploadResult>;
   extractAction: (prev: FormState, formData: FormData) => Promise<FormState>;
   deleteAction: (prev: FormState, formData: FormData) => Promise<FormState>;
-  // resolves with an error message, or starts the download and resolves {}
-  download: (storagePath: string, filename: string) => Promise<{ error?: string }>;
+  // resolves with an error code, or starts the download and resolves {}
+  download: (storagePath: string, filename: string) => Promise<{ error?: ErrorCode }>;
 };
 
 type ContextValue = DocumentOperations & {

@@ -4,16 +4,15 @@ import { useRouter } from "next/navigation";
 import { useMemo } from "react";
 import { createDocument, deleteDocument } from "@/app/app/actions";
 import { extractDocument } from "@/app/app/extract-action";
+import { classifyDatabaseError, classifyStorageError, classifyThrown } from "@/lib/errors";
 import { createClient } from "@/lib/supabase/client";
 import { type DocumentOperations, OperationsProvider, type UploadResult } from "./operations";
 
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 // The real operations. Upload is row first: the row via a Server Action
 // (no bytes), then the bytes from the browser with the user's session, then
-// the RPC that confirms the object and reads its size and type.
+// the RPC that confirms the object and reads its size and type. Every
+// failure becomes a code from src/lib/errors.ts here, so no Storage or
+// database text reaches a component.
 export function LiveOperations({ children }: { children: React.ReactNode }) {
   const router = useRouter();
 
@@ -26,10 +25,10 @@ export function LiveOperations({ children }: { children: React.ReactNode }) {
         try {
           created = await createDocument({ tenantId, filename: file.name });
         } catch (error) {
-          return { ok: false, step: 1, message: messageOf(error), network: true, rowCreated: false };
+          return { ok: false, step: 1, code: classifyThrown(error), rowCreated: false };
         }
         if (created.error !== undefined) {
-          return { ok: false, step: 1, message: created.error, rowCreated: false };
+          return { ok: false, step: 1, code: created.error, rowCreated: false };
         }
 
         // From here on the row exists. If a later step fails, refresh so the
@@ -50,36 +49,25 @@ export function LiveOperations({ children }: { children: React.ReactNode }) {
           });
           if (upload.error) {
             router.refresh();
-            const { status, statusCode } = upload.error;
-            const code = "code" in upload.error ? (upload.error.code as string | undefined) : undefined;
-            return {
-              ok: false,
-              step: 2,
-              message: upload.error.message,
-              status: typeof status === "number" ? status : undefined,
-              code: code ?? statusCode,
-              network: status === undefined,
-              rowCreated: true,
-            };
+            return { ok: false, step: 2, code: classifyStorageError(upload.error, "upload"), rowCreated: true };
           }
         } catch (error) {
           router.refresh();
-          return { ok: false, step: 2, message: messageOf(error), network: true, rowCreated: true };
+          return { ok: false, step: 2, code: classifyThrown(error), rowCreated: true };
         }
 
         // 3. confirm: the database reads size and type from the stored object
         onStep(3);
         try {
-          const done = await supabase.rpc("complete_document_upload", {
-            p_document_id: created.id,
-          });
+          const done = await supabase.rpc("complete_document_upload", { p_document_id: created.id });
           if (done.error) {
             router.refresh();
-            return { ok: false, step: 3, message: done.error.message, code: done.error.code, rowCreated: true };
+            const code = classifyDatabaseError({ ...done.error, status: done.status }, "complete_document_upload");
+            return { ok: false, step: 3, code, rowCreated: true };
           }
         } catch (error) {
           router.refresh();
-          return { ok: false, step: 3, message: messageOf(error), network: true, rowCreated: true };
+          return { ok: false, step: 3, code: classifyThrown(error), rowCreated: true };
         }
 
         router.refresh();
@@ -99,11 +87,12 @@ export function LiveOperations({ children }: { children: React.ReactNode }) {
           const { data, error } = await supabase.storage
             .from("documents")
             .createSignedUrl(storagePath, 60, { download: filename });
-          if (error || !data) return { error: error?.message ?? "No download link was returned." };
+          if (error) return { error: classifyStorageError(error, "createSignedUrl") };
+          if (!data) return { error: "unknown" };
           window.location.assign(data.signedUrl);
           return {};
         } catch (error) {
-          return { error: messageOf(error) };
+          return { error: classifyThrown(error) };
         }
       },
     }),

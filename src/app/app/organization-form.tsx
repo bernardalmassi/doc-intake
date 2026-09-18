@@ -2,15 +2,15 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { buttonClass, errorClass, hintClass, inputClass, labelClass } from "@/app/ui";
+import { type ErrorCode, SLUG_PATTERN, userFacingError } from "@/lib/errors";
 
-// The web address rule: the same as SLUG_PATTERN in actions.ts and the
-// tenants.slug check constraint. Native validation enforces it before
-// submit; the server checks it again.
+// The web address rule is the tenants.slug check constraint, mirrored in
+// src/lib/errors.ts. Native validation enforces it before submit with the
+// same words the server's answer would use; the server checks it again.
 const ADDRESS_MAX = 48;
-const ADDRESS_PATTERN = /^[a-z0-9-]{3,48}$/;
 const ADDRESS_RULE = "3 to 48 characters: lowercase letters, numbers and hyphens.";
-const ADDRESS_INVALID = `Use ${ADDRESS_RULE}`;
-const NAME_MISSING = "Enter a name for the organization.";
+const ADDRESS_INVALID = userFacingError("tenant.slug_invalid").message;
+const NAME_MISSING = userFacingError("tenant.name_required").message;
 
 // "Café Müller & Co" -> "cafe-muller-co". Accents are dropped rather than
 // the whole letter, runs of hyphens collapse to one, and hyphens are
@@ -30,23 +30,17 @@ function deriveAddress(name: string): string {
 
 type Field = "name" | "address";
 
-// createTenant returns these exact strings (actions.ts). Each is placed on
-// the field it is about and reworded for the page. Anything else is
-// unexpected and may be a raw database or network message, so it gets a
-// plain sentence instead.
-function placeError(error: string): { field: Field | null; message: string } {
-  if (error === "That slug is already taken.") {
-    return { field: "address", message: "That address is taken. Try another." };
-  }
-  // The rule itself is the hint right above the error.
-  if (error.startsWith("Slug must be")) {
-    return { field: "address", message: "That address isn't valid." };
-  }
-  if (error === "Name is required.") return { field: "name", message: NAME_MISSING };
-  return {
-    field: null,
-    message: "Something went wrong and the organization wasn't created. Try again.",
-  };
+// createTenant returns a code (src/lib/errors.ts). The ones about a field
+// are placed on it; everything else goes under the form. The words are the
+// catalog's either way.
+const FIELD_OF: Partial<Record<ErrorCode, Field>> = {
+  "tenant.name_required": "name",
+  "tenant.slug_invalid": "address",
+  "tenant.slug_taken": "address",
+};
+
+function placeError(code: ErrorCode): { field: Field | null; message: string } {
+  return { field: FIELD_OF[code] ?? null, message: userFacingError(code).message };
 }
 
 type Props = {
@@ -54,8 +48,8 @@ type Props = {
   // the design preview.
   action: (formData: FormData) => void;
   pending: boolean;
-  // The last result's error, as the action returned it.
-  error?: string;
+  // The last result's error code, as the action returned it.
+  error?: ErrorCode;
   // Starting values. The app leaves them empty; the design preview fills
   // them to show each state.
   defaultName?: string;
@@ -114,7 +108,7 @@ export function OrganizationForm({
     nameRef.current?.setCustomValidity(name.trim() ? "" : NAME_MISSING);
   }, [name]);
   useEffect(() => {
-    addressRef.current?.setCustomValidity(ADDRESS_PATTERN.test(address) ? "" : ADDRESS_INVALID);
+    addressRef.current?.setCustomValidity(SLUG_PATTERN.test(address) ? "" : ADDRESS_INVALID);
   }, [address]);
 
   // When a submit comes back with a field error, move focus to that field:

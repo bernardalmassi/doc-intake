@@ -128,12 +128,12 @@ What each page does beyond the primitives, and why.
 - The browser's validation bubbles are off (noValidate); the same checks show inline in the same style as server errors. required and type="email" stay for their semantics.
 - Focus after an error goes to the field it's about; the error is part of that field's description. Whole-form errors go in an alert region by the button.
 - "Wrong email or password" marks neither field, because Supabase doesn't say which was wrong.
-- Known Supabase messages (invalid credentials, unconfirmed email, rate limits, unreachable service, taken address, unapproved address) are mapped to plain sentences at render time; anything else is shown as it came.
+- The Server Actions return an error code from `src/lib/errors.ts`, never Supabase's text. The form puts a code about the password or the email on that field and anything else by the button, and the words are always the catalog's (`userFacingError(code).message`).
 - The action is wrapped on the client so a thrown action (connection lost) shows a message instead of Next's error page. A successful sign-in still redirects: Next rejects with a redirect error and navigates, and unstable_rethrow passes it on. The trade-off: the forms no longer submit with JavaScript off.
 - The email field keeps its value after a failed attempt; the password is cleared.
 - Sign up: the 15 character rule shows before submit as "7 of 15" with a circle, then a check once met. A polite live region announces only when the rule is met or lost, not on every keystroke.
 - The 72 limit is counted in UTF-8 bytes, as Supabase's server does. No maxLength on the field, because it silently truncates a pasted password; "too long" shows as it happens instead.
-- "Check your email" is a neutral panel, not an error, naming the address, with "Start again". Its text replaces the action's "then sign in", which is inaccurate because the confirmation link signs you in.
+- "Check your email" is a neutral panel, not an error, naming the address, with "Start again". The panel writes its own text; the action's message only says that a confirmation email went out.
 
 ### Organizations (/app)
 
@@ -163,7 +163,7 @@ What each page does beyond the primitives, and why.
 - Upload only becomes the orange primary button once a file is chosen.
 - While uploading, three honest steps ("Preparing", "Sending the file", "Checking it arrived"), each set as its call starts. No percentage: supabase-js reports no byte progress.
 - Wrong type, over 10 MB, several files and empty files are rejected in the browser before any entry is created.
-- A failure is a plain sentence per step with the raw text behind "Technical details". "Try again" appears only when a retry could work; otherwise the button is "Choose another file".
+- A failure is the catalog's sentence for the step's error code: nothing Storage or the database wrote is shown, and there is no "Technical details" disclosure. "Try again" appears only when the code is retryable; otherwise the button is "Choose another file".
 - After step 2 or 3 fails, the page refreshes so the unfinished entry appears next to the error. An unfinished upload reads "Upload incomplete" with an explanation; admins can delete it.
 
 ### Documents
@@ -181,7 +181,7 @@ What each page does beyond the primitives, and why.
 - "Extracted fields" is a disclosure, open by default for documents that need review.
 - Each field: label, value exactly as extracted (or "Not found"), the quoted source text, "To confirm:" and the clarifying question when there is one, and confidence as a whole percent with its band ("Medium · 74%"). Low fields are orange with an icon and "Check this"; medium is normal text; high is muted.
 - The status line is computed from the fields: "10 of 10 fields found. 2 need checking: Due date and Total amount. 2 have questions to confirm." Fields to check are named when there are three or fewer.
-- An Extract click reads "Extraction finished." or a plain sentence per known error; the spending limit and the hourly count come from the database's own message, and the raw text stays behind "Technical details".
+- An Extract click reads "Extraction finished." or the catalog's sentence for the code the action returned.
 - Field labels are read in a server-only module, so the extraction prompts never reach the browser bundle (checked in `.next/static`).
 
 ### Run history
@@ -189,7 +189,7 @@ What each page does beyond the primitives, and why.
 - A disclosure, closed by default, whose summary is the count and total ("3 runs · $0.0231 total").
 - Columns: started (UTC, said once in the header), result with the number of model calls, provider and model, tokens in, tokens out, cost, time taken. Numbers are right-aligned and tabular.
 - Cost always has four decimals, with "<$0.0001" for anything smaller and the exact value on hover. Latency is seconds to one decimal under 100 s.
-- A failed run's error is a sentence under its row, then the stored error in muted text.
+- A failed run's error is the catalog's sentence for its code, under its row. `page.tsx` converts the stored text to a code before any component sees the run, so the text an admin's run stored never reaches another member's browser.
 - Running and abandoned runs show a dash and are left out of the total, which says so.
 - Below 768px each run reflows into a labelled two-column block, so there is no horizontal scroll.
 
@@ -267,5 +267,5 @@ In rough order of value to someone using it:
 5. **This month's spend.** The limits and every run's cost are readable, so the organization page could show spend against the 1 USD ceiling before an admin hits it, instead of explaining it after.
 6. **A loading state that keeps real status codes.** The organization page shows the previous page until its data arrives. A skeleton is easy, but `loading.tsx` would turn its 404 into a 200 (see Error page). The fix is to decide access before streaming, for example a membership check in the proxy, then show the skeleton.
 7. **Tests for the interface.** The fixture pages are already a catalogue of states. Committing them behind a development-only guard and adding an accessibility checker and screenshot comparisons in CI would keep the states from regressing; both need new dev dependencies.
-8. **Small things.** A show-password toggle, given the 15 character minimum. Times in the reader's own time zone, rendered after hydration. The sign-up action's "then sign in" wording fixed at the source rather than replaced at render time. `MAX_PASSWORD_BYTES` next to `MIN_PASSWORD_LENGTH` in `src/lib/password.ts`. Server Actions logging the raw error they no longer show.
+8. **Small things.** A show-password toggle, given the 15 character minimum. Times in the reader's own time zone, rendered after hydration. `MAX_PASSWORD_BYTES` next to `MIN_PASSWORD_LENGTH` in `src/lib/password.ts`. Server Actions logging the raw error they no longer show.
 

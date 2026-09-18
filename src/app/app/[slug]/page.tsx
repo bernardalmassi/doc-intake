@@ -8,7 +8,7 @@ import { createClient } from "@/lib/supabase/server";
 import { buildEntries } from "./entries";
 import { LiveOperations } from "./live-operations";
 import { OrganizationView } from "./organization-view";
-import type { DocumentRow, FieldRow, Organization, Role, RunRow } from "./types";
+import { type DocumentRow, type FieldRow, type Organization, type Role, type RunRecord, toRunRow } from "./types";
 
 function toRole(value: string | undefined): Role {
   return value === "owner" || value === "admin" ? value : "member";
@@ -89,7 +89,9 @@ export default async function OrganizationPage({ params }: PageProps<"/app/[slug
   const role = toRole(membership.data?.role);
   const entries = buildEntries(
     (documentsResult.data ?? []) as DocumentRow[],
-    (runsResult.data ?? []) as RunRow[],
+    // Each run's stored error becomes a code here: the text itself never
+    // reaches a component, or the browser.
+    ((runsResult.data ?? []) as RunRecord[]).map(toRunRow),
     (fieldsResult.data ?? []) as FieldRow[],
     requestTime(),
   );

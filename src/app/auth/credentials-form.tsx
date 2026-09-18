@@ -4,8 +4,9 @@ import { unstable_rethrow } from "next/navigation";
 import { useActionState, useEffect, useId, useMemo, useRef, useState } from "react";
 import { errorClass, inputClass, labelClass, submitButtonClass } from "@/app/ui";
 import { MIN_PASSWORD_LENGTH } from "@/lib/password";
-import type { FormState } from "./actions";
-import { CONNECTION_ERROR, describeAuthError, type Problems } from "./auth-errors";
+import type { FormState } from "@/app/form-state";
+import { classifyThrown } from "@/lib/errors";
+import { placeAuthError, type Problems } from "./auth-errors";
 import { CheckEmail } from "./check-email";
 import { lengthStatus, measurePassword, tooLongMessage } from "./password-length";
 import { PasswordRule, usePasswordLength } from "./password-rule";
@@ -41,7 +42,7 @@ function withConnectionFallback(action: AuthAction): AuthAction {
     } catch (error) {
       unstable_rethrow(error);
       console.error(error);
-      return { error: CONNECTION_ERROR };
+      return { error: classifyThrown(error) };
     }
   };
 }
@@ -90,7 +91,7 @@ export function CredentialsFormView({ mode, state, pending, formAction }: ViewPr
   // Problems found in the browser on the last submit, before anything was
   // sent. Null once a submit goes through, so the server's answer shows.
   const [clientProblems, setClientProblems] = useState<Problems | null>(null);
-  const serverProblems: Problems = state.error ? describeAuthError(state.error) : {};
+  const serverProblems: Problems = state.error ? placeAuthError(state.error) : {};
   // While a submit is in flight the last answer no longer applies.
   const problems: Problems = pending ? {} : (clientProblems ?? serverProblems);
   // Too long is shown as it happens rather than on submit, because nothing
@@ -119,7 +120,7 @@ export function CredentialsFormView({ mode, state, pending, formAction }: ViewPr
     if (lastState.current === state) return;
     lastState.current = state;
     if (state.error) {
-      focusField(describeAuthError(state.error), emailRef.current, passwordRef.current, echoRef.current);
+      focusField(placeAuthError(state.error), emailRef.current, passwordRef.current, echoRef.current);
     } else if (state.message) {
       checkEmailRef.current?.focus();
     }

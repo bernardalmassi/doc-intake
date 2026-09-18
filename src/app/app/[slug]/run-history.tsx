@@ -1,8 +1,8 @@
 import { Fragment } from "react";
 import { badgeClass, errorClass } from "@/app/ui";
+import { userFacingError } from "@/lib/errors";
 import { formatCount, formatSeconds, formatUsd, formatUtc } from "./format";
 import { AlertIcon } from "./icons";
-import { describeRunError } from "./messages";
 import type { RunRow } from "./types";
 
 const PROVIDER_LABELS: Record<string, string> = { anthropic: "Anthropic", openai: "OpenAI" };
@@ -18,7 +18,7 @@ const RUN_STATUS_LABELS: Record<string, string> = {
 // call (a file whose contents didn't match its type) also has no cost, but
 // nothing was spent, so it counts as nothing.
 function costUnknown(run: RunRow): boolean {
-  return run.cost_usd === null && (run.status === "running" || (run.error ?? "").startsWith("abandoned"));
+  return run.cost_usd === null && (run.status === "running" || run.error_code === "extraction.abandoned");
 }
 
 function runTotals(runs: RunRow[]) {
@@ -48,9 +48,9 @@ const num = "tabular-nums md:text-right";
 
 // Every run for one document, newest first: when it started (UTC, rendered
 // on the server), how it ended and after how many model calls, which model
-// answered, tokens in and out, cost and time taken, and the stored error
-// of a failed run, first as a sentence and then as stored. The total is
-// the sum of the recorded costs.
+// answered, tokens in and out, cost and time taken, and why a failed run
+// failed, as the catalog's sentence for its code (the stored text never
+// gets this far). The total is the sum of the recorded costs.
 export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filename: string; staleRun: boolean }) {
   const { total, unknown } = runTotals(runs);
 
@@ -125,16 +125,13 @@ export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filen
                     {run.latency_ms !== null ? formatSeconds(run.latency_ms) : <Missing label="Not recorded" />}
                   </td>
                 </tr>
-                {run.error && (
+                {run.error_code && (
                   // Belongs to the run above it: no divider between them.
                   <tr role="row" className="max-md:block">
                     <td role="cell" colSpan={7} className="pb-3 max-md:block">
                       <p className={`flex items-start gap-1.5 ${errorClass}`}>
                         <AlertIcon className="mt-0.5" />
-                        <span className="min-w-0">{describeRunError(run.error)}</span>
-                      </p>
-                      <p className="mt-1 pl-5.5 text-muted [overflow-wrap:anywhere]">
-                        <span className="font-medium">Stored error:</span> {run.error}
+                        <span className="min-w-0">{userFacingError(run.error_code).message}</span>
                       </p>
                     </td>
                   </tr>

@@ -2,11 +2,11 @@
 
 Every failure a user can hit, the code `src/lib/errors.ts` gives it, and the message the user is meant to see. `tests/unit/errors.test.ts` fails if this table and the module disagree, if a `raise` in a live function in `supabase/migrations/` has no code, or if a phrase the module matches on disappears from the SQL or from the code that writes it.
 
-> **Not wired in yet.** Nothing in `src/` imports `errors.ts`: `src/app` is frozen while the UI is redesigned. Until the call sites switch over, today's UI still shows raw error text. The Server Actions return Supabase's `error.message`. The Extract action returns the stored run error and the database's refusal text. The upload and download controls show Storage's messages. And `src/app/app/[slug]/extraction-panel.tsx` renders `run.error` raw to every member of the organization. The call sites to change, and which classifier each should use, are listed in the message of commit c163aeb, which added the module. Everything below describes the module, not the current UI.
+> **Where it's used.** Every Server Action in `src/app` returns a code from this module, never text, and every page renders `userFacingError(code).message`. The organization page turns each run's stored error into a code with `classifyRunError` before any component sees the row, so the stored text never reaches the browser. The sign-in page reads a code from its `error` query parameter only after `isErrorCode` accepts it. The UI writes its own sentences only for checks it makes in the browser before anything is sent: the sign-in and sign-up fields, several files dropped at once, and an empty file.
 
 ## Rules
 
-- Once wired in, a user sees only the Message column, looked up by code with `userFacingError(code)`. No classifier returns text, so nothing that Postgres, Supabase Auth, Storage, a model provider or a document produced can reach the page through this module.
+- A user sees only the Message column, looked up by code with `userFacingError(code)`. No classifier returns text, so nothing that Postgres, Supabase Auth, Storage, a model provider or a document produced can reach the page through this module.
 - Anything not listed maps to `unknown`, whose message is generic. Its input is never echoed. An input that throws when read (a hostile getter, a revoked Proxy) is `unknown` too; no classifier throws.
 - Where the database deliberately gives one answer for two cases (a document that doesn't exist and one you can't see; a slug that doesn't exist and an organization you aren't in), the message covers both, so the UI can't be used to probe either.
 - Classification goes by code (SQLSTATE, Auth code, Storage code, ProviderError kind) and by what was attempted. Message text is read in four places, each to sharpen a code, never to pick one from free text:
@@ -57,10 +57,10 @@ Every failure a user can hit, the code `src/lib/errors.ts` gives it, and the mes
 | Failure | Detected by | Code | Retry | Message |
 |---|---|---|---|---|
 | Organization name blank | `checkTenantInput`; 23514 on `tenants_name_check` | `tenant.name_required` | no | Enter a name for the organization. |
-| Slug doesn't match `^[a-z0-9-]{3,48}$` | `checkTenantInput`; 23514 on `tenants_slug_check` | `tenant.slug_invalid` | no | The slug must be 3 to 48 characters long and use only lowercase letters, digits and hyphens. |
-| Slug already used, including by an organization the user can't see | 23505 from `create_tenant` or a tenants update | `tenant.slug_taken` | no | That slug is already in use. Choose a different one. |
+| Slug doesn't match `^[a-z0-9-]{3,48}$` | `checkTenantInput`; 23514 on `tenants_slug_check` | `tenant.slug_invalid` | no | The web address must be 3 to 48 characters long and use only lowercase letters, digits and hyphens. |
+| Slug already used, including by an organization the user can't see | 23505 from `create_tenant` or a tenants update | `tenant.slug_taken` | no | That web address is already in use. Choose a different one. |
 | Organization page for a slug that doesn't exist, or that the user isn't a member of | no row (RLS hides it); 22P02 from `delete_tenant` | `tenant.not_found` | no | We couldn't find that organization, or you don't have access to it. |
-| A non-admin renames the organization or changes its slug | zero rows; 42501 | `tenant.update_not_allowed` | no | Only an admin can change this organization's name or slug. |
+| A non-admin renames the organization or changes its slug | zero rows; 42501 | `tenant.update_not_allowed` | no | Only an admin can change this organization's name or web address. |
 | A non-owner deletes the organization | 42501 from `delete_tenant` | `tenant.delete_not_owner` | no | Only an owner can delete this organization. |
 | Deleting an organization whose documents still have files | 55000 from `delete_tenant` | `tenant.delete_has_files` | no | This organization still has documents with files. Delete them first, then delete the organization. |
 | Deleting your account while you own an organization | 55000 from `delete_own_account` | `account.delete_owns_organization` | no | You still own an organization. Delete it, or make another member an owner and have them remove you, before deleting your account. |

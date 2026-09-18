@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useId, useRef, useState } from "react";
-import type { FormState } from "@/app/auth/actions";
+import type { FormState } from "@/app/form-state";
 import {
   armedDangerButtonClass,
   buttonClass,
@@ -12,14 +12,8 @@ import {
   textTargetClass,
 } from "@/app/ui";
 import { AlertIcon, CheckIcon, SpinnerIcon } from "./icons";
-import {
-  CONNECTION_ERROR,
-  DOCUMENTS_HEADING_ID,
-  describeDeleteError,
-  describeDownloadError,
-  describeExtractResult,
-  type Explained,
-} from "./messages";
+import { classifyThrown, type ErrorCode, userFacingError } from "@/lib/errors";
+import { DOCUMENTS_HEADING_ID, describeExtractResult, type Explained } from "./messages";
 import { useOperations } from "./operations";
 
 // first: never extracted. again: there are earlier runs. running: an
@@ -53,7 +47,7 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
   // The message shown is the one for the last thing the user did.
   const [last, setLast] = useState<"extract" | "delete" | "download" | null>(null);
   const [confirming, setConfirming] = useState(false);
-  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<ErrorCode | null>(null);
   const downloading = useRef(false);
   const armedAt = useRef(0);
   const extractButton = useRef<HTMLButtonElement>(null);
@@ -65,8 +59,8 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
   const [extractState, extractAction, extracting] = useActionState<FormState, FormData>(async (prev, formData) => {
     try {
       return await operations.extractAction(prev, formData);
-    } catch {
-      return { error: CONNECTION_ERROR };
+    } catch (error) {
+      return { error: classifyThrown(error) };
     }
   }, {});
 
@@ -81,8 +75,8 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
         document.getElementById(DOCUMENTS_HEADING_ID)?.focus();
       }
       return result;
-    } catch {
-      return { error: CONNECTION_ERROR };
+    } catch (error) {
+      return { error: classifyThrown(error) };
     }
   }, {});
 
@@ -138,12 +132,12 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
   if (last === "extract") {
     const result = describeExtractResult(extractState);
     if (extracting) notice = { tone: "progress", text: "Extracting. This can take up to a minute." };
-    else if (result) notice = { tone: result.ok ? "done" : "error", text: result.text, detail: result.detail };
+    else if (result) notice = { tone: result.ok ? "done" : "error", text: result.text };
   } else if (last === "delete") {
     if (deleting) notice = { tone: "progress", text: "Deleting…" };
-    else if (deleteState.error) notice = { tone: "error", ...describeDeleteError(deleteState.error) };
+    else if (deleteState.error) notice = { tone: "error", text: userFacingError(deleteState.error).message };
   } else if (last === "download" && downloadError) {
-    notice = { tone: "error", ...describeDownloadError(downloadError) };
+    notice = { tone: "error", text: userFacingError(downloadError).message };
   }
 
   if (!canDownload && !canDelete && !extract) return null;
@@ -208,8 +202,8 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
           {/* Two regions, always rendered so what appears in them is
               announced, and side by side rather than nested so nothing is
               announced twice: polite for the question, progress and
-              results, alert for errors. The technical details stay outside
-              both, to be opened, not read out. */}
+              results, alert for errors. Every error is the catalog's
+              sentence for a code, never a call's own text. */}
           <div aria-live="polite">
             {confirming ? (
               <p>
@@ -235,12 +229,6 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
             )}
           </div>
           <div role="alert">{!confirming && notice?.tone === "error" && <NoticeLine notice={notice} />}</div>
-          {!confirming && notice?.tone === "error" && notice.detail && (
-            <details className="mt-1 pl-5.5">
-              <summary className={`w-fit cursor-pointer text-muted ${textTargetClass}`}>Technical details</summary>
-              <p className="mt-1 text-muted [overflow-wrap:anywhere]">{notice.detail}</p>
-            </details>
-          )}
         </div>
       </div>
     </div>
