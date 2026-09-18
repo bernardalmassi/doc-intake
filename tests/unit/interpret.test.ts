@@ -103,10 +103,32 @@ function openAIResponse(overrides: Partial<OpenAI.Responses.Response> = {}): Ope
 }
 
 describe("Anthropic messages", () => {
-  it.each(["end_turn", "stop_sequence"] as const)("a message that stops with %s is an answer", (stopReason) => {
-    const result = interpretAnthropicMessage(anthropicMessage({ stop_reason: stopReason }), CAP);
+  it("a message that stops with end_turn is an answer", () => {
+    const result = interpretAnthropicMessage(anthropicMessage({ stop_reason: "end_turn" }), CAP);
     expect(result).toEqual({ text: '{"title": "x"}', inputTokens: 1234, outputTokens: 56, model: HAIKU });
   });
+
+  it("an answer cut off at the context window throws truncated, with the billed usage", () => {
+    const error = thrownBy(() =>
+      interpretAnthropicMessage(anthropicMessage({ stop_reason: "model_context_window_exceeded" }), CAP),
+    );
+    expect(error).toMatchObject({ provider: "anthropic", kind: "truncated" });
+    expect(error.fallbackEligible).toBe(false);
+    expect(error.usage).toEqual({ inputTokens: 1234, outputTokens: 56, model: HAIKU });
+  });
+
+  // No stop sequences and no tools are ever sent, so any other ending is
+  // unexpected and fails closed rather than being parsed as complete.
+  it.each(["stop_sequence", "tool_use", "pause_turn", null] as const)(
+    "a message that stops with %s fails closed, with the billed usage",
+    (stopReason) => {
+      const error = thrownBy(() => interpretAnthropicMessage(anthropicMessage({ stop_reason: stopReason }), CAP));
+      expect(error).toMatchObject({ provider: "anthropic", kind: "client" });
+      expect(error.message).toContain("stopped unexpectedly");
+      expect(error.fallbackEligible).toBe(false);
+      expect(error.usage).toEqual({ inputTokens: 1234, outputTokens: 56, model: HAIKU });
+    },
+  );
 
   it("a refusal throws, does not fall back, and carries the billed usage", () => {
     const error = thrownBy(() =>
@@ -187,6 +209,18 @@ describe("OpenAI responses", () => {
     expect(error.message).toBe("the model declined to process this document");
     expect(error.fallbackEligible).toBe(false);
     expect(error.usage).toEqual({ inputTokens: 2345, outputTokens: 789, model: NANO_SNAPSHOT });
+  });
+
+  it.each([
+    ["failed", "server"],
+    ["cancelled", "client"],
+    ["queued", "client"],
+    ["in_progress", "client"],
+  ] as const)("a %s response fails closed as %s, with the billed usage", (status, kind) => {
+    const error = thrownBy(() => interpretOpenAIResponse(openAIResponse({ status }), CAP));
+    expect(error).toMatchObject({ provider: "openai", kind });
+    expect(error.message).toContain(`did not complete (${status})`);
+    expect(error.usage).toBeDefined();
   });
 
   it("a response with no usage is refused, since its cost would be unknown", () => {

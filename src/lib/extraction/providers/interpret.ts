@@ -4,6 +4,12 @@
 // billed, so that error carries the call's usage and the orchestrator counts
 // it. Neither falls back to the other provider.
 //
+// Only a normal finish is an answer: end_turn for Anthropic, completed for
+// OpenAI. Anything else fails closed, because a schema-constrained answer
+// with no tools has no other legitimate way to end, and a stop nobody
+// anticipated (a future stop reason included) should not be parsed as if it
+// were complete.
+//
 // It lives apart from anthropic.ts and openai.ts, like classify.ts, because
 // those import "server-only" and so can't be loaded by tests. This module
 // reads no keys and only uses the SDKs' types; tests/unit/interpret.test.ts
@@ -29,6 +35,18 @@ export function interpretAnthropicMessage(message: Anthropic.Message, maxOutputT
       "anthropic",
       "truncated",
       `the answer exceeded the ${maxOutputTokens} output token cap`,
+      undefined,
+      usage,
+    );
+  }
+  if (message.stop_reason === "model_context_window_exceeded") {
+    throw new ProviderError("anthropic", "truncated", "the answer was cut off at the model's context window", undefined, usage);
+  }
+  if (message.stop_reason !== "end_turn") {
+    throw new ProviderError(
+      "anthropic",
+      "client",
+      `the answer stopped unexpectedly (${message.stop_reason ?? "no stop reason"})`,
       undefined,
       usage,
     );
@@ -64,6 +82,18 @@ export function interpretOpenAIResponse(response: OpenAI.Responses.Response, max
       "openai",
       "refusal",
       `the response was incomplete (${reason ?? "unknown reason"})`,
+      undefined,
+      usage,
+    );
+  }
+
+  if (response.status !== "completed") {
+    // "failed" is the provider failing; queued, in_progress or cancelled
+    // can't be the result of a request that waited for its answer
+    throw new ProviderError(
+      "openai",
+      response.status === "failed" ? "server" : "client",
+      `the response did not complete (${response.status ?? "no status"})`,
       undefined,
       usage,
     );
