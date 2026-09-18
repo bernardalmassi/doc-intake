@@ -28,6 +28,11 @@ export type ProviderResponse = {
   model: string;
 };
 
+// What a call consumed. Carried by a ProviderError when the provider
+// answered and billed the call but the answer can't be used (a refusal, an
+// answer cut off at the output cap), so the run still counts it.
+export type ProviderUsage = Pick<ProviderResponse, "inputTokens" | "outputTokens" | "model">;
+
 export interface ExtractionProvider {
   readonly name: ProviderName;
   readonly model: string;
@@ -42,13 +47,15 @@ export class ProviderError extends Error {
   readonly kind: ProviderErrorKind;
   readonly provider: ProviderName;
   readonly status: number | undefined;
+  readonly usage: ProviderUsage | undefined;
 
-  constructor(provider: ProviderName, kind: ProviderErrorKind, message: string, status?: number) {
+  constructor(provider: ProviderName, kind: ProviderErrorKind, message: string, status?: number, usage?: ProviderUsage) {
     super(message);
     this.name = "ProviderError";
     this.provider = provider;
     this.kind = kind;
     this.status = status;
+    this.usage = usage;
   }
 
   get fallbackEligible(): boolean {

@@ -51,8 +51,10 @@ export const DEFAULT_MODELS: Record<ProviderName, string> = {
 // short fields; 2048 tokens is several times what a full answer needs.
 export const MAX_OUTPUT_TOKENS = 2048;
 
-// Per call. A run may make up to four calls (primary, fallback, and one
-// validation retry on each), so the worst case wall time is four times this.
+// Per call. A run makes at most three calls (primary, one switch to the
+// fallback before any answer, one validation retry; see run.ts), so the
+// worst case wall time is three times this. The database's bounds on a run
+// (attempts, the token clamp above) allow four.
 export const PROVIDER_TIMEOUT_MS = 60_000;
 
 // One retry after a response that fails schema validation.

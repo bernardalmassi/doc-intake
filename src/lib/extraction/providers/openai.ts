@@ -3,8 +3,10 @@ import "server-only";
 import OpenAI from "openai";
 import type { ResponseInput } from "openai/resources/responses/responses";
 import { OPENAI_REASONING_EFFORT } from "../config";
+import { classifyOpenAIError } from "./classify";
+import { interpretOpenAIResponse } from "./interpret";
 import type { ExtractionProvider, ExtractionRequest, ProviderResponse } from "./types";
-import { ProviderError, toBase64 } from "./types";
+import { toBase64 } from "./types";
 
 // Responses API with a strict JSON schema (text.format). Reference:
 // https://developers.openai.com/api/docs/guides/structured-outputs and
@@ -61,53 +63,10 @@ export function createOpenAIProvider(options: {
           },
         });
       } catch (error) {
-        throw classify(error);
+        throw classifyOpenAIError(error);
       }
 
-      if (response.status === "incomplete") {
-        const reason = response.incomplete_details?.reason;
-        if (reason === "max_output_tokens") {
-          throw new ProviderError(
-            "openai",
-            "truncated",
-            `the answer exceeded the ${request.maxOutputTokens} output token cap`,
-          );
-        }
-        throw new ProviderError("openai", "refusal", `the response was incomplete (${reason ?? "unknown reason"})`);
-      }
-
-      const refusal = response.output
-        .filter((item) => item.type === "message")
-        .flatMap((item) => item.content)
-        .find((part) => part.type === "refusal");
-      if (refusal) {
-        throw new ProviderError("openai", "refusal", "the model declined to process this document");
-      }
-
-      if (!response.usage) {
-        throw new ProviderError("openai", "client", "the response carried no usage, so its cost is unknown");
-      }
-
-      return {
-        text: response.output_text,
-        inputTokens: response.usage.input_tokens,
-        // includes reasoning tokens, which are billed as output
-        outputTokens: response.usage.output_tokens,
-        model: response.model,
-      };
+      return interpretOpenAIResponse(response, request.maxOutputTokens);
     },
   };
-}
-
-function classify(error: unknown): ProviderError {
-  if (error instanceof OpenAI.APIConnectionError) {
-    const timedOut = error instanceof OpenAI.APIConnectionTimeoutError;
-    return new ProviderError("openai", "transport", timedOut ? "request timed out" : "connection failed");
-  }
-  if (error instanceof OpenAI.APIError) {
-    const status = typeof error.status === "number" ? error.status : undefined;
-    const kind = status !== undefined && status >= 500 ? "server" : "client";
-    return new ProviderError("openai", kind, error.message, status);
-  }
-  return new ProviderError("openai", "client", error instanceof Error ? error.message : String(error));
 }

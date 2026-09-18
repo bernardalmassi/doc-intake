@@ -2,13 +2,26 @@
 // tested with fakes; the Server Action supplies the real ones.
 //
 //   1. call the primary provider
-//   2. on a timeout or 5xx, call the fallback provider instead (once)
+//   2. on a timeout or 5xx, call the fallback provider instead: once per
+//      run, and only before any provider has answered. If the fallback
+//      fails too, the run's error names both failures
 //   3. validate the answer against the schema and formats
-//   4. if invalid, ask the same provider once more with the validation error
+//   4. if invalid, ask the provider that answered once more, with the
+//      validation error; if that retry fails in any way, so does the run
 //   5. still invalid: the run fails and the last raw answer is kept
 //
-// Every call's tokens are counted, including failed and retried ones,
-// because every call is billed. The cost itself is computed by the
+// Never switching after an answer means every token a run counts comes from
+// one model, the one close_extraction_run prices the whole run at. It also
+// bounds a run at three calls (primary times out, fallback answers invalid,
+// fallback retried); tests/unit/orchestrator.test.ts checks every
+// combination. The database's bounds on a run, its attempts check and token
+// clamp, allow four.
+//
+// Every answer's tokens are counted: valid ones, invalid ones that were
+// retried, and unusable ones (a refusal, an answer cut off at the output
+// cap), which arrive as a ProviderError carrying the call's usage, because
+// every answer is billed. A call that gets no answer (a timeout, a 5xx)
+// reports no usage and adds nothing. The cost itself is computed by the
 // database at close from these counts and its price table.
 
 import { MAX_OUTPUT_TOKENS, MAX_VALIDATION_RETRIES, type ProviderName } from "./config";
@@ -37,6 +50,20 @@ export type RunOutcome =
   | (Usage & { status: "succeeded"; fields: GatedField[]; documentStatus: "extracted" | "needs_review" })
   | (Usage & { status: "failed"; error: string; rawResponse: string | null });
 
+// A call's answer, or what to record as the run's error.
+type CallResult = { ok: true; text: string } | { ok: false; error: string };
+
+// The run's error goes into a 2000-character column and is shown to admins.
+// It is built from at most three pieces of outside text (a validation error,
+// the primary's failure, the fallback's), each clipped to this, so it always
+// fits and no piece crowds out the others. An HTML error page from a proxy
+// is the usual reason a piece is long.
+const MAX_ERROR_PIECE_LENGTH = 500;
+
+function clip(text: string): string {
+  return text.length > MAX_ERROR_PIECE_LENGTH ? `${text.slice(0, MAX_ERROR_PIECE_LENGTH - 3)}...` : text;
+}
+
 export async function runExtraction(input: RunInput): Promise<RunOutcome> {
   const startedAt = Date.now();
   const usage: Usage = {
@@ -62,55 +89,74 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
 
   let provider = input.primary;
   let fallbackUsed = false;
+  // set once a provider has answered, usable or not; from then on the run
+  // stays with it
+  let answered = false;
+  // kept once the run has switched away from the primary, so that if the
+  // fallback fails too the error says why both did
+  let primaryFailure: string | null = null;
 
-  // One call, switching to the fallback provider once if the current one
-  // times out or returns a 5xx. Records usage whatever happens.
-  async function call(request: ExtractionRequest): Promise<string> {
+  // One call, switching to the fallback provider if the current one times
+  // out or returns a 5xx and no provider has answered yet. Records usage
+  // whatever happens.
+  async function call(request: ExtractionRequest): Promise<CallResult> {
     for (;;) {
       usage.attempts += 1;
       usage.provider = provider.name;
-      usage.model = provider.model;
+      // once a provider has answered, keep the model it said served the
+      // tokens counted so far
+      if (!answered) usage.model = provider.model;
       try {
         const response = await provider.extract(request);
+        answered = true;
         usage.model = response.model;
         usage.inputTokens += response.inputTokens;
         usage.outputTokens += response.outputTokens;
-        return response.text;
+        return { ok: true, text: response.text };
       } catch (error) {
-        if (error instanceof ProviderError && error.fallbackEligible && input.fallback && !fallbackUsed) {
-          fallbackUsed = true;
-          provider = input.fallback;
-          continue;
+        // an unusable answer (a refusal, a truncated answer) was billed too
+        if (error instanceof ProviderError && error.usage) {
+          answered = true;
+          usage.model = error.usage.model;
+          usage.inputTokens += error.usage.inputTokens;
+          usage.outputTokens += error.usage.outputTokens;
         }
-        throw error;
+        const failure = clip(describeError(error));
+        if (!answered && error instanceof ProviderError && error.fallbackEligible) {
+          if (input.fallback && !fallbackUsed) {
+            fallbackUsed = true;
+            primaryFailure = failure;
+            provider = input.fallback;
+            continue;
+          }
+          if (!input.fallback) return { ok: false, error: `${failure}; no fallback provider is configured` };
+        }
+        return { ok: false, error: primaryFailure ? `${primaryFailure}; fallback ${failure}` : failure };
       }
     }
   }
 
-  let text: string;
-  try {
-    text = await call(base);
-  } catch (error) {
-    return finish({ status: "failed", error: describeError(error), rawResponse: null });
-  }
+  const first = await call(base);
+  if (!first.ok) return finish({ status: "failed", error: first.error, rawResponse: null });
+  let text = first.text;
 
   let result = validateExtraction(text);
   let retries = 0;
   while (!result.ok && retries < MAX_VALIDATION_RETRIES) {
     retries += 1;
     const invalidError = result.error;
-    try {
-      text = await call({
-        ...base,
-        previousAttempt: { rawResponse: text, retryPrompt: retryPrompt(invalidError) },
-      });
-    } catch (error) {
+    const retried = await call({
+      ...base,
+      previousAttempt: { rawResponse: text, retryPrompt: retryPrompt(invalidError) },
+    });
+    if (!retried.ok) {
       return finish({
         status: "failed",
-        error: `retry after invalid response (${invalidError}) failed: ${describeError(error)}`,
+        error: `retry after invalid response (${clip(invalidError)}) failed: ${retried.error}`,
         rawResponse: text,
       });
     }
+    text = retried.text;
     result = validateExtraction(text);
   }
 

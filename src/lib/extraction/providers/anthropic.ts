@@ -1,8 +1,10 @@
 import "server-only";
 
 import Anthropic from "@anthropic-ai/sdk";
+import { classifyAnthropicError } from "./classify";
+import { interpretAnthropicMessage } from "./interpret";
 import type { ExtractionProvider, ExtractionRequest, ProviderResponse } from "./types";
-import { ProviderError, toBase64 } from "./types";
+import { toBase64 } from "./types";
 
 // Messages API with a schema-constrained output (output_config.format).
 // Reference: https://platform.claude.com/docs/en/build-with-claude/structured-outputs
@@ -51,46 +53,10 @@ export function createAnthropicProvider(options: {
           output_config: { format: { type: "json_schema", schema: request.schema } },
         });
       } catch (error) {
-        throw classify(error);
+        throw classifyAnthropicError(error);
       }
 
-      if (response.stop_reason === "refusal") {
-        throw new ProviderError("anthropic", "refusal", "the model declined to process this document");
-      }
-      if (response.stop_reason === "max_tokens") {
-        throw new ProviderError(
-          "anthropic",
-          "truncated",
-          `the answer exceeded the ${request.maxOutputTokens} output token cap`,
-        );
-      }
-
-      const text = response.content
-        .filter((block): block is Anthropic.TextBlock => block.type === "text")
-        .map((block) => block.text)
-        .join("");
-
-      return {
-        text,
-        // cache reads and writes are not used, so input_tokens is the full count
-        inputTokens: response.usage.input_tokens,
-        outputTokens: response.usage.output_tokens,
-        model: response.model,
-      };
+      return interpretAnthropicMessage(response, request.maxOutputTokens);
     },
   };
-}
-
-function classify(error: unknown): ProviderError {
-  // Most specific first. Timeouts are a connection error subclass.
-  if (error instanceof Anthropic.APIConnectionError) {
-    const timedOut = error instanceof Anthropic.APIConnectionTimeoutError;
-    return new ProviderError("anthropic", "transport", timedOut ? "request timed out" : "connection failed");
-  }
-  if (error instanceof Anthropic.APIError) {
-    const status = typeof error.status === "number" ? error.status : undefined;
-    const kind = status !== undefined && status >= 500 ? "server" : "client";
-    return new ProviderError("anthropic", kind, error.message, status);
-  }
-  return new ProviderError("anthropic", "client", error instanceof Error ? error.message : String(error));
 }
