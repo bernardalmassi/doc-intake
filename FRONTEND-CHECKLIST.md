@@ -33,12 +33,15 @@ written under the item and the item is skipped.
 - [x] 10. Run history per document: provider, model, tokens, cost, latency, status, time.
 - [x] 11. Responsive to phone width, keyboard reachable, visible focus, aria-live on status changes, contrast AA.
 - [x] 11a. From the goal, not the list: an error page, so a failed load isn't Next's generic screen.
-- [ ] 12. DESIGN-NOTES.md: tokens, the reason for each, what would change next.
+- [x] 12. DESIGN-NOTES.md: tokens, the reason for each, what would change next.
 
 ## Blockers
 
 - Item 2: the GitHub repo is private, so the landing page link returns a 404 for anyone without access. Making it public is the owner's call; the link is in place either way.
 
-## Cleanup before the last commit
+## Notes
 
-- Remove the `@source "./design-preview"` line from globals.css once the local fixture page is deleted.
+- The fixture pages under `src/app/design-preview/` stay on this machine, git-excluded, because they are the only way to see signed-in states without an account. So the `@source "./design-preview"` line in globals.css stays; it compiles to nothing in a clone without the folder. See DESIGN-NOTES.md, "The design preview".
+- One `npm test` run at 04:05 reported a failed test file with all 64 tests passing, which points at a setup or cleanup hook. The output wasn't kept; the immediate rerun and every run after it were clean. No test or backend file was touched. If a cleanup hook failed, throwaway test users or organizations from that run may remain in the Supabase project.
+- A separate backend session was working in its own worktrees at the same time; nothing here touched its branches.
+- Every subagent ran on Opus 5. The per-agent effort level couldn't be set from this session, so "xhigh" was requested in each prompt rather than configured.

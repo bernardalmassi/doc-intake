@@ -73,7 +73,7 @@ One family: Geist Sans, self-hosted through `next/font`. Geist Mono is gone, and
 
 **Where it lives.** One place: `<html data-theme="dark|light">`. The server always renders `dark`. The tokens swap on the attribute, and `color-scheme` is set per theme so native controls (the file picker, scrollbars, autofill) follow. Dark is the default whatever the OS prefers: nothing reads `prefers-color-scheme`. This was checked with the OS set to light.
 
-**No flash.** `src/app/components/theme.ts` exports `themeScript`, a one-line inline `<script>` that the root layout puts in `<head>`. This follows Next 16's "Preventing flash before hydration" guide. It reads `localStorage.theme` inside a try/catch, accepts only `light` or `dark`, and sets the attribute. It is parser-blocking and sits after the stylesheet link and before `<body>`, so the attribute is set before any content exists to paint. `suppressHydrationWarning` on `<html>` covers that one attribute; it doesn't extend to children.
+**No flash.** `src/app/components/theme.ts` exports `themeScript`, a one-line inline `<script>` that the root layout puts in `<head>`. This follows Next 16's "Preventing flash before hydration" guide. It reads `localStorage.theme` inside a try/catch, accepts only `light` or `dark`, and sets the attribute. It goes through `InlineScript` (`src/app/components/inline-script.tsx`, from the same guide), which is runnable in the server's HTML and `text/plain` when React creates it in the browser, as it does when a server error makes it render the root layout on the client; React warns about, and never runs, a `<script>` it creates there. It is parser-blocking and sits after the stylesheet link and before `<body>`, so the attribute is set before any content exists to paint. `suppressHydrationWarning` on `<html>` covers that one attribute; it doesn't extend to children.
 
 Checked in dev:
 
@@ -104,16 +104,131 @@ Checked in a production build: the script sits before `<body>`, the choice survi
 - **Fields:** `inputClass` and `fileInputClass`, 36px to line up with buttons. The accent border on focus plus the global ring pulled in makes one 2px accent edge. `aria-invalid="true"` turns the border danger, and it stays danger while focused.
 - **Tables:** `tableClass`, `thClass`, `tdClass`.
 - **Badges:** `badgeClass` for any status; `reviewBadgeClass` for needs review only.
+- **Added by the pages:** `submitButtonClass`, the primary button of a form that submits through a Server Action (pending is `aria-disabled`, so focus stays on it); `armedDangerButtonClass`, Delete once armed, filled red.
 
 Focus is one global `:focus-visible` rule: a 2px accent outline at a 2px offset.
 
-The site header (`src/app/components/site-header.tsx`) holds the wordmark, a slot, and the toggle. `AccountControls` is the slot for signed-in pages.
+The site header (`src/app/components/site-header.tsx`) holds the skip link, the wordmark, a slot, and the toggle, and exports `MAIN_ID` for every page's `<main>`. `textTargetClass` gives a standalone text link a 24px target without moving the layout. `AccountControls` is the slot for signed-in pages.
+
+## Pages
+
+What each page does beyond the primitives, and why.
+
+### Landing (/)
+
+- The one line is also the meta description. "Create an account" is the primary action; "Sign in" is secondary.
+- Three architecture sentences as a definition list (Isolation, Uploads, Extraction). A fourth sentence on tests was cut to keep to three; the link reads "Source and tests on GitHub".
+- "Every table of organization data", not "every table": the limits and prices tables carry no organization id.
+- Non-breaking spaces keep numbers with units and products with versions; the heading uses text-wrap: balance.
+- The GitHub repository is private at the time of writing, so the link 404s for visitors without access.
+
+### Sign in and sign up
+
+- The pending submit button uses aria-disabled, not disabled: in Chromium a focused button that becomes disabled drops focus to <body>. A second click or Enter while pending is cancelled in onSubmit, and React 19 skips the action of a cancelled submit. `submitButtonClass` gives it the disabled look.
+- The browser's validation bubbles are off (noValidate); the same checks show inline in the same style as server errors. required and type="email" stay for their semantics.
+- Focus after an error goes to the field it's about; the error is part of that field's description. Whole-form errors go in an alert region by the button.
+- "Wrong email or password" marks neither field, because Supabase doesn't say which was wrong.
+- Known Supabase messages (invalid credentials, unconfirmed email, rate limits, unreachable service, taken address, unapproved address) are mapped to plain sentences at render time; anything else is shown as it came.
+- The action is wrapped on the client so a thrown action (connection lost) shows a message instead of Next's error page. A successful sign-in still redirects: Next rejects with a redirect error and navigates, and unstable_rethrow passes it on. The trade-off: the forms no longer submit with JavaScript off.
+- The email field keeps its value after a failed attempt; the password is cleared.
+- Sign up: the 15 character rule shows before submit as "7 of 15" with a circle, then a check once met. A polite live region announces only when the rule is met or lost, not on every keystroke.
+- The 72 limit is counted in UTF-8 bytes, as Supabase's server does. No maxLength on the field, because it silently truncates a pasted password; "too long" shows as it happens instead.
+- "Check your email" is a neutral panel, not an error, naming the address, with "Start again". Its text replaces the action's "then sign in", which is inaccurate because the confirmation link signs you in.
+
+### Organizations (/app)
+
+- Empty-state title is "Create an organization", not "your first": someone removed from every organization isn't creating their first.
+- Each organization row is one link: underlined name, /app/<address> in muted text, role as plain muted text (badges are for statuses), a chevron.
+- Sorted in the view, case and accent insensitive, numeric ("Team 2" before "Team 10"). The page reads memberships with the organization embedded, so the role comes with each row.
+- Creating another organization sits behind a native <details> styled as a secondary button, so the orange button appears only when opened. Works before hydration and stays open after an error.
+- The web address is derived from the name (accents folded, hyphens collapsed and trimmed) until the user types in the address field. Typed input is not auto-lowercased, to avoid cursor jumps; validation catches it.
+- The pattern carries the length because minLength ignores a value set by script.
+- Server errors are reworded at render time: "slug" never appears. A taken or invalid address and a missing name go on their field; anything unexpected is one plain sentence, never the raw message.
+- Focus moves to the rejected field; after a form-level error it returns to the submit button.
+- The submit button has a fixed minimum width so "Creating…" doesn't resize it. Inputs are controlled so values survive React's form reset after an error.
+- The empty state doesn't mention adding admins: no screen for managing members exists yet.
+
+### Organization page (/app/<address>)
+
+- **Structure.** page.tsx only fetches. A pure `buildEntries` groups runs and fields under their documents, orders fields by the schema, flags stale runs and sorts; the page and the fixture share it. Every action goes through one operations context: the real page supplies the unchanged Server Actions and Supabase calls, the fixture supplies fakes.
+- **Extraction results live inside each document**, not in a separate section below the list.
+- **Role line** says what the role can do: "Your role: Admin. You can upload, extract and delete documents." Members read that admins run extraction and delete.
+- **Empty organization** is a dashed panel with three numbered steps (upload, extract, check anything marked Needs review), showing the real badge.
+- **404** is one page for a missing organization, one the user isn't a member of, and any unmatched address: "This page doesn't exist, or you don't have access to it." Nothing says which.
+- **Dates** are formatted by hand ("18 Sep 2026, 04:12 UTC") on the server, because Intl's en-GB month abbreviation differs between ICU versions ("Sep" or "Sept").
+
+### Upload
+
+- A drop zone plus a secondary "Choose a file" button. "Drag a file here" is hidden on touch devices. Drops elsewhere on the page are ignored, so a missed drop doesn't navigate away.
+- Upload only becomes the orange primary button once a file is chosen.
+- While uploading, three honest steps ("Preparing", "Sending the file", "Checking it arrived"), each set as its call starts. No percentage: supabase-js reports no byte progress.
+- Wrong type, over 10 MB, several files and empty files are rejected in the browser before any entry is created.
+- A failure is a plain sentence per step with the raw text behind "Technical details". "Try again" appears only when a retry could work; otherwise the button is "Choose another file".
+- After step 2 or 3 fails, the page refreshes so the unfinished entry appears next to the error. An unfinished upload reads "Upload incomplete" with an explanation; admins can delete it.
+
+### Documents
+
+- Needs review sorts first, then newest first. It gets an accent border and the review badge with an icon, so it isn't color alone.
+- "Extraction stalled" marks a document still processing past the 10 minute stale limit. Extract is enabled for it, because the next Extract call is what releases a stale run.
+- Extract is the primary button only until a document has results; then it is a secondary "Extract again".
+- Delete arms on the first click ("Yes, delete", filled red, with the question and Cancel beside it) and deletes on the second. Clicks within 500 ms of arming are ignored, so a double-click can't delete. Escape, Cancel or tabbing away disarms it.
+- Buttons whose label changes have measured minimum widths (`min-w-28` for Extract, `min-w-24` for Delete). Messages sit beside the buttons from `sm` up and below them on a phone, so no message moves a button.
+- A Server Action that throws shows "The server couldn't be reached…" instead of the error page. The trade-off, as on the auth forms: Extract and Delete don't submit before the page's JavaScript has loaded.
+- A running extraction says "Refresh the page in a minute". There is no automatic refresh yet.
+
+### Extraction panel
+
+- "Extracted fields" is a disclosure, open by default for documents that need review.
+- Each field: label, value exactly as extracted (or "Not found"), the quoted source text, "To confirm:" and the clarifying question when there is one, and confidence as a whole percent with its band ("Medium · 74%"). Low fields are orange with an icon and "Check this"; medium is normal text; high is muted.
+- The status line is computed from the fields: "10 of 10 fields found. 2 need checking: Due date and Total amount. 2 have questions to confirm." Fields to check are named when there are three or fewer.
+- An Extract click reads "Extraction finished." or a plain sentence per known error; the spending limit and the hourly count come from the database's own message, and the raw text stays behind "Technical details".
+- Field labels are read in a server-only module, so the extraction prompts never reach the browser bundle (checked in `.next/static`).
+
+### Run history
+
+- A disclosure, closed by default, whose summary is the count and total ("3 runs · $0.0231 total").
+- Columns: started (UTC, said once in the header), result with the number of model calls, provider and model, tokens in, tokens out, cost, time taken. Numbers are right-aligned and tabular.
+- Cost always has four decimals, with "<$0.0001" for anything smaller and the exact value on hover. Latency is seconds to one decimal under 100 s.
+- A failed run's error is a sentence under its row, then the stored error in muted text.
+- Running and abandoned runs show a dash and are left out of the total, which says so.
+- Below 768px each run reflows into a labelled two-column block, so there is no horizontal scroll.
+
+## Accessibility
+
+Every page and fixture state was checked at 320, 375, 768 and 1280 pixels wide in dark, and at 320 and 1280 in light.
+
+- **Width.** No page scrolls wider than the viewport. Long filenames, emails and organization names wrap. The run history reflows into labelled blocks below 768px and keeps its table roles, so a screen reader still hears a table.
+- **Targets.** Every control is at least 24 by 24 pixels (WCAG 2.5.8). Standalone text links and disclosure summaries get it from `textTargetClass`, which adds padding and cancels it with a negative margin, so the layout doesn't move. Links inside running text don't, so they can still wrap.
+- **Keyboard.** A "Skip to content" link is the first stop on every page. It sits above the header until focused and jumps to `<main>`, which every page gives the shared id. `<main>` gets no `tabIndex`, which would draw a ring around the page and take focus on clicks. Tab order follows reading order. An armed Delete disarms on Escape, Cancel or leaving it.
+- **Focus.** One global `:focus-visible` ring, the accent at 2px with a 2px offset; inputs pull it onto their border. No `outline-none` anywhere without a visible replacement, and no ancestor clips a ring. When an action removes the focused element, focus moves somewhere that says what happened: the Documents heading after a delete, the field in error after a rejected submit, "Check your email" after sign-up, the retry button after a failed upload.
+- **Announcements.** Each status message comes from a region that is already in the page before its text changes, and is announced once. Progress and results are polite; errors that block the user are alerts. Polite and alert regions are siblings, never nested. An error on the field the user pressed Enter in is echoed in the alert region, because focus can't move to the field it's already on. The delete announcer clears before writing, so a second "Deleted" is read again.
+- **Theme toggle.** No live region: its accessible name changes, which NVDA reads on the focused control. VoiceOver users hear the new name on refocus. `aria-pressed` with a fixed label would contradict the name saying what clicking does.
+- **Contrast.** Every text node measured at least 4.5:1, including armed, error and disabled states, and control borders at least 3.24:1. No opacity modifier, gradient, shadow or blur is used anywhere.
+- **Semantics.** One h1 per page, no skipped levels, header, nav for the breadcrumb and main landmarks, a label on every input, names on icon-only buttons, decorative SVGs hidden. Every page has its own title through the root layout's template (`%s · doc-intake`); the organization page's title is the organization's name.
+- **Motion.** The only animation is the pending spinner, and it turns only under `prefers-reduced-motion: no-preference`.
+- **Known limits.** The header email truncates on a phone; screen readers get the full address. During an upload the Upload button is disabled, so focus sits on the page body for the few seconds it takes, then returns to "Choose a file" or "Try again". Nothing was checked with a real screen reader, or in Safari or Firefox: "announced once" comes from logging each region's changes and each focus move.
+
+### Error page
+
+A page that throws while rendering gets `src/app/error.tsx` instead of Next's generic screen: one sentence, Try again (Next's `retry`, which refetches the segment), a way back to the organizations, and the error's digest as a reference that matches the server log. In production a Server Component's message is replaced by that digest, so the page never shows raw error text. There is no `global-error`: the root layout is static and can't throw.
+
+There is deliberately no loading state for the organization page. A `loading.tsx` starts streaming before the page runs, and once streaming has started the status code is fixed at 200. A missing or non-member organization would then return 200 with the not-found content, and a signed-out visitor a streamed redirect instead of a real one.
 
 ## The design preview
 
-`src/app/design-preview/page.tsx` is a local fixture page with no auth and no data. It is listed in `.git/info/exclude` and never committed. Tailwind's scanner skips excluded paths, so `globals.css` registers the folder with `@source "./design-preview"`; in a clone without the folder that line compiles to nothing. Later items add their states to it.
+The signed-in pages can't be seen without an account, so every state is rendered from fixture data on local pages under `src/app/design-preview/`. They are listed in `.git/info/exclude` and never committed, and no real page imports them. The proxy only refreshes sessions, so they load without signing in.
+
+- `/design-preview`: every primitive, the four sizes and the swatches, in the current theme.
+- `/design-preview/public`: the sign-in and sign-up forms in every state, driven by fake actions.
+- `/design-preview/orgs`: the empty state, a long list with every role, and the create form's states.
+- `/design-preview/tenant?view=owner|admin|member|empty-owner|empty-member|upload`: the organization page with every document status, fields, runs, and a live upload form whose fake calls fail on purpose for file names containing `fail-start`, `fail-name`, `fail-send`, `fail-size` or `fail-confirm`.
+- `/design-preview/error`: a page that throws, to show the error page.
+
+The real components render there because each page keeps fetching in `page.tsx` and presentation in components that take props, and the organization page's actions come through a context the fixture fills with fakes. Tailwind's scanner skips excluded paths, so `globals.css` registers the folder with `@source "./design-preview"`; in a clone without the folder that line compiles to nothing.
 
 ## Decisions under ambiguity
+
+The rule was: take the simpler option, record it, keep going. Decisions about a single page are under Pages; these are the cross-cutting ones.
 
 - **Two border tokens.** `line` and `line-strong`, not one: a single border color either fails 3:1 on inputs or makes every divider heavy.
 - **accent-fg is the canvas color** of each theme, not pure white or black.
@@ -127,17 +242,30 @@ The site header (`src/app/components/site-header.tsx`) holds the wordmark, a slo
 - **`font-mono` and `font-serif` don't exist.** Code-like elements inherit the sans.
 - **Colors are hex, not oklch**, so the CSS, the contrast script and this table all show the same values.
 - **Label swaps and width.** Buttons have a fixed height; width follows the label. A button whose label swaps (Extract / Extracting…) needs a `min-w-*` at the call site. A global minimum width would pad short labels like "Sign out".
-- **Primary buttons stay where they were.** Upload and the per-row Extract kept `buttonClass` in the migration. Items 6 and 8 decide whether a per-row Extract stays primary.
+- **Primary buttons are earned.** Upload turns primary only once a file is chosen. Extract is primary only until a document has results, then it becomes a secondary "Extract again". A page never shows a row of orange buttons.
 - **Wordmark is text only** ("doc-intake", semibold), with no logo mark, because the accent is reserved.
 - **Header height is h-14.** It shares `containerClass` with page content.
 - **Signed-in slot.** `AccountControls` lives in `site-header.tsx`, so `/app` and `/app/[slug]` don't each keep a copy. "Signed in as" is hidden below `sm` and the email truncates.
-- **not-found gets the header without account controls.** Reading the session there would make the 404 auth-aware. Its link text is item 6's to change.
-- **The landing page keeps its "doc-intake" heading** under the wordmark until item 2 rewrites the page.
-- **Extraction bands.** High and medium are plain `fg`. Low is `accent`, because a low field is what puts a document in needs review. The clarifying question moved from amber to `muted`. Item 9 redesigns this.
+- **not-found gets the header without account controls.** Reading the session there would make the 404 auth-aware.
+- **Extraction bands.** Low is `accent` with an icon and "Check this", because a low field is what puts a document in needs review. Medium is plain `fg` with its clarifying question under the value. High is `muted`: it needs nothing from the reader.
 - **Table headers are `font-medium`** (they were normal weight) in `thClass`.
 - **A failed document or run gets a neutral badge.** Failure is a state; `danger` is for the error text that explains it.
 - **Theme icon.** It shows the theme clicking switches to (sun in dark, moon in light), matching the accessible name.
 - **No color transitions**, so a theme switch changes everything at once instead of some buttons fading.
 - **No cross-tab sync.** Another open tab picks up the choice on its next load.
 - **No `theme-color` meta.** It can follow the OS but not the stored choice.
-- **Title and description metadata are unchanged.** That's item 2.
+- **Titles and description.** The root layout has a title template and uses the landing page's one line (`src/app/site.ts`) as the description. Pages set short titles.
+
+## What I would change next
+
+In rough order of value to someone using it:
+
+1. **Live status while extraction runs.** A running document says "Refresh the page in a minute". Once extraction moves to the queue worker, the organization page should subscribe to its documents and runs (Supabase Realtime, or polling while anything is processing) and update in place.
+2. **A way out of needs review.** A reviewer can see what to check but can only re-extract. Accepting or correcting a field, and marking a document reviewed, needs a write path in the database first; the panel is laid out so each field row can take an Accept and an Edit control.
+3. **The document beside its fields.** Showing the page image next to the fields, with the quoted source text highlighted, would make checking a low-confidence value one glance instead of a download. Images can use a signed URL; PDFs would need a renderer, which means a dependency.
+4. **Members.** The database supports owner, admin and member roles, but there is no screen to invite people or change roles. The organization page should get a Members tab.
+5. **This month's spend.** The limits and every run's cost are readable, so the organization page could show spend against the 1 USD ceiling before an admin hits it, instead of explaining it after.
+6. **A loading state that keeps real status codes.** The organization page shows the previous page until its data arrives. A skeleton is easy, but `loading.tsx` would turn its 404 into a 200 (see Error page). The fix is to decide access before streaming, for example a membership check in the proxy, then show the skeleton.
+7. **Tests for the interface.** The fixture pages are already a catalogue of states. Committing them behind a development-only guard and adding an accessibility checker and screenshot comparisons in CI would keep the states from regressing; both need new dev dependencies.
+8. **Small things.** A show-password toggle, given the 15 character minimum. Times in the reader's own time zone, rendered after hydration. The sign-up action's "then sign in" wording fixed at the source rather than replaced at render time. `MAX_PASSWORD_BYTES` next to `MIN_PASSWORD_LENGTH` in `src/lib/password.ts`. Server Actions logging the raw error they no longer show.
+
