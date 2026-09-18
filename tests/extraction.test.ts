@@ -320,6 +320,14 @@ describe("configuration", () => {
     expect(data!.max_input_tokens_per_run).toBe(EXTRACTION_LIMITS.maxInputTokensPerRun);
     expect(data!.max_output_tokens_per_run).toBe(EXTRACTION_LIMITS.maxOutputTokensPerRun);
     expect(data!.stale_run_minutes).toBe(EXTRACTION_LIMITS.staleRunMinutes);
+    // what an abandoned run is charged (20260918000003)
+    expect(data!.max_calls_per_run).toBe(EXTRACTION_LIMITS.maxCallsPerRun);
+    expect(data!.max_output_tokens_per_call).toBe(EXTRACTION_LIMITS.maxOutputTokensPerCall);
+    expect(data!.max_input_tokens_per_call).toBe(EXTRACTION_LIMITS.maxInputTokensPerCall);
+    expect(data!.prompt_input_tokens).toBe(EXTRACTION_LIMITS.promptInputTokens);
+    expect(data!.input_tokens_per_page).toBe(EXTRACTION_LIMITS.inputTokensPerPage);
+    expect(data!.max_pages_per_document).toBe(EXTRACTION_LIMITS.maxPagesPerDocument);
+    expect(data!.abandoned_run_price_model).toBe(EXTRACTION_LIMITS.abandonedRunPriceModel);
   });
 
   it("the prices in config.ts match the prices the database charges", async () => {
@@ -623,6 +631,24 @@ describe("run lifecycle in the database", () => {
     );
     expect(closed.error).toBeNull();
     expect((await readDocument(x(), docS.id))?.status).toBe("pending");
+  });
+
+  it("the page count sent with the open is stored on the run, clamped, for the reaper's estimate", async () => {
+    // Used only if the run is abandoned (supabase/tests/extraction_stale_runs.sql
+    // tests the charge). Trusted like the token counts at close, and clamped.
+    const noCall = failedOutcome({ provider: null, model: null, inputTokens: 0, outputTokens: 0, attempts: 0 });
+    for (const [sent, stored] of [
+      [250, EXTRACTION_LIMITS.maxPagesPerDocument],
+      [0, 1],
+      [null, null],
+    ] as const) {
+      const { data, error } = await x().client.rpc("open_extraction_run", { p_document_id: docS.id, p_page_count: sent });
+      expect(error).toBeNull();
+      const opened = (data as Opened[])[0];
+      const run = await x().client.from("extraction_runs").select("page_count").eq("id", opened.run_id).single();
+      expect(run.data?.page_count, `sent ${sent}`).toBe(stored);
+      expect((await close(x(), opened.run_id, opened.close_token, noCall)).error).toBeNull();
+    }
   });
 
   it("nobody can write runs or fields directly", async () => {

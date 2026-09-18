@@ -25,8 +25,11 @@
 // A function redefined by a later migration counts only in its last
 // definition, and not at all after a DROP, so a phrase deleted from the
 // live function can't pass on an older body. Functions are keyed by name
-// without schema or arguments (ALTER ... SET SCHEMA keeps the name, and
-// this repo has no overloads).
+// without schema (ALTER ... SET SCHEMA keeps the name) and by their
+// argument types, so overloads are separate definitions: a DROP with an
+// argument list removes that overload, one without removes them all.
+// Parameter names, modes and defaults are ignored; a type the parser can't
+// normalize fails the parse.
 //
 // A plain module, not a test file: Vitest doesn't collect it.
 
@@ -53,7 +56,8 @@ export type ParsedMigrations = {
   // those in the definition of each function that is in force after the
   // last migration
   live: SqlRaise[];
-  // that definition's body, comments blanked, by function name
+  // that definition's body, comments blanked, by function name; with
+  // overloads, every live overload's body, in the order they were defined
   liveBodies: Map<string, string>;
 };
 
@@ -112,19 +116,35 @@ const SQLSTATE = /^[0-9A-Z]{5}$/;
 
 export function parseMigrations(files: SqlFile[]): ParsedMigrations {
   const all: SqlRaise[] = [];
-  const live = new Map<string, { raises: SqlRaise[]; body: string }>();
+  // keyed by name and argument types: "f(uuid,integer)"
+  const live = new Map<string, { name: string; raises: SqlRaise[]; body: string }>();
   for (const file of [...files].sort((a, b) => a.name.localeCompare(b.name))) {
     const parsed = parseFile(file);
     all.push(...parsed.raises);
     for (const event of parsed.events) {
-      if (event.kind === "define") live.set(event.name, { raises: event.raises, body: event.body });
-      else live.delete(event.name);
+      if (event.kind === "define") {
+        const key = `${event.name}(${event.types})`;
+        // a redefinition replaces the overload in place, keeping its order
+        live.delete(key);
+        live.set(key, { name: event.name, raises: event.raises, body: event.body });
+      } else {
+        for (const [key, definition] of [...live]) {
+          if (definition.name === event.name && (event.types === null || key === `${event.name}(${event.types})`)) {
+            live.delete(key);
+          }
+        }
+      }
     }
+  }
+  const liveBodies = new Map<string, string>();
+  for (const definition of live.values()) {
+    const earlier = liveBodies.get(definition.name);
+    liveBodies.set(definition.name, earlier === undefined ? definition.body : `${earlier}\n${definition.body}`);
   }
   return {
     all,
     live: [...live.values()].flatMap((definition) => definition.raises),
-    liveBodies: new Map([...live].map(([name, definition]) => [name, definition.body])),
+    liveBodies,
   };
 }
 
@@ -132,10 +152,11 @@ export function parseMigrations(files: SqlFile[]): ParsedMigrations {
 
 type Literal = { start: number; end: number; value: string; escaped: boolean };
 type Range = { start: number; end: number };
-type Body = Range & { fn: string | null };
+type Body = Range & { fn: string | null; types: string };
 type FileEvent =
-  | { kind: "define"; name: string; offset: number; raises: SqlRaise[]; body: string }
-  | { kind: "drop"; name: string; offset: number };
+  | { kind: "define"; name: string; types: string; offset: number; raises: SqlRaise[]; body: string }
+  // types null: every overload of the name
+  | { kind: "drop"; name: string; types: string | null; offset: number };
 
 function parseFile({ name: file, sql }: SqlFile): { raises: SqlRaise[]; events: FileEvent[] } {
   const scanned = scan(file, sql);
@@ -159,16 +180,21 @@ function parseFile({ name: file, sql }: SqlFile): { raises: SqlRaise[]; events: 
     fail(unread?.index ?? 0, "a function header this parser can't read");
   }
   for (const create of creates) {
+    const open = create.index + create[0].length - 1;
+    const close = matchingParen(code, open);
+    if (close === null) fail(create.index, "a function header whose argument list doesn't close");
+    const types = argumentTypes(code.slice(open + 1, close ?? open), true);
+    if (types === null) fail(create.index, "a function argument list this parser can't read");
     const body = dollarBody(code, create.index + create[0].length, inCode);
     if (!body) fail(create.index, "a function body that isn't dollar-quoted after AS");
-    else bodies.push({ ...body, fn: create[1].toLowerCase() });
+    else bodies.push({ ...body, fn: create[1].toLowerCase(), types: types ?? "" });
   }
 
   for (const block of code.matchAll(/\bdo\s+(?:language\s+\w+\s+)?(?=\$)/gi)) {
     if (!inCode(block.index)) continue;
     const body = dollarBody(code, block.index + block[0].length, inCode, false);
     if (!body) fail(block.index, "a DO block this parser can't read");
-    else bodies.push({ ...body, fn: null });
+    else bodies.push({ ...body, fn: null, types: "" });
   }
 
   for (const alter of code.matchAll(/\balter\s+(?:function|procedure)\b[^;]*\brename\s+to\b/gi)) {
@@ -177,12 +203,11 @@ function parseFile({ name: file, sql }: SqlFile): { raises: SqlRaise[]; events: 
 
   for (const drop of code.matchAll(/\bdrop\s+(?:function|procedure)\s+(?:if\s+exists\s+)?([^;]*);/gi)) {
     if (!inCode(drop.index)) continue;
-    let names = drop[1];
-    while (/\([^()]*\)/.test(names)) names = names.replace(/\([^()]*\)/g, "");
-    for (const part of names.split(",")) {
-      const match = /^(?:[\w$]+\s*\.\s*)?([A-Za-z_][\w$]*)(?:\s+(?:cascade|restrict))?$/i.exec(part.trim());
-      if (!match) fail(drop.index, "a DROP FUNCTION this parser can't read");
-      else events.push({ kind: "drop", name: match[1].toLowerCase(), offset: drop.index });
+    for (const part of splitTopLevel(drop[1])) {
+      const match = /^(?:[\w$]+\s*\.\s*)?([A-Za-z_][\w$]*)\s*(?:\(([\s\S]*)\))?(?:\s+(?:cascade|restrict))?$/i.exec(part.trim());
+      const types = match?.[2] === undefined ? null : argumentTypes(match[2], false);
+      if (!match || (match[2] !== undefined && types === null)) fail(drop.index, "a DROP FUNCTION this parser can't read");
+      else events.push({ kind: "drop", name: match[1].toLowerCase(), types, offset: drop.index });
     }
   }
 
@@ -198,7 +223,7 @@ function parseFile({ name: file, sql }: SqlFile): { raises: SqlRaise[]; events: 
   for (const body of bodies) {
     if (body.fn === null) continue;
     const inside = found.filter((f) => f.offset >= body.start && f.offset < body.end).map((f) => f.raise);
-    events.push({ kind: "define", name: body.fn, offset: body.start, raises: inside, body: code.slice(body.start, body.end) });
+    events.push({ kind: "define", name: body.fn, types: body.types, offset: body.start, raises: inside, body: code.slice(body.start, body.end) });
   }
   events.sort((a, b) => a.offset - b.offset);
   return { raises: found.map((f) => f.raise), events };
@@ -445,4 +470,73 @@ function lineAt(sql: string, offset: number): number {
   let line = 1;
   for (let k = 0; k < offset && k < sql.length; k += 1) if (sql[k] === "\n") line += 1;
   return line;
+}
+
+// Arguments ----------------------------------------------------------------
+
+// The index of the ")" matching the "(" at `open`, or null.
+function matchingParen(code: string, open: number): number | null {
+  let depth = 0;
+  for (let i = open; i < code.length; i++) {
+    if (code[i] === "(") depth++;
+    else if (code[i] === ")" && --depth === 0) return i;
+  }
+  return null;
+}
+
+// Splits on commas outside parentheses: "a numeric(12, 8), b" -> two parts.
+function splitTopLevel(text: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "(") depth++;
+    else if (text[i] === ")") depth--;
+    else if (text[i] === "," && depth === 0) {
+      parts.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(text.slice(start));
+  return parts.map((part) => part.trim()).filter((part) => part.length > 0);
+}
+
+// Types that are more than one word, and the aliases Postgres treats as one
+// type, so f(p_n int) and drop function f(integer) name the same overload.
+const MULTIWORD_TYPES = /^(double\s+precision|character\s+varying|timestamp\s+with(?:out)?\s+time\s+zone|time\s+with(?:out)?\s+time\s+zone)\b/i;
+const TYPE_ALIASES: Record<string, string> = {
+  int: "integer",
+  int4: "integer",
+  int8: "bigint",
+  int2: "smallint",
+  bool: "boolean",
+  float8: "double precision",
+  float4: "real",
+  varchar: "character varying",
+  "timestamp with time zone": "timestamptz",
+};
+
+// "p_document_id uuid, p_page_count integer default null" -> "uuid,integer".
+// `named`: a CREATE's list, whose parameters normally carry names; a DROP's
+// usually doesn't. Null when a parameter isn't a shape this reads.
+function argumentTypes(list: string, named: boolean): string | null {
+  const types: string[] = [];
+  for (const raw of splitTopLevel(list)) {
+    let param = raw.replace(/\s+(?:default\b|=)[\s\S]*$/i, "").trim();
+    param = param.replace(/^(?:in|out|inout|variadic)\s+/i, "");
+    let type: string;
+    const multi = MULTIWORD_TYPES.exec(param);
+    if (multi) {
+      type = param;
+    } else {
+      const words = param.split(/\s+/);
+      if (words.length === 1) type = words[0];
+      else if (words.length === 2 && (named || !MULTIWORD_TYPES.test(param))) type = words[1];
+      else return null;
+    }
+    const normal = type.toLowerCase().replace(/\s+/g, " ").replace(/\s*\(\s*/g, "(").replace(/\s*,\s*/g, ",").replace(/\s*\)/g, ")");
+    if (!/^[a-z_][\w.]*(?: [a-z]+)*(?:\(\d+(?:,\d+)?\))?(?:\[\])?$/.test(normal)) return null;
+    types.push(TYPE_ALIASES[normal] ?? normal);
+  }
+  return types.join(",");
 }

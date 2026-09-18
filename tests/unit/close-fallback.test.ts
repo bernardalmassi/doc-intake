@@ -150,5 +150,11 @@ describe("isCostEstimated", () => {
     expect(isCostEstimated("anthropic transport: cost estimated at the dearest price on file (22023; served by m): x")).toBe(false);
     expect(isCostEstimated("cost estimated at the dearest price on file: x")).toBe(false);
     expect(isCostEstimated(null)).toBe(false);
+    // the stale-run reaper's estimate (20260918000003)
+    const reaped =
+      "cost estimated at claude-haiku-4-5-20251001 prices (abandoned; at most 3 calls of 7500 tokens in and 2048 out, for 1 page): " +
+      "abandoned: still running after 10 minutes; failed by a later open";
+    expect(isCostEstimated(reaped)).toBe(true);
+    expect(classifyRunError(reaped)).toBe("extraction.abandoned");
   });
 });

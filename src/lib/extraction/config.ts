@@ -16,6 +16,20 @@ export const EXTRACTION_LIMITS = {
   maxOutputTokensPerRun: 8_192,
   // a run still 'running' after this long is failed by the next open
   staleRunMinutes: 10,
+  // What an abandoned run is charged (abandonedRunCostUsd below, migration
+  // 20260918000003): the calls and output cap the orchestrator enforces,
+  // an input bound from the document's page count, at the price of the
+  // dearest model the app asks for. SECURITY.md, "Stale runs", has the
+  // derivation.
+  maxCallsPerRun: 3,
+  maxOutputTokensPerCall: 2048,
+  maxInputTokensPerCall: 200_000,
+  promptInputTokens: 4500,
+  inputTokensPerPage: 3000,
+  // Anthropic's per-request PDF page limit; also what an unknown count is
+  // charged as
+  maxPagesPerDocument: 100,
+  abandonedRunPriceModel: "claude-haiku-4-5-20251001",
 } as const;
 
 // Confidence gating. A field at or above `high` is written as is; at or
@@ -139,6 +153,28 @@ export function dearestModelFor(inputTokens: number, outputTokens: number): stri
   }
   if (dearest === null) throw new Error("no model has a price on file");
   return dearest.model;
+}
+
+// What open_extraction_run's reaper charges a run it abandons, for a
+// document of `pages` pages (null: unknown, charged as the most a document
+// can have): at most maxCallsPerRun calls, each sending the prompt plus
+// every page (and no more than a call can take), each capped at
+// maxOutputTokensPerCall out, at abandonedRunPriceModel's price. The same
+// formula as the SQL; the database's number is the one that counts.
+export function abandonedRunUsage(pages: number | null): { inputTokens: number; outputTokens: number; pages: number } {
+  const limits = EXTRACTION_LIMITS;
+  const counted = Math.min(Math.max(1, pages ?? limits.maxPagesPerDocument), limits.maxPagesPerDocument);
+  const perCall = Math.min(limits.promptInputTokens + counted * limits.inputTokensPerPage, limits.maxInputTokensPerCall);
+  return {
+    pages: counted,
+    inputTokens: Math.min(limits.maxCallsPerRun * perCall, limits.maxInputTokensPerRun),
+    outputTokens: Math.min(limits.maxCallsPerRun * limits.maxOutputTokensPerCall, limits.maxOutputTokensPerRun),
+  };
+}
+
+export function abandonedRunCostUsd(pages: number | null): number {
+  const { inputTokens, outputTokens } = abandonedRunUsage(pages);
+  return computeCostUsd(EXTRACTION_LIMITS.abandonedRunPriceModel, inputTokens, outputTokens);
 }
 
 // What close_extraction_run will record for a call: the same clamp and

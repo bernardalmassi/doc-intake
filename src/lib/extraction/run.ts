@@ -350,7 +350,7 @@ export function failedCloseAttempts(outcome: RunOutcome, sqlState: string | null
     ...withUsage,
     provider: PRICING[dearest].provider,
     model: dearest,
-    error: `${RUN_ERROR_MARKERS.costEstimated} (${identifier(sqlState, "no answer")}; served by ${identifier(usage.model, "no model")}): ${error}`,
+    error: `${RUN_ERROR_MARKERS.costEstimated} the dearest price on file (${identifier(sqlState, "no answer")}; served by ${identifier(usage.model, "no model")}): ${error}`,
   };
   return [withUsage, estimated];
 }

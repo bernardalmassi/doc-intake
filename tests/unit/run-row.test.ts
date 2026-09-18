@@ -62,7 +62,7 @@ describe("toRunRow", () => {
       input_tokens: 1000,
       output_tokens: 10,
       cost_usd: "0.00210000",
-      error: `${RUN_ERROR_MARKERS.costEstimated} (22023; served by claude-unpriced-9): the result could not be recorded: 22023`,
+      error: `${RUN_ERROR_MARKERS.costEstimated} the dearest price on file (22023; served by claude-unpriced-9): the result could not be recorded: 22023`,
     });
     expect(estimated.cost_estimated).toBe(true);
     expect(estimated.error_code).toBe("extraction.result_not_saved");
@@ -70,10 +70,10 @@ describe("toRunRow", () => {
 
     expect(toRunRow({ ...base, status: "succeeded", cost_usd: "0.00123000" }).cost_estimated).toBe(false);
     // the marker anywhere but the start doesn't count
-    const inside = `anthropic transport: ${RUN_ERROR_MARKERS.costEstimated} (22023; served by x): y`;
+    const inside = `anthropic transport: ${RUN_ERROR_MARKERS.costEstimated} the dearest price on file (22023; served by x): y`;
     expect(toRunRow({ ...base, cost_usd: "0.001", error: inside }).cost_estimated).toBe(false);
     // no cost, nothing to call estimated
-    expect(toRunRow({ ...base, error: `${RUN_ERROR_MARKERS.costEstimated} (22023; served by x): y` }).cost_estimated).toBe(false);
+    expect(toRunRow({ ...base, error: `${RUN_ERROR_MARKERS.costEstimated} the dearest price on file (22023; served by x): y` }).cost_estimated).toBe(false);
   });
 });
 
@@ -84,7 +84,7 @@ describe("runHistoryMeta", () => {
       ...base,
       attempts: 1,
       cost_usd: "0.02000000",
-      error: `${RUN_ERROR_MARKERS.costEstimated} (22023; served by m): the result could not be recorded: 22023`,
+      error: `${RUN_ERROR_MARKERS.costEstimated} the dearest price on file (22023; served by m): the result could not be recorded: 22023`,
     });
     // closed without its usage by the old fallback: calls made, no cost
     const dropped = toRunRow({ ...base, attempts: 2, error: "the result could not be recorded: 22023" });
@@ -97,3 +97,19 @@ describe("runHistoryMeta", () => {
   });
 });
 
+describe("runHistoryMeta with an abandoned run", () => {
+  it("counts the reaper's estimate as estimated, and an older reaped run as not known", () => {
+    const reaped = toRunRow({
+      ...base,
+      cost_usd: "0.05322000",
+      error:
+        "cost estimated at claude-haiku-4-5-20251001 prices (abandoned; at most 3 calls of 7500 tokens in and 2048 out, for 1 page): " +
+        "abandoned: still running after 10 minutes; failed by a later open",
+    });
+    expect(reaped.error_code).toBe("extraction.abandoned");
+    expect(reaped.cost_estimated).toBe(true);
+    // abandoned before the reaper charged anything: not known
+    const older = toRunRow({ ...base, error: "abandoned: still running after 10 minutes; failed by a later open" });
+    expect(runHistoryMeta([reaped, older])).toBe("2 runs · $0.0532 total · 1 estimated · 1 not known");
+  });
+});

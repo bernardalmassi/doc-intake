@@ -16,11 +16,14 @@ const RUN_STATUS_LABELS: Record<string, string> = {
 // What the Cost cell can say about a run:
 //   recorded   the database priced it
 //   estimated  charged at the dearest price on file, because the database
-//              couldn't price the model that answered (see RunRow)
+//              couldn't price the model that answered, or because the run
+//              was abandoned and the stale-run check charged an estimate
+//              bounded by its file (migration 20260918000003; see RunRow)
 //   unknown    a provider may have been paid but no cost was recorded: still
-//              running, abandoned and failed by the stale-run check, or a
-//              run that made model calls and was closed without its usage
-//              (the Extract action did that before it charged estimates)
+//              running, abandoned before the reaper charged an estimate,
+//              or a run that made model calls and was closed without its
+//              usage (the Extract action did that before it charged
+//              estimates)
 //   none       no model call was made (a file whose contents didn't match
 //              its type), so nothing was spent
 type CostState = "recorded" | "estimated" | "unknown" | "none";
@@ -47,7 +50,10 @@ export function runHistoryMeta(runs: RunRow[]): string {
   const { total, estimated, unknown } = runTotals(runs);
   const count = `${runs.length} ${runs.length === 1 ? "run" : "runs"}`;
   if (unknown === runs.length) return `${count} · cost not known yet`;
-  const notes = [estimated > 0 ? `${estimated} estimated` : null, unknown > 0 ? `${unknown} not known` : null].filter(Boolean);
+  const notes = [
+    estimated > 0 ? `${estimated} estimated` : null,
+    unknown > 0 ? `${unknown} not known` : null,
+  ].filter(Boolean);
   return `${count} · ${formatUsd(total)} total${notes.map((note) => ` · ${note}`).join("")}`;
 }
 
@@ -115,7 +121,7 @@ export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filen
                     <span className="mt-1 block text-muted tabular-nums">{describeAttempts(run, stalled)}</span>
                   </td>
                   <td role="cell" data-label="Model" className={td}>
-                    {run.cost_estimated ? (
+                    {run.cost_estimated && run.model ? (
                       <>
                         Not on the price list
                         <span className="block text-muted [overflow-wrap:anywhere]">charged at {run.model} rates</span>
@@ -189,7 +195,8 @@ function describeAttempts(run: RunRow, stalled: boolean): string {
   return `${run.attempts} model ${run.attempts === 1 ? "call" : "calls"}`;
 }
 
-// A paid run never reads as free: an estimate says so, and a cost that
+// A paid run never reads as free: an estimate (a run whose model had no
+// price, or an abandoned run) says so, and a cost that
 // wasn't recorded says it isn't known, in words, not a dash.
 function Cost({ run }: { run: RunRow }) {
   const state = costState(run);
@@ -212,9 +219,12 @@ function Cost({ run }: { run: RunRow }) {
 
 // Token counts. A run that made model calls but was closed without a model
 // (the Extract action did that before it charged estimates) stored 0 for
-// tokens that were never recorded, so those read as not known, not as 0.
+// tokens that were never recorded, and an abandoned run recorded none, so
+// both read as not known, not as 0 or a dash.
 function Tokens({ run, count }: { run: RunRow; count: number | null }) {
-  if (run.model === null && run.attempts > 0 && run.status !== "running") return <span className="text-muted">Not known</span>;
+  if (run.error_code === "extraction.abandoned" || (run.model === null && run.attempts > 0 && run.status !== "running")) {
+    return <span className="text-muted">Not known</span>;
+  }
   return count !== null ? formatCount(count) : <Missing label="None recorded" />;
 }
 

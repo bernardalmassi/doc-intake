@@ -406,11 +406,13 @@ export const RUN_ERROR_MARKERS = {
   // failedCloseAttempts (run.ts), when close_extraction_run refused a
   // successful run and the Extract action closed it as failed instead
   resultNotRecorded: "the result could not be recorded",
-  // failedCloseAttempts (run.ts), when the close with the run's own model
-  // was refused too and the run was charged at the dearest price on file:
-  // "<this> (<SQLSTATE>; served by <model id>): <the run's error>". Not a
-  // failure of its own; what follows it decides the code.
-  costEstimated: "cost estimated at the dearest price on file",
+  // A run charged an estimate rather than its recorded usage: by
+  // failedCloseAttempts (run.ts) when the close with the run's own model was
+  // refused too, "<this> the dearest price on file (<SQLSTATE>; served by
+  // <model id>): <the run's error>"; and by the stale-run reaper
+  // (20260918000003), "<this> <model> prices (abandoned; ...): abandoned:
+  // ...". Not a failure of its own; what follows it decides the code.
+  costEstimated: "cost estimated at",
 } as const;
 
 // How a ProviderError's message starts, where its kind and status alone
@@ -940,12 +942,14 @@ export function classifyRunError(error: string | null | undefined): ErrorCode {
   return guarded(() => runCode(error));
 }
 
-// "cost estimated at the dearest price on file (22023; served by x): ..."
-const COST_ESTIMATED = new RegExp(`^${escapeRegExp(RUN_ERROR_MARKERS.costEstimated)} \\([^()]*\\): `);
+// "cost estimated at the dearest price on file (22023; served by x): ..." or
+// "cost estimated at claude-haiku-4-5-20251001 prices (abandoned; ...): ..."
+const COST_ESTIMATED = new RegExp(`^${escapeRegExp(RUN_ERROR_MARKERS.costEstimated)} [^()\\n]{1,120} \\([^()]*\\): `);
 
 // Whether a run's cost is an estimate: failedCloseAttempts charged it at the
 // dearest price on file because the database couldn't price the model that
-// served it. The page shows such a cost as estimated.
+// served it, or the stale-run reaper charged an abandoned run an estimate
+// from its page count. The page shows such a cost as estimated.
 export function isCostEstimated(error: string | null | undefined): boolean {
   return typeof error === "string" && COST_ESTIMATED.test(error);
 }

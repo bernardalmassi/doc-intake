@@ -153,6 +153,43 @@ describe("live definitions", () => {
     expect(parseMigrations([{ name: "001.sql", sql }]).live.map((r) => r.message)).toEqual(["second"]);
   });
 
+  it("keeps overloads apart: each has its own live definition", () => {
+    const overload = (args: string, message: string) =>
+      `create function public.f(${args})\nreturns void language plpgsql as $$\nbegin\n  raise exception '${message}';\nend;\n$$;\n`;
+    const both = overload("p uuid", "one argument") + overload("p uuid, p_n integer default null", "two arguments");
+    let parsed = parseMigrations([{ name: "001.sql", sql: both }]);
+    expect(parsed.live.map((r) => r.message)).toEqual(["one argument", "two arguments"]);
+    expect(parsed.liveBodies.get("f")).toContain("one argument");
+    expect(parsed.liveBodies.get("f")).toContain("two arguments");
+
+    // a drop with an argument list removes only that overload; aliases and
+    // parameter names don't matter
+    parsed = parseMigrations([
+      { name: "001.sql", sql: both },
+      { name: "002.sql", sql: "drop function public.f(uuid, int);" },
+    ]);
+    expect(parsed.live.map((r) => r.message)).toEqual(["one argument"]);
+
+    // redefining one overload leaves the other alone
+    parsed = parseMigrations([
+      { name: "001.sql", sql: both },
+      { name: "002.sql", sql: overload("p_other uuid", "one argument, reworded") },
+    ]);
+    expect(parsed.live.map((r) => r.message).sort()).toEqual(["one argument, reworded", "two arguments"]);
+
+    // a drop without an argument list removes every overload
+    parsed = parseMigrations([
+      { name: "001.sql", sql: both },
+      { name: "002.sql", sql: "drop function f;" },
+    ]);
+    expect(parsed.live).toEqual([]);
+  });
+
+  it("refuses an argument list it can't read", () => {
+    const sql = "create function public.f(p some odd type here)\nreturns void language plpgsql as $$\nbegin\nend;\n$$;\n";
+    expect(() => parseMigrations([{ name: "001.sql", sql }])).toThrow(/argument list this parser can't read/);
+  });
+
   it("keeps no DO block raises", () => {
     expect(parseMigrations([{ name: "001.sql", sql: "do $$ begin raise exception 'x'; end $$;" }]).live).toEqual([]);
   });

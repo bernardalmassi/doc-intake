@@ -8,7 +8,8 @@ import { classifyDatabaseError, classifyRunError, classifyStorageError } from "@
 import { selectProviders } from "@/lib/extraction/providers/select";
 import { describeError } from "@/lib/extraction/providers/types";
 import { failedCloseAttempts, runExtraction, toCloseParams, type RunOutcome } from "@/lib/extraction/run";
-import { detectMimeType, isSupportedMimeType } from "@/lib/extraction/sniff";
+import { countPages } from "@/lib/extraction/pages";
+import { detectMimeType, isSupportedMimeType, type SupportedMimeType } from "@/lib/extraction/sniff";
 import { log } from "@/lib/log";
 import { registerSecret } from "@/lib/redact";
 import { createClient } from "@/lib/supabase/server";
@@ -22,11 +23,14 @@ type DocumentRow = {
   mime_type: string | null;
 };
 
-// Admin clicks Extract. Everything that can refuse does so in the database
-// before any model is called: open_extraction_run checks the caller is an
-// admin, the document has a file and isn't already running, and the spend
-// ceilings and the hourly limit. The run is then closed with whatever
-// happened, in one transaction, so it never half-commits. If the database
+// Admin clicks Extract. The file is downloaded first, with the caller's
+// session, so its pages can be counted: open_extraction_run stores the count
+// on the run, and the stale-run reaper charges an abandoned run from it
+// (migration 20260918000003). Then everything that can refuse does so in the
+// database before any model is called: open_extraction_run checks the
+// caller is an admin, the document has a file and isn't already running,
+// and the spend ceilings and the hourly limit. The run is then closed with
+// whatever happened, in one transaction, so it never half-commits. If the database
 // refuses that close, the run is closed again as failed with no fields, so
 // the document goes back to how it was instead of sitting in processing
 // until the stale-run reaper frees it.
@@ -71,8 +75,15 @@ export async function extractDocument(_prev: FormState, formData: FormData): Pro
   }
   runLog = runLog.with({ tenant_id: doc.tenant_id });
 
-  // 1. open the run: limits are checked here, nothing is called yet
-  const opened = await supabase.rpc("open_extraction_run", { p_document_id: doc.id });
+  // 1. the bytes, with the caller's own session, and their page count if
+  //    they are what the row says they are (null otherwise: the database
+  //    then charges an abandoned run as the most pages a document can have)
+  const file = await downloadFile(supabase, doc, runLog);
+  const pageCount =
+    file.ok && file.detected !== null && file.detected === doc.mime_type ? countPages(file.bytes, file.detected) : null;
+
+  // 2. open the run: limits are checked here, nothing is called yet
+  const opened = await supabase.rpc("open_extraction_run", { p_document_id: doc.id, p_page_count: pageCount });
   if (opened.error) {
     const code = classifyDatabaseError({ ...opened.error, status: opened.status }, "open_extraction_run");
     runLog.warn("extraction.open_refused", { error_code: code, ...failureFields(opened.error, opened.status) });
@@ -83,7 +94,7 @@ export async function extractDocument(_prev: FormState, formData: FormData): Pro
   try {
     runLog = runLog.with({ run_id: runId });
     runLog.info("extraction.run_opened");
-    return await runAndClose({ supabase, doc, slug, runId, closeToken, runLog });
+    return await runAndClose({ supabase, doc, slug, runId, closeToken, runLog, file });
   } finally {
     releaseToken();
   }
@@ -96,9 +107,46 @@ type RunContext = {
   runId: string;
   closeToken: string;
   runLog: typeof log;
+  file: DownloadedFile;
 };
 
-async function runAndClose({ supabase, doc, slug, runId, closeToken, runLog }: RunContext): Promise<FormState> {
+// The document's bytes and their detected type, or why they couldn't be
+// read. The reason is a code, never Storage's message: it is stored on the
+// run.
+type DownloadedFile =
+  | { ok: true; bytes: Uint8Array; detected: SupportedMimeType | null }
+  | { ok: false; reason: string };
+
+async function downloadFile(
+  supabase: RunContext["supabase"],
+  doc: DocumentRow,
+  runLog: typeof log,
+): Promise<DownloadedFile> {
+  try {
+    const downloaded = await supabase.storage.from("documents").download(doc.storage_path);
+    if (downloaded.error || !downloaded.data) {
+      const reason = downloaded.error ? classifyStorageError(downloaded.error, "download") : "no data";
+      const status =
+        downloaded.error && "status" in downloaded.error ? (downloaded.error.status as number | undefined) : undefined;
+      runLog.warn("extraction.download_failed", {
+        error_code: "extraction.download_failed",
+        ...failureFields({ name: downloaded.error?.name }, status),
+      });
+      return { ok: false, reason };
+    }
+    const bytes = new Uint8Array(await downloaded.data.arrayBuffer());
+    return { ok: true, bytes, detected: detectMimeType(bytes) };
+  } catch (error) {
+    runLog.warn("extraction.download_failed", {
+      error_code: "extraction.download_failed",
+      error_kind: "unexpected",
+      error_name: error instanceof Error ? error.name : undefined,
+    });
+    return { ok: false, reason: "unknown" };
+  }
+}
+
+async function runAndClose({ supabase, doc, slug, runId, closeToken, runLog, file }: RunContext): Promise<FormState> {
   const startedAt = Date.now();
   const failed = (error: string): RunOutcome => ({
     status: "failed",
@@ -114,22 +162,11 @@ async function runAndClose({ supabase, doc, slug, runId, closeToken, runLog }: R
 
   let outcome: RunOutcome;
   try {
-    // 2. the bytes, with the caller's own session
-    const downloaded = await supabase.storage.from("documents").download(doc.storage_path);
-    if (downloaded.error || !downloaded.data) {
-      // The code, not Storage's message: this text is stored on the run.
-      const reason = downloaded.error ? classifyStorageError(downloaded.error, "download") : "no data";
-      const status =
-        downloaded.error && "status" in downloaded.error ? (downloaded.error.status as number | undefined) : undefined;
-      runLog.warn("extraction.download_failed", {
-        error_code: "extraction.download_failed",
-        ...failureFields({ name: downloaded.error?.name }, status),
-      });
-      outcome = failed(`could not download the file: ${reason}`);
+    // 3. the bytes (downloaded before the open) must be what the row says
+    if (!file.ok) {
+      outcome = failed(`could not download the file: ${file.reason}`);
     } else {
-      const bytes = new Uint8Array(await downloaded.data.arrayBuffer());
-      // 3. the bytes must be what the row says they are
-      const detected = detectMimeType(bytes);
+      const { bytes, detected } = file;
       if (detected === null || !isSupportedMimeType(doc.mime_type) || detected !== doc.mime_type) {
         runLog.warn("extraction.type_mismatch", {
           mime_type: isSupportedMimeType(doc.mime_type) ? doc.mime_type : null,
@@ -212,7 +249,7 @@ async function runAndClose({ supabase, doc, slug, runId, closeToken, runLog }: R
 // extraction.result_not_saved for a success that couldn't be recorded. Only
 // when every close is refused does the run stay open for the reaper.
 async function closeAsFailed(
-  { supabase, slug, runId, closeToken, runLog }: Omit<RunContext, "doc">,
+  { supabase, slug, runId, closeToken, runLog }: Omit<RunContext, "doc" | "file">,
   outcome: RunOutcome,
   sqlState: string | null,
 ): Promise<FormState> {
