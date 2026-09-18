@@ -1,6 +1,6 @@
 # doc-intake
 
-A multi-tenant document intake service. People sign up, create an organization, and upload invoices, receipts, contracts and letters as PDF, PNG or JPEG. An admin clicks Extract and a language model reads the document into ten structured fields (type, title, sender, recipient, dates, reference, total, currency, summary), each with a confidence, the text it was read from and, when the model is unsure, one question for a human reviewer. A document with any low-confidence field, or any field the output guard distrusts, is marked `needs_review` for a person to check.
+A multi-tenant document intake service. People sign up, create an organization, and upload invoices, receipts, contracts and letters as PDF, PNG or JPEG. An admin clicks Extract and a language model reads the document into eleven structured fields (type, title, sender, recipient, document and due dates, payment terms, reference, total, currency, summary), each with a confidence, the text it was read from and, when the model is unsure, one question for a human reviewer. A document with any low-confidence field, or any field the output guard distrusts, is marked `needs_review` for a person to check.
 
 The interesting part is not the extraction but what it survives: tenants that must not see each other, uploads that must not be redirected, a model bill that must not run away, documents written by an attacker, and a model that sometimes answers badly. Postgres is the only security boundary; the app runs as the signed-in user and is not trusted with anything.
 
@@ -16,12 +16,12 @@ Built with Next.js 16 (App Router, Server Actions), React 19, Tailwind CSS 4, Su
 
 **Extraction.** The Extract Server Action (`src/app/app/extract-action.ts`) runs one run in the request:
 
-1. `open_extraction_run` (SQL) checks the caller is an admin and the document is ready, then, under an advisory lock, the tenant's spend this month (1 USD), everyone's spend (3 USD) and the tenant's runs in the last hour (5). It refuses before any model is called, or inserts a `running` run and returns a close token that never reaches the browser.
-2. The action downloads the file with the user's session and checks its magic bytes against the declared type (`src/lib/extraction/sniff.ts`).
-3. The orchestrator (`src/lib/extraction/run.ts`) calls the primary provider (Claude Sonnet 5 by default, `EXTRACTION_ANTHROPIC_MODEL=claude-haiku-4-5-20251001` for Claude Haiku 4.5, `EXTRACTION_PROVIDER=openai` for gpt-5-nano), switches once to the other provider on a timeout or 5xx before any answer, validates the JSON against the schema and formats (`schema.ts`), retries once with the validation error, runs the output guard for signs of prompt injection, and gates each field by confidence: high is written, medium is written with one clarifying question, low sends the document to `needs_review`.
+1. The action downloads the file with the user's session, checks its magic bytes against the declared type (`src/lib/extraction/sniff.ts`), so a file that isn't what its row says never reaches a model, and counts its pages (`pages.ts`). A document over 100 pages, or a PDF whose pages can't be counted, is refused before any run opens; the upload form refuses the same in the browser.
+2. `open_extraction_run` (SQL) checks the caller is an admin, fails any earlier run of the document still `running` after 10 minutes (charging it an estimate from its page count), checks the document is ready, then, under an advisory lock, the tenant's spend this month (1 USD), everyone's spend (3 USD) and the tenant's runs in the last hour (5). It refuses before any model is called, or inserts a `running` run with the page count and returns a close token that never reaches the browser.
+3. The orchestrator (`src/lib/extraction/run.ts`) calls the primary provider (Claude Sonnet 5 by default, `EXTRACTION_ANTHROPIC_MODEL=claude-haiku-4-5-20251001` for Claude Haiku 4.5, `EXTRACTION_PROVIDER=openai` for gpt-5-nano), switches once to the other provider on a timeout, failed connection or 5xx before any answer, validates the JSON against the schema and formats (`schema.ts`), retries once with the validation error, runs the output guard for signs of prompt injection, and gates each field by confidence: high is written, medium is written with one clarifying question, low sends the document to `needs_review`.
 4. `close_extraction_run` (SQL) records the outcome in one transaction and computes the cost itself from the reported token counts, clamped, at the price in its own table. There is no cost parameter. A failed run leaves the document exactly as it was.
 
-**Library layout.** `src/lib/extraction/` holds the config (thresholds, models, and mirrors of the database's limits and prices with a drift test), the schema and prompt, the output guard, the orchestrator, and `providers/` (one interface, two SDK adapters that import `server-only`, and the testable pieces moved out of them: error classification and response interpretation). `src/lib/log.ts` is the only logger. `src/lib/errors.ts` maps every failure a user can hit to one message (table in [ERRORS.md](ERRORS.md)); the pages don't use it yet and still show raw error text, because the UI is being redesigned separately.
+**Library layout.** `src/lib/extraction/` holds the config (thresholds, models, and mirrors of the database's limits and prices with a drift test), the schema and prompt, the output guard, the orchestrator, and `providers/` (one interface, two SDK adapters that import `server-only`, and the testable pieces moved out of them: error classification and response interpretation). `src/lib/log.ts` is the only logger. `src/lib/errors.ts` turns every failure a user can hit into a code, and a page shows only that code's message from the catalog (table in [ERRORS.md](ERRORS.md)), so no database, provider or document text reaches the browser.
 
 ## Security model
 
@@ -35,7 +35,7 @@ Details, verification and the known gaps: [SECURITY.md](SECURITY.md).
 
 ## Running it
 
-Requirements: Node.js 22.12 or later (CI uses 24; `openai` and Vite need 22), a Supabase project, and an Anthropic and/or OpenAI API key. The project was built against a hosted Supabase project; `npx supabase start` runs a local stack instead if Docker is available.
+Requirements: Node.js 22.12 or later (CI uses 24; `openai` needs 22, and Vite 22.12 on that line), a Supabase project, and an Anthropic and/or OpenAI API key. The project was built against a hosted Supabase project; `npx supabase start` runs a local stack instead if Docker is available.
 
 ```bash
 npm ci
@@ -86,7 +86,7 @@ The Supabase suites sign up five throwaway users per run with only the publishab
 | | App project | Test project |
 |---|---|---|
 | Used by | `npm run dev`, the deployed app | `npm test`, `npm run test:db` |
-| Configured in | `.env.local` (`NEXT_PUBLIC_SUPABASE_URL`, publishable key, provider keys) | `.env.test` (`SUPABASE_TEST_URL`, `SUPABASE_TEST_PUBLISHABLE_KEY`) |
+| Configured in | `.env.local` (`NEXT_PUBLIC_SUPABASE_URL`, publishable key, provider keys) | `.env.test` (`SUPABASE_TEST_URL`, `SUPABASE_TEST_PUBLISHABLE_KEY`, `SUPABASE_TEST_EMAIL`) |
 | Migrations | `npx supabase db push` (the CLI is linked to it) | `npx supabase db push --project-ref <test ref>` |
 | Email confirmation | as the app needs it | off |
 
