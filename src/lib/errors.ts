@@ -10,17 +10,31 @@
 // constraints, provider messages name vendors and quote request details, a
 // stored run error is written for engineers, and any of them can change
 // with a dependency upgrade. So the classifiers here return only a code, and
-// the only text a user ever sees is the fixed message for that code. An
-// input nobody anticipated becomes "unknown"; its text is never echoed.
+// the only text a user is meant to see is the fixed message for that code.
+// An input nobody anticipated becomes "unknown"; its text is never echoed,
+// and an input that throws when read (a hostile getter) is "unknown" too.
+//
+// Not wired in yet: src/app is frozen during the UI redesign, so today's UI
+// still shows raw error text. ERRORS.md says so and lists the call sites.
 //
 // Classification goes by code first (SQLSTATE, Auth code, Storage code,
 // ProviderError kind), then by what was being attempted, because the same
 // SQLSTATE means different things in different calls (55000 is "files
 // remain" in delete_tenant and "already running" in open_extraction_run).
-// Raw message text is read only where the database raises one SQLSTATE for
-// two outcomes, and then only as the exact phrase a migration raises;
-// tests/unit/errors.test.ts proves each phrase still exists in the SQL and
-// that every raise in supabase/migrations has a code.
+// Message text is read in these places only, each a refinement of a code
+// that would otherwise be less specific, never a way to choose one freely:
+//
+//   - database: where one SQLSTATE covers two outcomes, the exact phrase a
+//     migration raises (tests/unit/errors.test.ts proves each phrase is
+//     still raised by the live function, and that every raise in
+//     supabase/migrations has a code)
+//   - stored run errors and ProviderError messages: prefixes and shapes
+//     written by this repo's own code (run.ts, the provider modules, the
+//     Extract action), each checked against its source
+//   - Supabase Auth validation_failed: GoTrue's wording for an over-long
+//     password or a bad email, which no source here can confirm
+//   - thrown errors: the exact messages browsers and Node give a fetch that
+//     failed on the network
 //
 // ERRORS.md is the table of every failure path, its code and its message;
 // the same test keeps it in step with this module.
@@ -296,6 +310,10 @@ const CATALOG = {
     message: "This document has more content than one extraction can return. Review it yourself instead.",
     retryable: false,
   },
+  "extraction.answer_incomplete": {
+    message: "The extraction service stopped before finishing its answer. Please try again.",
+    retryable: true,
+  },
   "extraction.invalid_answer": {
     message:
       "The extraction service's answer failed our checks, even after a second attempt. You can try again or review the document yourself.",
@@ -358,26 +376,38 @@ export const CHECK_CONSTRAINTS = {
   documentFilename: "documents_filename_check",
 } as const;
 
-// How a failed run's error starts, as extraction_runs.error stores it. The
-// first two are written by the Extract Server Action, the next two by the
-// orchestrator (src/lib/extraction/run.ts), notConfigured by
-// selectProviders, and abandoned by open_extraction_run's stale-run reaper.
-// The test checks each against its source, and drives the real
-// orchestrator with fake providers to classify what it actually stores.
+// The pieces of a failed run's error, as extraction_runs.error stores it.
+// downloadFailed and typeMismatch start errors written by the Extract Server
+// Action; the next five are the orchestrator's (src/lib/extraction/run.ts);
+// notConfigured and providerNotSelected come from selectProviders, and
+// abandoned from open_extraction_run's stale-run reaper. The test checks
+// each against its source, and drives the real orchestrator with fake
+// providers to classify what it actually stores.
 export const RUN_ERROR_MARKERS = {
   downloadFailed: "could not download the file",
   typeMismatch: "file content (",
   invalidAfterRetry: "response failed validation after",
   retryFailed: "retry after invalid response (",
   retryFailedSeparator: ") failed: ",
+  // "<primary's error>; fallback <fallback's error>": the fallback's first
+  // call failed too
+  fallbackFailed: "; fallback ",
+  // appended when a timeout or 5xx had no fallback to switch to
+  noFallback: "; no fallback provider is configured",
   notConfigured: "extraction is not configured",
   providerNotSelected: `${PROVIDER_ENV_VAR} must be`,
   abandoned: "abandoned: still running after",
 } as const;
 
-// What the provider modules put in a ProviderError for a timeout, as
-// opposed to a connection that failed outright.
-export const PROVIDER_TIMEOUT_MESSAGE = "request timed out";
+// How a ProviderError's message starts, where its kind and status alone
+// don't say enough. timeout is classify.ts's (a timeout, as opposed to a
+// connection that failed outright); the other two are interpret.ts's, for
+// an answer that ended some way other than a normal finish.
+export const PROVIDER_MESSAGES = {
+  timeout: "request timed out",
+  unexpectedStop: "the answer stopped unexpectedly",
+  notCompleted: "the response did not complete",
+} as const;
 
 // Local checks -----------------------------------------------------------
 
@@ -473,6 +503,10 @@ export function classifyDatabaseError(
   error: DatabaseErrorLike | null | undefined,
   operation: DatabaseOperation,
 ): ErrorCode {
+  return guarded(() => databaseCode(error, operation));
+}
+
+function databaseCode(error: DatabaseErrorLike | null | undefined, operation: DatabaseOperation): ErrorCode {
   if (!isRecord(error)) return "unknown";
   // Whatever stopped the close (lost connection, expired session, a price
   // missing for the model), the outcome for the user is the same: the run
@@ -633,6 +667,10 @@ const SESSION_GONE = new Set([
 ]);
 
 export function classifyAuthError(error: AuthErrorLike | null | undefined, operation: AuthOperation): ErrorCode {
+  return guarded(() => authCode(error, operation));
+}
+
+function authCode(error: AuthErrorLike | null | undefined, operation: AuthOperation): ErrorCode {
   if (!isRecord(error)) return "unknown";
   const name = stringField(error, "name");
   const code = stringField(error, "code");
@@ -729,6 +767,10 @@ export function classifyStorageError(
   error: StorageErrorLike | null | undefined,
   operation: StorageOperation,
 ): ErrorCode {
+  return guarded(() => storageCode(error, operation));
+}
+
+function storageCode(error: StorageErrorLike | null | undefined, operation: StorageOperation): ErrorCode {
   if (!isRecord(error)) return "unknown";
   const name = stringField(error, "name");
   const code = stringField(error, "code");
@@ -826,6 +868,10 @@ export type ProviderErrorLike = {
 };
 
 export function classifyProviderError(error: ProviderErrorLike | null | undefined): ErrorCode {
+  return guarded(() => providerCode(error));
+}
+
+function providerCode(error: ProviderErrorLike | null | undefined): ErrorCode {
   if (!isRecord(error)) return "unknown";
   const kind = stringField(error, "kind");
   if (kind === undefined || !Object.prototype.hasOwnProperty.call(PROVIDER_ERROR_KINDS, kind)) return "unknown";
@@ -834,7 +880,7 @@ export function classifyProviderError(error: ProviderErrorLike | null | undefine
 
   switch (kind as ProviderErrorKind) {
     case "transport":
-      return message.startsWith(PROVIDER_TIMEOUT_MESSAGE) ? "extraction.provider_timeout" : "extraction.provider_unavailable";
+      return message.startsWith(PROVIDER_MESSAGES.timeout) ? "extraction.provider_timeout" : "extraction.provider_unavailable";
     case "server":
       return "extraction.provider_unavailable";
     case "client":
@@ -842,9 +888,17 @@ export function classifyProviderError(error: ProviderErrorLike | null | undefine
       if (status === 429) return "extraction.provider_unavailable";
       // our key or our model id, not the document
       if (status === 401 || status === 403 || status === 404) return "extraction.not_configured";
-      // No status: the SDK failed before or after the request, or the
-      // response lacked usage. Not the document's fault either.
-      if (status === undefined) return "unknown";
+      if (status === undefined) {
+        // A billed answer that ended abnormally: an unexpected stop reason,
+        // or an OpenAI response left cancelled, queued or in progress.
+        // Nothing the document did; a new run is likely to finish.
+        if (message.startsWith(PROVIDER_MESSAGES.unexpectedStop) || message.startsWith(PROVIDER_MESSAGES.notCompleted)) {
+          return "extraction.answer_incomplete";
+        }
+        // Otherwise the SDK failed before or after the request, or the
+        // response lacked usage. Not the document's fault either.
+        return "unknown";
+      }
       return "extraction.provider_rejected";
     case "refusal":
       return "extraction.refused";
@@ -858,13 +912,21 @@ export function classifyProviderError(error: ProviderErrorLike | null | undefine
 const KIND_PATTERN = Object.keys(PROVIDER_ERROR_KINDS).join("|");
 const PROVIDER_PATTERN = PROVIDER_NAMES.join("|");
 // describeError's rendering of a ProviderError: "<provider> <kind>[ <status>]: <message>"
+const DESCRIPTOR = `(?:${PROVIDER_PATTERN}) (?:${KIND_PATTERN})(?: \\d{3})?: `;
 const DESCRIPTOR_AT_START = new RegExp(`^(${PROVIDER_PATTERN}) (${KIND_PATTERN})(?: (\\d{3}))?: ([\\s\\S]*)$`);
-const DESCRIPTOR_ANYWHERE = new RegExp(`\\b(${PROVIDER_PATTERN}) (?:${KIND_PATTERN})\\b`, "g");
+// run.ts's shape when the fallback's first call failed too: a descriptor,
+// the primary's message, "; fallback ", and a second descriptor. A single
+// provider error that merely mentions another provider doesn't have it.
+const FALLBACK_FAILED = new RegExp(`^${DESCRIPTOR}[\\s\\S]*?${escapeRegExp(RUN_ERROR_MARKERS.fallbackFailed)}${DESCRIPTOR}`);
 
 // Turns extraction_runs.error (and the Extract action's outcome.error) into
 // a code. Members can read that column, and it is written for engineers,
 // so the UI shows this code's message instead of the text.
 export function classifyRunError(error: string | null | undefined): ErrorCode {
+  return guarded(() => runCode(error));
+}
+
+function runCode(error: string | null | undefined): ErrorCode {
   if (typeof error !== "string" || error.trim().length === 0) return "unknown";
 
   if (error.startsWith(RUN_ERROR_MARKERS.abandoned)) return "extraction.abandoned";
@@ -896,12 +958,10 @@ export function classifyRunError(error: string | null | undefined): ErrorCode {
   return classifyProviderText(error);
 }
 
-// Provider errors as describeError renders them. Two different providers
-// named means the primary failed and so did the fallback, whatever words
-// join them.
+// Provider errors as describeError renders them, possibly two joined by
+// run.ts after a fallback, or one with the no-fallback note appended.
 function classifyProviderText(text: string): ErrorCode {
-  const named = new Set([...text.matchAll(DESCRIPTOR_ANYWHERE)].map((match) => match[1]));
-  if (named.size > 1) return "extraction.all_providers_failed";
+  if (FALLBACK_FAILED.test(text)) return "extraction.all_providers_failed";
   const match = DESCRIPTOR_AT_START.exec(text);
   if (!match) return "unknown";
   return classifyProviderError({
@@ -917,17 +977,46 @@ function classifyProviderText(text: string): ErrorCode {
 // Server Action invoked from the browser. Only "the network failed" is told
 // apart; everything else is unknown.
 export function classifyThrown(error: unknown): ErrorCode {
+  return guarded(() => thrownCode(error));
+}
+
+// The exact messages fetch rejects with when the network fails. Matching a
+// word such as "fetch" instead would turn a bug like
+// TypeError("fetchDocuments is not a function") into a network message.
+const FETCH_FAILURES = new Set([
+  "Failed to fetch", // Chrome, Edge
+  "NetworkError when attempting to fetch resource.", // Firefox
+  "Load failed", // Safari
+  "The network connection was lost.", // older Safari
+  "The Internet connection appears to be offline.", // older Safari
+  "fetch failed", // Node (undici)
+]);
+
+function thrownCode(error: unknown): ErrorCode {
   if (!isRecord(error)) return "unknown";
   const name = stringField(error, "name");
   const message = stringField(error, "message") ?? "";
   if (name === "AbortError" || name === "TimeoutError") return "network.unavailable";
-  // Chrome "Failed to fetch", Firefox "NetworkError when attempting to
-  // fetch resource.", Safari "Load failed", Node "fetch failed"
-  if (name === "TypeError" && /fetch|network|load failed/i.test(message)) return "network.unavailable";
+  if (name === "TypeError" && FETCH_FAILURES.has(message)) return "network.unavailable";
   return "unknown";
 }
 
 // Helpers ----------------------------------------------------------------
+
+// Every classifier runs inside this. Its input comes from SDKs, JSON and
+// catch blocks, and one that throws when read (a getter, a revoked Proxy)
+// must give a message, not a second error.
+function guarded(classify: () => ErrorCode): ErrorCode {
+  try {
+    return classify();
+  } catch {
+    return "unknown";
+  }
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 // Inputs are typed, but they come from SDKs, JSON and catch blocks, so
 // every field is checked before it is trusted.

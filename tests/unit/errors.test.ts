@@ -25,15 +25,12 @@ import {
   PostgrestError,
   StorageApiError,
 } from "@supabase/supabase-js";
+import type Anthropic from "@anthropic-ai/sdk";
+import type OpenAI from "openai";
 import { describe, expect, it } from "vitest";
 import { EXTRACTION_LIMITS, PROVIDER_ENV_VAR } from "@/lib/extraction/config";
-import {
-  describeError,
-  ProviderError,
-  type ExtractionProvider,
-  type ProviderName,
-  type ProviderResponse,
-} from "@/lib/extraction/providers/types";
+import { describeError, ProviderError, type ProviderResponse } from "@/lib/extraction/providers/types";
+import { interpretAnthropicMessage, interpretOpenAIResponse } from "@/lib/extraction/providers/interpret";
 import { runExtraction } from "@/lib/extraction/run";
 import {
   checkCredentials,
@@ -53,7 +50,7 @@ import {
   isErrorCode,
   MAX_FILENAME_LENGTH,
   MAX_UPLOAD_BYTES,
-  PROVIDER_TIMEOUT_MESSAGE,
+  PROVIDER_MESSAGES,
   RUN_ERROR_MARKERS,
   SLUG_PATTERN,
   UPLOAD_MIME_TYPES,
@@ -64,6 +61,8 @@ import {
   type StorageOperation,
 } from "@/lib/errors";
 import { MAX_PASSWORD_BYTES, MIN_PASSWORD_LENGTH } from "@/lib/password";
+import { fakeProvider } from "../helpers/fake-provider";
+import { parseMigrations, type ParsedMigrations, type SqlRaise } from "../helpers/sql-raises";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const read = (path: string) => readFileSync(join(ROOT, path), "utf8");
@@ -77,30 +76,23 @@ const migrationFiles = readdirSync(join(ROOT, MIGRATIONS_DIR))
 const migrations = migrationFiles.map((name) => ({ name, sql: read(join(MIGRATIONS_DIR, name)) }));
 const allSql = migrations.map((m) => m.sql).join("\n");
 
-type Raise = { file: string; fn: string; errcode: string; literal: string };
-
-// Every `raise exception '<text>' ... ;` with the function it sits in and
-// its errcode (P0001, raise_exception, when none is given).
-function parseRaises(): Raise[] {
-  const raises: Raise[] = [];
-  for (const { name, sql } of migrations) {
-    const starts = [...sql.matchAll(/create\s+or\s+replace\s+function\s+[a-z_]+\.([a-z_]+)\s*\(/gi)];
-    const raisePattern = /raise\s+exception\s+'((?:[^']|'')*)'([^;]*);/gi;
-    for (const match of sql.matchAll(raisePattern)) {
-      const at = match.index ?? 0;
-      const enclosing = starts.filter((start) => (start.index ?? 0) < at).at(-1);
-      raises.push({
-        file: name,
-        fn: enclosing ? enclosing[1] : "(outside any function)",
-        errcode: /errcode\s*=\s*'([0-9A-Z]{5})'/i.exec(match[2])?.[1] ?? "P0001",
-        literal: match[1].replace(/''/g, "'"),
-      });
-    }
-  }
-  return raises;
+// Every RAISE in the migrations (tests/helpers/sql-raises.ts). The parser
+// throws on any form it can't read completely; the first migration test
+// reports that, since the tests that iterate over raises would otherwise
+// just see none.
+let parsed: ParsedMigrations = { all: [], live: [], liveBodies: new Map() };
+let parseFailure: unknown = null;
+try {
+  parsed = parseMigrations(migrations);
+} catch (error) {
+  parseFailure = error;
 }
 
-const raises = parseRaises();
+// The ones a user can hit: in the definition of a function that is in force
+// after the last migration (an older body of close_extraction_run doesn't
+// count), at the level that aborts.
+const raises = parsed.live.filter((r) => r.level === "exception");
+const raiseKey = (r: SqlRaise) => `${r.fn}: ${r.message}`;
 
 // What each function's errors surface as, by the operation the app names
 // when it classifies them. Triggers surface through the write that fired
@@ -311,8 +303,40 @@ const STORAGE_CASES: StorageCase[] = [
 
 type ProviderCase = [label: string, error: ProviderError, ErrorCode];
 
+// What interpret.ts throws for an answer that didn't end with a normal
+// finish. Only the fields it reads are filled in; interpret.test.ts checks
+// its handling of the SDKs' full types.
+function interpreted(read: () => unknown): ProviderError {
+  try {
+    read();
+  } catch (error) {
+    if (error instanceof ProviderError) return error;
+    throw error;
+  }
+  throw new Error("expected a ProviderError");
+}
+
+const billed = { input_tokens: 100, output_tokens: 10 };
+
+function anthropicEnding(stopReason: string | null): ProviderError {
+  const message = { model: "claude-haiku-4-5-20251001", content: [], stop_reason: stopReason, usage: billed };
+  return interpreted(() => interpretAnthropicMessage(message as unknown as Anthropic.Message, 2048));
+}
+
+function openAIEnding(status: string, incompleteReason?: string): ProviderError {
+  const response = {
+    model: "gpt-5-nano-2025-08-07",
+    status,
+    output: [],
+    output_text: "",
+    incomplete_details: incompleteReason ? { reason: incompleteReason } : null,
+    usage: billed,
+  };
+  return interpreted(() => interpretOpenAIResponse(response as unknown as OpenAI.Responses.Response, 2048));
+}
+
 const PROVIDER_CASES: ProviderCase[] = [
-  ["timeout", new ProviderError("anthropic", "transport", PROVIDER_TIMEOUT_MESSAGE), "extraction.provider_timeout"],
+  ["timeout", new ProviderError("anthropic", "transport", PROVIDER_MESSAGES.timeout), "extraction.provider_timeout"],
   ["connection failed", new ProviderError("openai", "transport", "connection failed"), "extraction.provider_unavailable"],
   ["overloaded", new ProviderError("anthropic", "server", "Overloaded", 529), "extraction.provider_unavailable"],
   ["bad gateway", new ProviderError("openai", "server", "bad gateway", 502), "extraction.provider_unavailable"],
@@ -326,6 +350,19 @@ const PROVIDER_CASES: ProviderCase[] = [
   ["refusal", new ProviderError("anthropic", "refusal", "the model declined to process this document"), "extraction.refused"],
   ["incomplete for another reason", new ProviderError("openai", "refusal", "the response was incomplete (content_filter)"), "extraction.refused"],
   ["truncated", new ProviderError("openai", "truncated", "the answer exceeded the 2048 output token cap"), "extraction.truncated"],
+  // endings interpret.ts fails closed on
+  ...(["pause_turn", "stop_sequence", "tool_use", null] as const).map(
+    (reason): ProviderCase => [`Anthropic stop reason ${reason}`, anthropicEnding(reason), "extraction.answer_incomplete"],
+  ),
+  ["Anthropic context window", anthropicEnding("model_context_window_exceeded"), "extraction.truncated"],
+  ["Anthropic refusal", anthropicEnding("refusal"), "extraction.refused"],
+  ["Anthropic output cap", anthropicEnding("max_tokens"), "extraction.truncated"],
+  ["OpenAI response failed", openAIEnding("failed"), "extraction.provider_unavailable"],
+  ...(["cancelled", "queued", "in_progress"] as const).map(
+    (status): ProviderCase => [`OpenAI response ${status}`, openAIEnding(status), "extraction.answer_incomplete"],
+  ),
+  ["OpenAI content filter", openAIEnding("incomplete", "content_filter"), "extraction.refused"],
+  ["OpenAI output cap", openAIEnding("incomplete", "max_output_tokens"), "extraction.truncated"],
 ];
 
 // Strings in the shapes the Extract action and the reaper store. The
@@ -339,10 +376,18 @@ const RUN_STRING_CASES: [label: string, error: string | null, ErrorCode][] = [
   ["bad provider setting", describeError(new Error(`${PROVIDER_ENV_VAR} must be "anthropic" or "openai"`)), "extraction.not_configured"],
   ["no key, unwrapped", "extraction is not configured: OPENAI_API_KEY is not set", "extraction.not_configured"],
   ["reaped", `abandoned: still running after ${EXTRACTION_LIMITS.staleRunMinutes} minutes; failed by a later open`, "extraction.abandoned"],
-  // Item 3 is changing how a run records both providers failing. Whatever
-  // joins the two, naming both is enough.
-  ["both failed, joined by a semicolon", "anthropic transport: request timed out; fallback openai server 503: Service Unavailable", "extraction.all_providers_failed"],
-  ["both failed, other wording", "both providers failed (openai client 400: bad request / anthropic transport: connection failed)", "extraction.all_providers_failed"],
+  ["both failed", "anthropic transport: request timed out; fallback openai server 503: Service Unavailable", "extraction.all_providers_failed"],
+  ["both failed, fallback refused", "openai server 502: bad gateway; fallback anthropic refusal: the model declined to process this document", "extraction.all_providers_failed"],
+  // One provider's error that merely mentions another is one failure.
+  ["one error naming another provider", "anthropic client 400: bad request; see openai server status", "extraction.provider_rejected"],
+  ["one error quoting the fallback shape loosely", "anthropic server 503: upstream says openai transport: down", "extraction.provider_unavailable"],
+  ["two providers, not in run.ts's shape", "both providers failed (openai client 400: bad request / anthropic transport: connection failed)", "unknown"],
+  ["no fallback after a timeout", "anthropic transport: request timed out; no fallback provider is configured", "extraction.provider_timeout"],
+  ["no fallback after a 5xx", "openai server 503: Service Unavailable; no fallback provider is configured", "extraction.provider_unavailable"],
+  ["an unexpected stop", "anthropic client: the answer stopped unexpectedly (pause_turn)", "extraction.answer_incomplete"],
+  ["an OpenAI response that failed", "openai server: the response did not complete (failed)", "extraction.provider_unavailable"],
+  ["an OpenAI response cancelled", "openai client: the response did not complete (cancelled)", "extraction.answer_incomplete"],
+  ["cut off at the context window", "anthropic truncated: the answer was cut off at the model's context window", "extraction.truncated"],
   ["an exception from the action", describeError(new TypeError(SECRET)), "unknown"],
   ["empty", "", "unknown"],
   ["blank", "   ", "unknown"],
@@ -356,6 +401,8 @@ type RunCase = {
   label: string;
   primary: (ProviderResponse | ProviderError)[];
   fallback?: (ProviderResponse | ProviderError)[];
+  // what run.ts stores, where the exact text matters
+  stored?: string | RegExp;
   expected: ErrorCode;
 };
 
@@ -378,9 +425,69 @@ const spoofed = notJson(
 );
 
 const RUN_CASES: RunCase[] = [
-  { label: "timeout, no fallback", primary: [new ProviderError("anthropic", "transport", PROVIDER_TIMEOUT_MESSAGE)], expected: "extraction.provider_timeout" },
+  {
+    label: "timeout, no fallback",
+    primary: [new ProviderError("anthropic", "transport", PROVIDER_MESSAGES.timeout)],
+    stored: "anthropic transport: request timed out; no fallback provider is configured",
+    expected: "extraction.provider_timeout",
+  },
   { label: "connection failed, no fallback", primary: [new ProviderError("anthropic", "transport", "connection failed")], expected: "extraction.provider_unavailable" },
-  { label: "5xx, no fallback", primary: [new ProviderError("openai", "server", "Service Unavailable", 503)], expected: "extraction.provider_unavailable" },
+  {
+    label: "5xx, no fallback",
+    primary: [new ProviderError("openai", "server", "Service Unavailable", 503)],
+    stored: "openai server 503: Service Unavailable; no fallback provider is configured",
+    expected: "extraction.provider_unavailable",
+  },
+  {
+    label: "primary times out, fallback 5xx",
+    primary: [new ProviderError("anthropic", "transport", PROVIDER_MESSAGES.timeout)],
+    fallback: [new ProviderError("openai", "server", "Service Unavailable", 503)],
+    stored: "anthropic transport: request timed out; fallback openai server 503: Service Unavailable",
+    expected: "extraction.all_providers_failed",
+  },
+  {
+    label: "primary 5xx, fallback refuses",
+    primary: [new ProviderError("anthropic", "server", "Overloaded", 529)],
+    fallback: [openAIEnding("incomplete", "content_filter")],
+    stored: /^anthropic server 529: Overloaded; fallback openai refusal: /,
+    expected: "extraction.all_providers_failed",
+  },
+  {
+    // after the fallback answers, a failed retry is that one failure alone
+    label: "primary times out, fallback answers invalid, its retry 5xx",
+    primary: [new ProviderError("anthropic", "transport", PROVIDER_MESSAGES.timeout)],
+    fallback: [notJson(), new ProviderError("openai", "server", "Service Unavailable", 503)],
+    stored: /^retry after invalid response \([\s\S]*\) failed: openai server 503: Service Unavailable$/,
+    expected: "extraction.provider_unavailable",
+  },
+  {
+    label: "an unexpected stop reason",
+    primary: [anthropicEnding("pause_turn")],
+    fallback: [],
+    stored: "anthropic client: the answer stopped unexpectedly (pause_turn)",
+    expected: "extraction.answer_incomplete",
+  },
+  {
+    label: "an OpenAI response that failed",
+    primary: [openAIEnding("failed")],
+    fallback: [],
+    stored: "openai server: the response did not complete (failed)",
+    expected: "extraction.provider_unavailable",
+  },
+  {
+    label: "an OpenAI response cancelled",
+    primary: [openAIEnding("cancelled")],
+    fallback: [],
+    stored: "openai client: the response did not complete (cancelled)",
+    expected: "extraction.answer_incomplete",
+  },
+  {
+    label: "cut off at the context window",
+    primary: [anthropicEnding("model_context_window_exceeded")],
+    fallback: [],
+    stored: "anthropic truncated: the answer was cut off at the model's context window",
+    expected: "extraction.truncated",
+  },
   { label: "400 does not fall back", primary: [new ProviderError("anthropic", "client", "Could not process PDF", 400)], fallback: [], expected: "extraction.provider_rejected" },
   { label: "bad key", primary: [new ProviderError("anthropic", "client", "invalid x-api-key", 401)], expected: "extraction.not_configured" },
   { label: "429", primary: [new ProviderError("openai", "client", "Rate limit reached", 429)], expected: "extraction.provider_unavailable" },
@@ -388,31 +495,18 @@ const RUN_CASES: RunCase[] = [
   { label: "truncated", primary: [new ProviderError("openai", "truncated", "the answer exceeded the 2048 output token cap")], expected: "extraction.truncated" },
   { label: "invalid twice", primary: [notJson(), notJson()], expected: "extraction.invalid_answer" },
   { label: "invalid twice, keys impersonating provider errors", primary: [spoofed, spoofed], expected: "extraction.invalid_answer" },
-  { label: "invalid, then the retry times out", primary: [notJson(), new ProviderError("anthropic", "transport", PROVIDER_TIMEOUT_MESSAGE)], expected: "extraction.provider_timeout" },
-  { label: "impersonating keys, then the retry times out", primary: [spoofed, new ProviderError("anthropic", "transport", PROVIDER_TIMEOUT_MESSAGE)], expected: "extraction.provider_timeout" },
+  { label: "invalid, then the retry times out", primary: [notJson(), new ProviderError("anthropic", "transport", PROVIDER_MESSAGES.timeout)], expected: "extraction.provider_timeout" },
+  { label: "impersonating keys, then the retry times out", primary: [spoofed, new ProviderError("anthropic", "transport", PROVIDER_MESSAGES.timeout)], expected: "extraction.provider_timeout" },
   { label: "invalid, then the retry is refused", primary: [notJson(), new ProviderError("anthropic", "refusal", "declined")], expected: "extraction.refused" },
 ];
-
-function fakeProvider(name: ProviderName, answers: (ProviderResponse | ProviderError)[]): ExtractionProvider {
-  return {
-    name,
-    model: name === "anthropic" ? "claude-haiku-4-5-20251001" : "gpt-5-nano",
-    async extract() {
-      const next = answers.shift();
-      if (!next) throw new Error(`fake ${name} provider has no answer left`);
-      if (next instanceof ProviderError) throw next;
-      return next;
-    },
-  };
-}
 
 async function storedError(primary: (ProviderResponse | ProviderError)[], fallback?: (ProviderResponse | ProviderError)[]) {
   const outcome = await runExtraction({
     bytes: new TextEncoder().encode("%PDF-1.4 fake"),
     mimeType: "application/pdf",
     filename: "fake.pdf",
-    primary: fakeProvider("anthropic", [...primary]),
-    fallback: fallback ? fakeProvider("openai", [...fallback]) : null,
+    primary: fakeProvider("anthropic", "claude-haiku-4-5-20251001", primary),
+    fallback: fallback ? fakeProvider("openai", "gpt-5-nano", fallback) : null,
   });
   if (outcome.status !== "failed") throw new Error("expected the fake run to fail");
   return outcome.error;
@@ -463,6 +557,13 @@ const THROWN_CASES: [label: string, error: unknown, ErrorCode][] = [
   ["Firefox", new TypeError("NetworkError when attempting to fetch resource."), "network.unavailable"],
   ["Safari", new TypeError("Load failed"), "network.unavailable"],
   ["Node", new TypeError("fetch failed"), "network.unavailable"],
+  ["older Safari, lost", new TypeError("The network connection was lost."), "network.unavailable"],
+  ["older Safari, offline", new TypeError("The Internet connection appears to be offline."), "network.unavailable"],
+  // bugs whose messages merely contain a network word
+  ["a bug naming fetch", new TypeError("fetchDocuments is not a function"), "unknown"],
+  ["a bug naming the network", new TypeError("network is undefined"), "unknown"],
+  ["a failed chunk import", new TypeError("Failed to fetch dynamically imported module: /_next/x.js"), "unknown"],
+  ["the right words from the wrong class", new Error("Failed to fetch"), "unknown"],
   ["aborted", new DOMException("The operation was aborted.", "AbortError"), "network.unavailable"],
   ["timed out", new DOMException("The operation timed out.", "TimeoutError"), "network.unavailable"],
   ["a bug", new TypeError("Cannot read properties of undefined (reading 'id')"), "unknown"],
@@ -586,36 +687,41 @@ describe("ERRORS.md", () => {
 });
 
 describe("the migrations", () => {
-  it("parses every raise in the migrations", () => {
-    const count = (allSql.match(/raise\s+exception/gi) ?? []).length;
-    expect(raises.length).toBe(count);
+  it("has every RAISE readable, and counts a redefined function once", () => {
+    if (parseFailure) throw parseFailure;
     expect(raises.length).toBeGreaterThan(20);
+    // close_extraction_run is defined in two migrations; only the later body counts
+    const close = (list: SqlRaise[]) => list.filter((r) => r.fn === "close_extraction_run");
+    expect(close(parsed.all).length).toBeGreaterThan(close(raises).length);
+    for (const fn of new Set(raises.map((r) => r.fn))) {
+      expect(new Set(raises.filter((r) => r.fn === fn).map((r) => r.file)).size, String(fn)).toBe(1);
+    }
   });
 
   it("has a reviewed code for every raise, and no stale entries", () => {
-    const keys = raises.map((r) => `${r.fn}: ${r.literal}`);
+    const keys = raises.map(raiseKey);
     expect(keys.filter((key) => !(key in RAISE_CODES))).toEqual([]);
     expect(Object.keys(RAISE_CODES).filter((key) => !keys.includes(key))).toEqual([]);
   });
 
-  it.each(raises.map((r): [string, Raise] => [`${r.file} ${r.fn} ${r.errcode} "${r.literal}"`, r]))(
+  it.each(raises.map((r): [string, SqlRaise] => [`${r.file}:${r.line} ${r.fn} ${r.sqlstate} "${r.message}"`, r]))(
     "%s maps to its reviewed code",
     (_label, r) => {
-      const operations = FUNCTION_OPERATIONS[r.fn];
+      const operations = FUNCTION_OPERATIONS[r.fn ?? ""];
       expect(operations, `no operation known for ${r.fn}; add it to FUNCTION_OPERATIONS`).toBeDefined();
-      const expected = RAISE_CODES[`${r.fn}: ${r.literal}`];
+      const expected = RAISE_CODES[raiseKey(r)];
       expect(expected).not.toBe("unknown");
       for (const operation of operations) {
-        const error = pgError(r.errcode, render(r.literal));
+        const error = pgError(r.sqlstate, render(r.message));
         expect(classifyDatabaseError(error, operation), operation).toBe(expected);
       }
     },
   );
 
-  it("still raises every phrase the module matches on", () => {
-    const literals = raises.map((r) => r.literal);
+  it("still raises every phrase the module matches on, in the live functions", () => {
+    const messages = raises.map((r) => r.message);
     for (const [name, phrase] of Object.entries(DATABASE_PHRASES)) {
-      expect(literals.some((literal) => literal.startsWith(phrase)), name).toBe(true);
+      expect(messages.some((message) => message.startsWith(phrase)), name).toBe(true);
     }
   });
 
@@ -628,10 +734,10 @@ describe("the migrations", () => {
       "complete_document_upload 55000": [DATABASE_PHRASES.notWaitingForUpload, DATABASE_PHRASES.noFileUploaded],
     };
     for (const [key, phrases] of Object.entries(phrased)) {
-      const [fn, errcode] = key.split(" ");
-      const found = raises.filter((r) => r.fn === fn && r.errcode === errcode).map((r) => r.literal);
+      const [fn, sqlstate] = key.split(" ");
+      const found = raises.filter((r) => r.fn === fn && r.sqlstate === sqlstate).map((r) => r.message);
       expect(found.length, key).toBe(phrases.length);
-      for (const literal of found) expect(phrases.some((p) => literal.startsWith(p)), literal).toBe(true);
+      for (const message of found) expect(phrases.some((p) => message.startsWith(p)), message).toBe(true);
     }
   });
 
@@ -646,8 +752,8 @@ describe("the migrations", () => {
     expect(allSql).not.toMatch(/drop constraint (if exists )?tenants_(name|slug)_check/i);
   });
 
-  it("still has the reaper's message", () => {
-    expect(allSql).toContain(RUN_ERROR_MARKERS.abandoned);
+  it("still has the reaper's message, in the live open_extraction_run", () => {
+    expect(parsed.liveBodies.get("open_extraction_run")).toContain(RUN_ERROR_MARKERS.abandoned);
   });
 
   it("enforces the rules the local checks mirror", () => {
@@ -674,18 +780,23 @@ describe("the sources that write run errors", () => {
     expect(run).toContain(RUN_ERROR_MARKERS.invalidAfterRetry);
     expect(run).toContain(RUN_ERROR_MARKERS.retryFailed);
     expect(run).toContain(RUN_ERROR_MARKERS.retryFailedSeparator);
+    expect(run).toContain(RUN_ERROR_MARKERS.fallbackFailed);
+    expect(run).toContain(RUN_ERROR_MARKERS.noFallback);
 
     const select = read("src/lib/extraction/providers/select.ts");
     expect(select).toContain(RUN_ERROR_MARKERS.notConfigured);
     expect(select).toContain("${PROVIDER_ENV_VAR} must be");
   });
 
-  it("still call a timeout what the module calls a timeout", () => {
+  it("still start provider messages the way the module reads them", () => {
     const dir = "src/lib/extraction/providers";
     const sources = readdirSync(join(ROOT, dir))
       .filter((name) => name.endsWith(".ts"))
       .map((name) => read(join(dir, name)));
-    expect(sources.some((source) => source.includes(`"${PROVIDER_TIMEOUT_MESSAGE}"`))).toBe(true);
+    for (const [name, start] of Object.entries(PROVIDER_MESSAGES)) {
+      // quoted: as a whole string, or as the start of a template literal
+      expect(sources.some((source) => source.includes(`"${start}"`) || source.includes(`\`${start}`)), name).toBe(true);
+    }
   });
 });
 
@@ -726,18 +837,11 @@ describe("classifyRunError", () => {
     expect(classifyRunError(error)).toBe(expected);
   });
 
-  it.each(RUN_CASES)("what the orchestrator stores: $label", async ({ primary, fallback, expected }) => {
-    expect(classifyRunError(await storedError(primary, fallback))).toBe(expected);
-  });
-
-  it("what the orchestrator stores when the primary and the fallback both fail", async () => {
-    const error = await storedError(
-      [new ProviderError("anthropic", "transport", PROVIDER_TIMEOUT_MESSAGE)],
-      [new ProviderError("openai", "server", "Service Unavailable", 503)],
-    );
-    // run.ts names both failures, primary first
-    expect(error).toMatch(/^anthropic transport: .*; fallback openai server 503: /);
-    expect(classifyRunError(error)).toBe("extraction.all_providers_failed");
+  it.each(RUN_CASES)("what the orchestrator stores: $label", async ({ primary, fallback, stored, expected }) => {
+    const error = await storedError(primary, fallback);
+    if (typeof stored === "string") expect(error).toBe(stored);
+    else if (stored) expect(error).toMatch(stored);
+    expect(classifyRunError(error)).toBe(expected);
   });
 });
 
@@ -801,6 +905,42 @@ describe("what the user sees", () => {
         for (const part of secretParts) expect(shown).not.toContain(part);
       }
     }
+  });
+
+  it("never throws on input that throws when it is read, and is unknown when every read does", () => {
+    const fail = () => {
+      throw new Error(SECRET);
+    };
+    const fields = ["code", "message", "name", "status", "statusCode", "kind", "reasons"];
+    const classifyAll = (input: unknown) => [
+      classifyDatabaseError(input as never, "open_extraction_run"),
+      classifyAuthError(input as never, "signUp"),
+      classifyStorageError(input as never, "upload"),
+      classifyProviderError(input as never),
+      classifyRunError(input as never),
+      classifyThrown(input),
+    ];
+
+    // one field throws, the rest are plausible: whatever comes back is a code
+    for (const key of fields) {
+      const input = { code: "42501", name: "TypeError", kind: "client", status: 400, message: "Failed to fetch" };
+      Object.defineProperty(input, key, { get: fail });
+      for (const code of classifyAll(input)) expect(isErrorCode(code), key).toBe(true);
+    }
+
+    // every read throws
+    const revoked = Proxy.revocable({}, {});
+    revoked.revoke();
+    const everyGetter = Object.defineProperties({}, Object.fromEntries(fields.map((key) => [key, { get: fail }])));
+    for (const input of [everyGetter, new Proxy({}, { get: fail }), revoked.proxy]) {
+      expect(classifyAll(input)).toEqual(Array(6).fill("unknown"));
+    }
+
+    // weak_password reasons that can't be read
+    const weakWith = (reasons: unknown) => Object.assign(new AuthApiError("weak", 422, "weak_password"), { reasons });
+    expect(classifyAuthError(weakWith(new Proxy([], { get: fail })), "signUp")).toBe("unknown");
+    // not an array, so not taken as reasons: the message that states every rule
+    expect(classifyAuthError(weakWith({ [Symbol.iterator]: fail }), "signUp")).toBe("auth.password_weak");
   });
 
   it("is unknown for a provider error of a kind that doesn't exist", () => {

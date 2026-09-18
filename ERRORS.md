@@ -1,13 +1,19 @@
 # Error messages
 
-Every failure a user can hit, the code `src/lib/errors.ts` gives it, and the message the user sees. `tests/unit/errors.test.ts` fails if this table and the module disagree, if a `raise` in `supabase/migrations/` has no code, or if a phrase the module matches on disappears from the SQL.
+Every failure a user can hit, the code `src/lib/errors.ts` gives it, and the message the user is meant to see. `tests/unit/errors.test.ts` fails if this table and the module disagree, if a `raise` in a live function in `supabase/migrations/` has no code, or if a phrase the module matches on disappears from the SQL or from the code that writes it.
+
+> **Not wired in yet.** Nothing in `src/` imports `errors.ts`: `src/app` is frozen while the UI is redesigned. Until the call sites switch over, today's UI still shows raw error text. The Server Actions return Supabase's `error.message`. The Extract action returns the stored run error and the database's refusal text. The upload and download controls show Storage's messages. And `src/app/app/[slug]/extraction-panel.tsx` renders `run.error` raw to every member of the organization. The call sites to change, and which classifier each should use, are listed in the message of commit c163aeb, which added the module. Everything below describes the module, not the current UI.
 
 ## Rules
 
-- A user only ever sees the Message column, looked up by code with `userFacingError(code)`. No classifier returns text, so nothing that Postgres, Supabase Auth, Storage, a model provider or a document produced can reach the page through this module.
-- Anything not listed maps to `unknown`, whose message is generic. Its input is never echoed.
+- Once wired in, a user sees only the Message column, looked up by code with `userFacingError(code)`. No classifier returns text, so nothing that Postgres, Supabase Auth, Storage, a model provider or a document produced can reach the page through this module.
+- Anything not listed maps to `unknown`, whose message is generic. Its input is never echoed. An input that throws when read (a hostile getter, a revoked Proxy) is `unknown` too; no classifier throws.
 - Where the database deliberately gives one answer for two cases (a document that doesn't exist and one you can't see; a slug that doesn't exist and an organization you aren't in), the message covers both, so the UI can't be used to probe either.
-- Classification goes by code (SQLSTATE, Auth code, Storage code, ProviderError kind) and by what was attempted. Message text is read only where one SQLSTATE covers two outcomes, and then only as the exact phrase a migration raises.
+- Classification goes by code (SQLSTATE, Auth code, Storage code, ProviderError kind) and by what was attempted. Message text is read in four places, each to sharpen a code, never to pick one from free text:
+  - Database errors: only where one SQLSTATE covers two outcomes, as the exact phrase a migration raises. The test proves each phrase is still raised by the function's live definition.
+  - Stored run errors and ProviderError messages: prefixes and shapes this repo writes itself (`run.ts`, the provider modules, the Extract action), each checked against its source. The part of a run error that can quote the model's answer is never searched.
+  - Supabase Auth `validation_failed`: GoTrue's wording for an over-long password or a malformed email. Nothing in this repo can confirm that wording, so a mismatch only falls back to `input.invalid`.
+  - Thrown errors: the exact messages browsers and Node give a fetch that failed on the network. A bug whose message merely contains "fetch" stays `unknown`.
 - Retry is "yes" when repeating the same action unchanged can succeed, possibly after the wait the message names. Every "yes" message says "try again" and no "no" message does.
 
 ## Using it
@@ -19,7 +25,7 @@ Every failure a user can hit, the code `src/lib/errors.ts` gives it, and the mes
 - An exception thrown around a Server Action call: `classifyThrown(error)`.
 - Before submitting a form: `checkCredentials`, `checkTenantInput`, `checkFilename`, `checkUploadFile`.
 - An update or delete that RLS filters to zero rows returns no error at all; the call site picks the code ("zero rows" below).
-- A Server Action returns the code; the page renders `userFacingError(code).message`. A code arriving in a URL is checked with `isErrorCode` first.
+- A Server Action should return the code, and the page render `userFacingError(code).message`. A code arriving in a URL is checked with `isErrorCode` first.
 
 ## Signing up, signing in and the session
 
@@ -119,23 +125,24 @@ These come from the text stored in `extraction_runs.error` (and returned as the 
 | The provider rejects our key or model id | ProviderError `client` with 401, 403 or 404 | `extraction.not_configured` | no | Extraction isn't set up on this server. Ask whoever runs this service to configure it. |
 | The file couldn't be downloaded with the user's session | starts "could not download the file" | `extraction.download_failed` | yes | The file couldn't be read for extraction. Please try again. |
 | The bytes aren't the declared type (magic-byte check) | starts "file content (" | `extraction.file_type_mismatch` | no | This file's contents don't match its file type, so it wasn't sent for extraction. Upload it again as a genuine PDF, PNG or JPEG file. |
-| A provider call timed out | ProviderError `transport` "request timed out" | `extraction.provider_timeout` | yes | The extraction service took too long to respond. Try again in a few minutes. |
-| A provider is unreachable, answers 5xx, or rate limits us | ProviderError `transport` otherwise, `server`, or `client` with 429 | `extraction.provider_unavailable` | yes | The extraction service is unavailable or busy right now. Try again in a few minutes. |
-| The primary and the fallback provider both failed | two different providers named in the error | `extraction.all_providers_failed` | yes | Both extraction services we use failed on this document. Try again in a few minutes. |
+| A provider call timed out, with or without a fallback configured | ProviderError `transport` "request timed out", optionally followed by "; no fallback provider is configured" | `extraction.provider_timeout` | yes | The extraction service took too long to respond. Try again in a few minutes. |
+| A provider is unreachable, answers 5xx, rate limits us, or reports its response `failed` | ProviderError `transport` otherwise, `server` (including OpenAI's "the response did not complete (failed)"), or `client` with 429 | `extraction.provider_unavailable` | yes | The extraction service is unavailable or busy right now. Try again in a few minutes. |
+| The primary failed, and the fallback's first call failed too | run.ts's shape: a provider error, "; fallback ", a second provider error. One error that merely mentions another provider doesn't count | `extraction.all_providers_failed` | yes | Both extraction services we use failed on this document. Try again in a few minutes. |
 | A provider rejects the document (damaged, protected or too long) | ProviderError `client` with any other status | `extraction.provider_rejected` | no | The extraction service couldn't process this document. It may be damaged, password-protected or too long. |
-| The model refused, or stopped for a reason other than the output cap | ProviderError `refusal` | `extraction.refused` | no | The extraction service declined to process this document. Review it yourself instead. |
-| The answer hit the output token cap | ProviderError `truncated` | `extraction.truncated` | no | This document has more content than one extraction can return. Review it yourself instead. |
+| The model refused, or OpenAI ended the answer early for a reason other than the output cap (a content filter) | ProviderError `refusal` | `extraction.refused` | no | The extraction service declined to process this document. Review it yourself instead. |
+| The answer hit the output token cap, or was cut off at the model's context window | ProviderError `truncated` | `extraction.truncated` | no | This document has more content than one extraction can return. Review it yourself instead. |
+| The answer ended abnormally: an Anthropic stop reason other than end_turn, refusal and the two cut-offs (`pause_turn`, `stop_sequence`, `tool_use`, none), or an OpenAI response left `cancelled`, `queued` or `in_progress` | ProviderError `client` without a status, "the answer stopped unexpectedly" or "the response did not complete" | `extraction.answer_incomplete` | yes | The extraction service stopped before finishing its answer. Please try again. |
 | The answer failed validation, and so did the retry | starts "response failed validation after" | `extraction.invalid_answer` | yes | The extraction service's answer failed our checks, even after a second attempt. You can try again or review the document yourself. |
 | The answer failed validation and the retry call failed | starts "retry after invalid response (": the provider error after the last ") failed: " decides, as above; if it can't be read, this | `extraction.invalid_answer` | yes | The extraction service's answer failed our checks, even after a second attempt. You can try again or review the document yourself. |
 | A run left `running` past the stale limit, failed by the next open | starts "abandoned: still running after" (the reaper in `open_extraction_run`) | `extraction.abandoned` | yes | This extraction stopped before it finished and was cancelled. Please try again. |
-| An SDK error with no HTTP status (a bug, or a response without usage) | ProviderError `client` without a status | `unknown` | yes | Something went wrong. Please try again. |
+| An SDK error with no HTTP status (a bug, or a response without usage) | ProviderError `client` without a status, other than the row above | `unknown` | yes | Something went wrong. Please try again. |
 | The outcome couldn't be recorded, so the document stays `processing` until the reaper frees it | any error from `close_extraction_run`, including a lost connection | `extraction.record_failed` | yes | The extraction ran, but its result couldn't be saved. You can try again in about 10 minutes. |
 
 ## Anywhere
 
 | Failure | Detected by | Code | Retry | Message |
 |---|---|---|---|---|
-| No response from Supabase (offline, DNS, aborted) | PostgREST `code: ""`; `AuthRetryableFetchError` with status 0; `StorageUnknownError`; a thrown fetch `TypeError` or `AbortError` | `network.unavailable` | yes | We couldn't reach the server. Check your internet connection and try again. |
+| No response from Supabase (offline, DNS, aborted) | PostgREST `code: ""`; `AuthRetryableFetchError` with status 0; `StorageUnknownError`; a thrown `TypeError` with exactly the message a browser or Node gives a failed fetch; `AbortError`, `TimeoutError` | `network.unavailable` | yes | We couldn't reach the server. Check your internet connection and try again. |
 | Supabase or the database temporarily unavailable | HTTP 5xx or 429; `PGRST000` to `PGRST003`; 40001, 40P01, 53000, 53200, 53300, 55P03, 57014, 57P01 to 57P03, class 08; Storage `DatabaseTimeout`, `SlowDown` and similar; Auth 5xx | `service.unavailable` | yes | The service is temporarily unavailable. Please try again in a minute. |
 | Input no check above names (a malformed id, a missing value, an unnamed check) | 22P02, 23502, 23514, 22001, 22023 | `input.invalid` | no | Some of the information you entered isn't valid. Correct it and submit the form again. |
 | Anything else | everything not above | `unknown` | yes | Something went wrong. Please try again. |
