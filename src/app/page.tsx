@@ -27,8 +27,8 @@ export const metadata: Metadata = {
 };
 
 // Every fact here can be checked in the repo, and the copy changes when
-// they do: the headline is SITE_SUMMARY cut to two sentences that can be set
-// at 140px, with the whole sentence kept beside it; the bucket's size and types in the documents migrations, the
+// they do: the headline is SITE_SUMMARY cut to one sentence that can be set
+// at 140px, in its own words, with the whole sentence kept beside it; the bucket's size and types in the documents migrations, the
 // page limit, thresholds, models, timeout and output cap in
 // src/lib/extraction/config.ts, the limits in public.extraction_limits
 // (mirrored there), and the eval figures in EVALS.md. Non-breaking spaces
@@ -117,7 +117,7 @@ export default async function Home() {
       <main id={MAIN_ID} className={styles.frame}>
         <section className={`${styles.grid} ${styles.hero}`}>
           <h1 className={styles.display}>
-            <span>Reads documents.</span> <span>Marks its doubts.</span>
+            <span>Reads documents,</span> <span>marks unsure fields.</span>
           </h1>
           <Detail />
           <p className={styles.lede}>{SITE_SUMMARY}</p>
