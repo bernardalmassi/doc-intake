@@ -10,16 +10,18 @@ import styles from "./landing.module.css";
 // line sits under the words each field quoted, and a leader runs from the
 // end of that line to the field.
 //
-// The two Low fields are shown when their words first come on screen;
-// pointing at, clicking or arrowing to a field shows that one. The lines
-// on the scan are in the server's HTML, so the figure makes sense before
-// hydration; the leaders need measurements, so they are drawn only in the
-// browser and only side by side (64rem up).
+// The scan is the page's main image, so it is preloaded. The lines are in
+// the server's HTML but stay hidden until the scan has loaded and decoded,
+// and the leaders wait for the same, so nothing is ever drawn over an empty
+// box. The two Low fields are shown when their words first come on screen;
+// pointing at, clicking or focusing a field shows that one. Leaders need
+// measurements, so they are drawn only in the browser and only side by
+// side (64rem up).
 //
-// The fields are one Tab stop: a listbox whose active option follows the
-// arrow keys (aria-activedescendant), so a screen reader hears a list and
-// each field's position in it. Focus alone shows a field; there is nothing
-// to press.
+// The fields are a list with one Tab stop, a roving tab index: the arrow
+// keys move focus between fields, Home and End go to the ends, and focus
+// alone shows a field, so there is nothing to press. Each item carries its
+// position (aria-posinset, aria-setsize) and a written-out name.
 
 // "low": both Low fields, the figure's state on arrival. Otherwise the
 // name of the one field shown.
@@ -35,13 +37,12 @@ const isShown = (shown: Shown, field: Fig1Field) => (shown === LOW ? field.band 
 // screen too.
 const ARRIVAL_MARK = FIELDS.find((f) => f.band === "low")?.marks[0];
 
-// Where the arrow keys start: the first Low field.
+// The item that holds the list's Tab stop until a field is focused: the
+// first Low field.
 const FIRST_LOW = Math.max(
   0,
   FIELDS.findIndex((f) => f.band === "low"),
 );
-
-const optionId = (field: Fig1Field) => `fig-1-${field.name}`;
 
 function markStyle([x, y, width]: Mark): React.CSSProperties {
   return {
@@ -78,16 +79,19 @@ export function Figure() {
   // Changes with every new selection, so the leaders remount and draw again.
   const [draws, setDraws] = useState(0);
   const [geometry, setGeometry] = useState<Geometry | null>(null);
-  // The listbox's active option: the field the arrow keys are on.
+  // The scan has loaded and decoded: until then no line or leader is drawn.
+  const [painted, setPainted] = useState(false);
+  // The item with tabIndex 0: the list's one Tab stop.
   const [active, setActive] = useState(FIRST_LOW);
 
   const figureRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
   const scanRef = useRef<HTMLDivElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const arrivalRef = useRef<HTMLSpanElement>(null);
   const anchorRefs = useRef<Record<string, HTMLElement | null>>({});
-  const optionRefs = useRef<(HTMLLIElement | null)[]>([]);
+  const itemRefs = useRef<(HTMLLIElement | null)[]>([]);
 
   const measure = useCallback(() => {
     const figure = figureRef.current?.getBoundingClientRect();
@@ -121,6 +125,19 @@ export function Figure() {
     }
     setGeometry({ width: figure.width, height: figure.height, paths });
   }, []);
+
+  // Lines and leaders only once the scan can be painted. The scan can
+  // finish loading before hydration, before onLoad is attached, so this
+  // also runs once on mount.
+  const whenDecoded = useCallback((image: HTMLImageElement | null) => {
+    if (!image?.complete || image.naturalWidth === 0) return;
+    image.decode().then(
+      () => setPainted(true),
+      () => {},
+    );
+  }, []);
+
+  useEffect(() => whenDecoded(imageRef.current), [whenDecoded]);
 
   // On a phone the scan scrolls sideways: open it at the dates, which are
   // on the right.
@@ -165,124 +182,113 @@ export function Figure() {
     setArrived(true);
   }
 
-  // A key or a click makes a field the active option and shows it.
-  function select(index: number) {
+  // Focus or a click: the field takes the Tab stop and is shown.
+  function take(index: number) {
     const field = FIELDS[index];
     if (!field) return;
     setActive(index);
     show(field.name);
-    // Focus stays on the list, so the browser won't scroll to the option.
-    optionRefs.current[index]?.scrollIntoView({ block: "nearest" });
   }
 
+  // The arrow keys move focus, and focus moves the Tab stop (take, above).
   function onListKeyDown(event: React.KeyboardEvent<HTMLUListElement>) {
+    const from = itemRefs.current.indexOf(event.target as HTMLLIElement);
+    if (from === -1) return;
     const last = FIELDS.length - 1;
-    const target =
+    const to =
       event.key === "ArrowDown"
-        ? Math.min(active + 1, last)
+        ? Math.min(from + 1, last)
         : event.key === "ArrowUp"
-          ? Math.max(active - 1, 0)
+          ? Math.max(from - 1, 0)
           : event.key === "Home"
             ? 0
             : event.key === "End"
               ? last
               : null;
-    if (target === null) return;
+    if (to === null) return;
     event.preventDefault();
-    select(target);
-  }
-
-  // Focus from the keyboard shows the active field. A click focuses the
-  // list too, but its own handler shows the field clicked.
-  function onListFocus(event: React.FocusEvent<HTMLUListElement>) {
-    if (event.target === event.currentTarget && event.currentTarget.matches(":focus-visible")) select(active);
+    itemRefs.current[to]?.focus();
   }
 
   return (
-    <div ref={figureRef} className={`${styles.grid} ${styles.figure}`}>
-      <div ref={frameRef} className={styles.scanFrame}>
-        <div ref={scanRef} className={styles.scan}>
-          <Image
-            src={scan}
-            alt="Page 1 of a scanned invoice from Northgate Fixings & Supply Co. to Bramhall Interiors Ltd: slightly skewed, with a coffee ring over the unit prices, “days” struck through in the terms, handwritten notes (“ext. to 04/06 per DK” under the dates, “1,546.26 o/s” under the total, “chased 12/5 - part pd 500”, “check line 3 qty w/ site”) and a RECEIVED 03 MAY 2026 stamp."
-            sizes="(min-width: 82rem) 50rem, (min-width: 64rem) 62vw, (min-width: 48rem) 100vw, 40rem"
-          />
-          {FIELDS.filter((field) => isShown(shown, field)).flatMap((field) =>
-            field.marks.map((mark) => (
-              <span
-                key={`${field.name}-${mark.join(",")}`}
-                ref={mark === ARRIVAL_MARK ? arrivalRef : undefined}
-                className={styles.mark}
-                style={markStyle(mark)}
-                aria-hidden="true"
-              />
-            )),
-          )}
+    <div ref={figureRef} className={`${styles.grid} ${styles.figureGrid}`}>
+      <figure className={styles.scanFigure}>
+        <div ref={frameRef} className={styles.scanFrame}>
+          <div ref={scanRef} className={styles.scan} data-painted={painted || undefined}>
+            <Image
+              ref={imageRef}
+              src={scan}
+              preload
+              alt="Page 1 of a scanned invoice from Northgate Fixings & Supply Co. to Bramhall Interiors Ltd: slightly skewed, with a coffee ring over the unit prices, “days” struck through in the terms, handwritten notes (“ext. to 04/06 per DK” under the dates, “1,546.26 o/s” under the total, “chased 12/5 - part pd 500”, “check line 3 qty w/ site”) and a RECEIVED 03 MAY 2026 stamp."
+              sizes="(min-width: 82rem) 50rem, (min-width: 64rem) 62vw, (min-width: 48rem) 100vw, 40rem"
+              onLoad={(event) => whenDecoded(event.currentTarget)}
+            />
+            {FIELDS.filter((field) => isShown(shown, field)).flatMap((field) =>
+              field.marks.map((mark) => (
+                <span
+                  key={`${field.name}-${mark.join(",")}`}
+                  ref={mark === ARRIVAL_MARK ? arrivalRef : undefined}
+                  className={styles.mark}
+                  style={markStyle(mark)}
+                  aria-hidden="true"
+                />
+              )),
+            )}
+          </div>
         </div>
-      </div>
 
-      <div className={styles.caption}>
-        <div>
-          <h2 id="fig-1" className={styles.label}>
-            Fig. 1
-          </h2>
-          <p className={`${styles.small} ${styles.captionText}`}>
-            A live run on the deployed app, {RUN.date}. Page 1 of the two-page scan is shown. The document is fictional
-            test data.
-          </p>
-        </div>
-        <dl className={`${styles.small} ${styles.run}`}>
-          <dt>File</dt>
-          <dd>
-            {RUN.filename}, {RUN.pages} pages
-          </dd>
-          <dt>Result</dt>
-          <dd>
-            {RUN.fieldsFound} of {RUN.fieldsTotal} fields, 2 Low: sent to review
-          </dd>
-          <dt>Model</dt>
-          <dd>
-            {RUN.model}, {RUN.calls} call
-          </dd>
-          <dt>Tokens</dt>
-          <dd>
-            {number.format(RUN.inputTokens)} in, {number.format(RUN.outputTokens)} out
-          </dd>
-          <dt>Time</dt>
-          <dd>{RUN.seconds} s</dd>
-          <dt>Cost</dt>
-          <dd>{RUN.costUsd} USD</dd>
-        </dl>
-      </div>
+        <figcaption className={styles.caption}>
+          <div>
+            <h2 id="fig-1" className={styles.label}>
+              Fig. 1
+            </h2>
+            <p className={`${styles.small} ${styles.captionText}`}>
+              A live run on the deployed app, {RUN.date}. Page 1 of the two-page scan is shown. The document is
+              fictional test data.
+            </p>
+          </div>
+          <dl className={`${styles.small} ${styles.run}`}>
+            <dt>File</dt>
+            <dd>
+              {RUN.filename}, {RUN.pages} pages
+            </dd>
+            <dt>Result</dt>
+            <dd>
+              {RUN.fieldsFound} of {RUN.fieldsTotal} fields, 2 Low: sent to review
+            </dd>
+            <dt>Model</dt>
+            <dd>
+              {RUN.model}, {RUN.calls} call
+            </dd>
+            <dt>Tokens</dt>
+            <dd>
+              {number.format(RUN.inputTokens)} in, {number.format(RUN.outputTokens)} out
+            </dd>
+            <dt>Time</dt>
+            <dd>{RUN.seconds} s</dd>
+            <dt>Cost</dt>
+            <dd>{RUN.costUsd} USD</dd>
+          </dl>
+        </figcaption>
+      </figure>
 
-      <ul
-        ref={listRef}
-        role="listbox"
-        tabIndex={0}
-        aria-label="The eleven fields"
-        aria-activedescendant={optionId(FIELDS[active] ?? FIELDS[0])}
-        className={styles.fields}
-        onKeyDown={onListKeyDown}
-        onFocus={onListFocus}
-      >
+      <ul ref={listRef} aria-label="The eleven fields" className={styles.fields} onKeyDown={onListKeyDown}>
         {FIELDS.map((field, index) => {
           const low = field.band === "low";
           return (
             <li
               key={field.name}
-              id={optionId(field)}
               ref={(element) => {
-                optionRefs.current[index] = element;
+                itemRefs.current[index] = element;
               }}
-              role="option"
+              tabIndex={index === active ? 0 : -1}
               aria-label={spokenName(field)}
               aria-posinset={index + 1}
               aria-setsize={FIELDS.length}
-              aria-selected={index === active}
-              data-active={index === active || undefined}
               className={styles.field}
+              onFocus={() => take(index)}
+              onClick={() => take(index)}
               onMouseEnter={field.marks.length > 0 ? () => show(field.name) : undefined}
-              onClick={() => select(index)}
             >
               <div className={styles.fieldHead}>
                 <span
@@ -310,7 +316,7 @@ export function Figure() {
         })}
       </ul>
 
-      {geometry && arrived && (
+      {geometry && arrived && painted && (
         <svg
           className={styles.leaders}
           width={geometry.width}

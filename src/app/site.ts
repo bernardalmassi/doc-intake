@@ -1,10 +1,14 @@
 // The app's name, and what it does in one line. The line is the landing
 // page's heading and every page's meta description; the name ends every
-// page's title (the template in the root layout).
+// other page's title (the template in the root layout).
 export const SITE_NAME = "doc-intake";
 
 export const SITE_SUMMARY =
   "Reads invoices, receipts, contracts and letters into eleven fields, and marks any field it is unsure of for a person to check.";
+
+// The landing page's title, in a tab and in search results: the name, then
+// what it is, in the repo's own term for what it does when unsure.
+export const HOME_TITLE = `${SITE_NAME}, document intake with confidence gating`;
 
 // Where the source lives, from NEXT_PUBLIC_REPO_URL, which Next inlines at
 // build time. The landing page links to it only when this is set: unset,

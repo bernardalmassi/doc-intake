@@ -14,7 +14,8 @@ const geistSans = Geist({
 
 // Each page sets a short title ("Sign in", an organization's name) and the
 // template adds the app's name, so tabs and history entries are told apart
-// by their first words. The landing page sets none and gets the name alone.
+// by their first words. The landing page sets its own whole title
+// (HOME_TITLE in site.ts), which the template leaves alone.
 export const metadata: Metadata = {
   title: { template: `%s · ${SITE_NAME}`, default: SITE_NAME },
   description: SITE_SUMMARY,

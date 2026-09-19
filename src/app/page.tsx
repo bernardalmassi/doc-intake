@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { Archivo } from "next/font/google";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -6,7 +7,7 @@ import styles from "@/app/_landing/landing.module.css";
 import { MAIN_ID } from "@/app/components/site-header";
 import { ThemeToggle } from "@/app/components/theme-toggle";
 import { getCurrentUser } from "@/lib/auth";
-import { REPO_URL, repoLinkLabel, SITE_NAME, SITE_SUMMARY } from "./site";
+import { HOME_TITLE, REPO_URL, repoLinkLabel, SITE_NAME, SITE_SUMMARY } from "./site";
 
 // The landing page has its own look (DESIGN.md, and DESIGN-NOTES.md,
 // "Landing (/)"): the display face loads here and nowhere else, and every
@@ -17,8 +18,12 @@ const archivo = Archivo({
   axes: ["wdth"],
 });
 
-// No metadata of its own: the root layout's default title (the app's name)
-// and description (SITE_SUMMARY, the heading below) are this page's.
+// A whole title of its own, which the root layout's template ("%s ·
+// doc-intake") would otherwise wrap. The description is the root layout's:
+// SITE_SUMMARY, the heading below.
+export const metadata: Metadata = {
+  title: { absolute: HOME_TITLE },
+};
 
 // Every fact here can be checked in the repo, and the copy changes when
 // they do: the bucket's size and types in the documents migrations, the

@@ -240,11 +240,11 @@
 
 /* ---------------------------------------------------------- Fig. 1 */
 
-.figure {
+.figureGrid {
   position: relative;
 }
 
-.scanFrame {
+.scanFigure {
   align-self: start;
 }
 
@@ -271,34 +271,28 @@
 }
 
 /* A line under the quoted words. Placed by percentage, so it stays under
-   them at any width. */
+   them at any width. Hidden until the scan has loaded and decoded
+   (data-painted, set in figure.tsx), so no line is drawn over an empty box. */
 .mark {
   position: absolute;
   height: 2px;
   background-color: var(--signal);
 }
 
-/* From 64rem: the scan in the first eight columns with its caption under
-   it, the eleven fields in the last four, alongside both. Below that they
-   stack in that order. */
+.scan:not([data-painted]) .mark {
+  visibility: hidden;
+}
+
+/* From 64rem: the figure (scan and caption) in the first eight columns,
+   the eleven fields in the last four. Below that they stack in that
+   order. */
 @media (min-width: 64rem) {
-  .figure {
-    grid-template-rows: auto 1fr;
-  }
-
-  .grid > .scanFrame {
+  .grid > .scanFigure {
     grid-column: 1 / span 8;
-    grid-row: 1;
-  }
-
-  .grid > .caption {
-    grid-column: 1 / span 8;
-    grid-row: 2;
   }
 
   .grid > .fields {
     grid-column: 9 / span 4;
-    grid-row: 1 / span 2;
     margin-top: 0;
   }
 }
@@ -345,17 +339,6 @@
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-}
-
-/* The list is one Tab stop; the ring goes round the field the arrow keys
-   are on, not round the whole list. */
-.fields:focus-visible {
-  outline: none;
-}
-
-.fields:focus-visible > [data-active] {
-  outline: 2px solid var(--signal);
-  outline-offset: 2px;
 }
 
 /* Low, and only Low: the field to check. */
