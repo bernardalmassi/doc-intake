@@ -50,7 +50,6 @@ declare
   v_real     numeric;
   v_third    record;
   v_long     record;
-  v_wrapped  record;
   v_long_run public.extraction_runs;
   v_price    public.extraction_model_prices;
 begin
@@ -82,7 +81,7 @@ begin
   update public.extraction_runs set started_at = now() - make_interval(mins => v_minutes) + interval '30 seconds'
   where id = v_first.run_id;
   begin
-    perform public.open_extraction_run('c3c3c3c3-0000-4000-8000-000000000003');
+    perform public.open_extraction_run('c3c3c3c3-0000-4000-8000-000000000003', 1);
     raise exception 'a run % seconds short of stale was reaped', 30;
   exception when sqlstate '55000' then
     insert into checks (step, result) values ('a run younger than the threshold still blocks', sqlerrm);
@@ -91,7 +90,7 @@ begin
   -- 3. past the threshold: the next open reaps it and proceeds
   update public.extraction_runs set started_at = now() - make_interval(mins => v_minutes) - interval '1 second'
   where id = v_first.run_id;
-  select * into v_second from public.open_extraction_run('c3c3c3c3-0000-4000-8000-000000000003');
+  select * into v_second from public.open_extraction_run('c3c3c3c3-0000-4000-8000-000000000003', 1);
   if v_second.run_id = v_first.run_id then
     raise exception 'the reaped run was returned again';
   end if;
@@ -162,15 +161,8 @@ begin
   select * into v_long from public.open_extraction_run('c3c3c3c3-0000-4000-8000-000000000004', 20);
   update public.extraction_runs set started_at = now() - make_interval(mins => v_minutes) - interval '1 second'
   where id = v_long.run_id;
-  -- reaped by an open through the old one-argument signature, the wrapper
-  -- kept for app code deployed before 20260918000003: it opens a run with
-  -- no page count
-  select * into v_wrapped from public.open_extraction_run('c3c3c3c3-0000-4000-8000-000000000004');
-  if v_wrapped.run_id is null
-     or (select page_count from public.extraction_runs where id = v_wrapped.run_id) is not null then
-    raise exception 'the one-argument open must still open a run, with no page count';
-  end if;
-  insert into checks (step, result) values ('the old one-argument open still works, with no page count', 'ok');
+  -- the next open reaps it
+  perform public.open_extraction_run('c3c3c3c3-0000-4000-8000-000000000004', 20);
   select * into v_long_run from public.extraction_runs where id = v_long.run_id;
   if v_long_run.page_count <> 20 or v_long_run.cost_usd <= 2 * v_expected then
     raise exception 'a 20-page abandoned run must cost well over a one-page one (% vs %), pages %',

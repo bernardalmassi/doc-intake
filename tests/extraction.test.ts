@@ -157,7 +157,7 @@ async function readFields(user: TestUser, documentId: string) {
 type Opened = { run_id: string; close_token: string };
 
 function open(user: TestUser, documentId: string) {
-  return user.client.rpc("open_extraction_run", { p_document_id: documentId });
+  return user.client.rpc("open_extraction_run", { p_document_id: documentId, p_page_count: 1 });
 }
 
 async function mustOpen(user: TestUser, documentId: string): Promise<Opened> {
@@ -358,7 +358,7 @@ describe("run lifecycle in the database", () => {
     expect(asMember.data).toBeNull();
     expect(asMember.error?.code).toBe("42501");
 
-    const anon = await newClient().rpc("open_extraction_run", { p_document_id: docP.id });
+    const anon = await newClient().rpc("open_extraction_run", { p_document_id: docP.id, p_page_count: 1 });
     expect(anon.error?.code).toBe("42501");
 
     expect((await readDocument(x(), docP.id))?.status).toBe("pending");
@@ -651,6 +651,13 @@ describe("run lifecycle in the database", () => {
     }
   });
 
+  it("an open without a page count is refused: the one-argument form is gone (20260919000002)", async () => {
+    const { data, error } = await x().client.rpc("open_extraction_run", { p_document_id: docS.id });
+    expect(data).toBeNull();
+    expect(error?.code).toBe("PGRST202");
+    expect((await readDocument(x(), docS.id))?.status).toBe("pending");
+  });
+
   it("nobody can write runs or fields directly", async () => {
     const insertRun = await x().client
       .from("extraction_runs")
@@ -820,7 +827,7 @@ describe("reading runs and fields", () => {
       expect(data, table).toBeNull();
       expect(error?.code, table).toBe("42501");
     }
-    const opened = await anon.rpc("open_extraction_run", { p_document_id: docP.id });
+    const opened = await anon.rpc("open_extraction_run", { p_document_id: docP.id, p_page_count: 1 });
     expect(opened.error?.code).toBe("42501");
     const closed = await anon.rpc("close_extraction_run", toCloseParams(randomUUID(), randomUUID(), failedOutcome()));
     expect(closed.error?.code).toBe("42501");
