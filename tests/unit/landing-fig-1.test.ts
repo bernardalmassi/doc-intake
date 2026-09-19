@@ -7,7 +7,7 @@
 // stale and this fails.
 
 import { describe, expect, it } from "vitest";
-import { FIELDS, PAGE, QUESTION, RUN } from "@/app/_landing/fig-1";
+import { DETAIL, FIELDS, PAGE, QUESTION, QUESTION_LEAD, RUN } from "@/app/_landing/fig-1";
 import { computeCostUsd } from "@/lib/extraction/config";
 import { FIELDS as SCHEMA_FIELDS, gateFields, validateExtraction } from "@/lib/extraction/schema";
 
@@ -54,6 +54,21 @@ describe("Fig. 1", () => {
         expect(x >= 0 && y >= 0 && x + width <= PAGE.width && y <= PAGE.height, field.name).toBe(true);
       }
     }
+  });
+
+  it("crops the hero's detail from the page, around a Low field and every one of its marks", () => {
+    expect(DETAIL.x + DETAIL.width <= PAGE.width && DETAIL.y + DETAIL.height <= PAGE.height).toBe(true);
+    const field = FIELDS.find((f) => f.name === DETAIL.field);
+    expect(field?.band).toBe("low");
+    for (const [x, y, width] of field?.marks ?? []) {
+      expect(x >= DETAIL.x && x + width <= DETAIL.x + DETAIL.width, `${x},${y}`).toBe(true);
+      expect(y >= DETAIL.y && y <= DETAIL.y + DETAIL.height, `${x},${y}`).toBe(true);
+    }
+    // The hero's one sentence is the gating's own, not a paraphrase.
+    expect(QUESTION.startsWith(QUESTION_LEAD)).toBe(true);
+    expect(QUESTION_LEAD).toBe(
+      "The payment terms are 30 days, but the due date is 91 days after the document date.",
+    );
   });
 
   it("states the cost the database would record for its token counts", () => {

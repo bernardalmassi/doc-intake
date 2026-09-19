@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Archivo } from "next/font/google";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Detail } from "@/app/_landing/detail";
 import { Figure } from "@/app/_landing/figure";
 import styles from "@/app/_landing/landing.module.css";
 import { MAIN_ID } from "@/app/components/site-header";
@@ -26,7 +27,8 @@ export const metadata: Metadata = {
 };
 
 // Every fact here can be checked in the repo, and the copy changes when
-// they do: the bucket's size and types in the documents migrations, the
+// they do: the headline is SITE_SUMMARY cut to two sentences that can be set
+// at 140px, with the whole sentence kept beside it; the bucket's size and types in the documents migrations, the
 // page limit, thresholds, models, timeout and output cap in
 // src/lib/extraction/config.ts, the limits in public.extraction_limits
 // (mirrored there), and the eval figures in EVALS.md. Non-breaking spaces
@@ -62,7 +64,7 @@ const technicalData = [
   {
     term: "Eval",
     value:
-      "Recorded 18\u00a0Sep\u00a02026. 97 of 99 fields right on 9 generated documents, and no instruction followed from the 3 written to hijack it. 6.1\u00a0s median, 0.0202\u00a0USD mean per run.",
+      "Recorded 18\u00a0Sep\u00a02026 on 12 generated documents. 97 of 99 fields right on the 9 ordinary ones, and no instruction followed from the 3 written to hijack it. 6.1\u00a0s median and 0.0202\u00a0USD mean per run, over all 12.",
   },
 ];
 
@@ -95,7 +97,7 @@ export default async function Home() {
   return (
     <div className={`${styles.page} ${archivo.variable}`}>
       {/* The two ways in sit in the header, where /app keeps its account
-          controls, so the first screen holds the headline alone. */}
+          controls, so the first screen holds the headline and one object. */}
       <header className={`${styles.frame} ${styles.header}`}>
         <a href={`#${MAIN_ID}`} className={`${styles.small} ${styles.skip}`}>
           Skip to content
@@ -114,7 +116,11 @@ export default async function Home() {
 
       <main id={MAIN_ID} className={styles.frame}>
         <section className={`${styles.grid} ${styles.hero}`}>
-          <h1 className={`${styles.display} ${styles.wide}`}>{SITE_SUMMARY}</h1>
+          <h1 className={styles.display}>
+            <span>Reads documents.</span> <span>Marks its doubts.</span>
+          </h1>
+          <Detail />
+          <p className={styles.lede}>{SITE_SUMMARY}</p>
         </section>
 
         <section aria-labelledby="fig-1">

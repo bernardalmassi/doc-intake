@@ -2,21 +2,31 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { FIELDS, PAGE, QUESTION, RUN, type Fig1Field, type Mark, type Point } from "./fig-1";
+import { FIELDS, PAGE, QUESTION, RUN, SCAN_SIZES, type Fig1Field, type Point } from "./fig-1";
 import scan from "./invoice-scan-page-1.jpg";
 import styles from "./landing.module.css";
+import { crisp, type Geometry, Leaders, markStyle, type Region, usePainted } from "./scan";
 
-// Fig. 1: page 1 of the scan beside the eleven fields the run returned. A
-// line sits under the words each field quoted, and a leader runs from the
-// end of that line to the field.
+// Fig. 1: three panels of different sizes on the page's grid. Page 1 of
+// the scan, large, as paper on a dark stage; the eleven fields the run
+// returned, a dense narrow column; the run's numbers, a small box. A line
+// sits under the words each field quoted, and a leader runs from the end
+// of that line to the field.
 //
-// The scan is the page's main image, so it is preloaded. The lines are in
-// the server's HTML but stay hidden until the scan has loaded and decoded,
-// and the leaders wait for the same, so nothing is ever drawn over an empty
-// box. The two Low fields are shown when their words first come on screen;
-// pointing at, clicking or focusing a field shows that one. Leaders need
-// measurements, so they are drawn only in the browser and only side by
-// side (64rem up).
+// The hero preloads the scan (the same URL), so it is here by the time
+// anyone scrolls. The lines are in the server's HTML but stay hidden until
+// the scan has loaded and decoded, and the leaders wait for the same, so
+// nothing is ever drawn over an empty box. Leaders need measurements, so
+// they are drawn only in the browser and only side by side (64rem up).
+//
+// Arrival, the page's one motion, in reading order: the fields' labels,
+// then their values, as the figure comes on screen; then the two Low
+// leaders, once the date lines are in the upper half of the screen, where
+// both of their ends can be seen. The steps never overlap, and together
+// they take under 400ms. It is armed only when the figure starts below
+// the screen, and only by this script, so without it, or on a reload
+// halfway down the page, nothing is ever hidden. Pointing at, clicking or
+// focusing a field shows that one.
 //
 // The fields are a list with one Tab stop, a roving tab index: the arrow
 // keys move focus between fields, Home and End go to the ends, and focus
@@ -28,7 +38,12 @@ import styles from "./landing.module.css";
 type Shown = string;
 const LOW = "low";
 
-type Geometry = { width: number; height: number; paths: Record<string, string> };
+// The whole page: marks are placed by percentage of it.
+const WHOLE_PAGE: Region = { x: 0, y: 0, ...PAGE };
+
+// When the values' arrival ends (landing.module.css: 100ms + 120ms). The
+// arrival leaders never start sooner after the labels did.
+const VALUES_DONE_MS = 220;
 
 const isShown = (shown: Shown, field: Fig1Field) => (shown === LOW ? field.band === "low" : shown === field.name);
 
@@ -43,14 +58,6 @@ const FIRST_LOW = Math.max(
   0,
   FIELDS.findIndex((f) => f.band === "low"),
 );
-
-function markStyle([x, y, width]: Mark): React.CSSProperties {
-  return {
-    left: `${(x / PAGE.width) * 100}%`,
-    top: `${(y / PAGE.height) * 100}%`,
-    width: `${(width / PAGE.width) * 100}%`,
-  };
-}
 
 // As the app shows it: only the document type is capitalized.
 function displayValue(field: Fig1Field): string {
@@ -68,9 +75,6 @@ function spokenName(field: Fig1Field): string {
   return name;
 }
 
-// On the half pixel, so a 1px line covers one row of pixels, not two.
-const crisp = (n: number) => Math.round(n) + 0.5;
-
 const number = new Intl.NumberFormat("en-GB");
 
 export function Figure() {
@@ -79,12 +83,11 @@ export function Figure() {
   // Changes with every new selection, so the leaders remount and draw again.
   const [draws, setDraws] = useState(0);
   const [geometry, setGeometry] = useState<Geometry | null>(null);
-  // The scan has loaded and decoded: until then no line or leader is drawn.
-  const [painted, setPainted] = useState(false);
   // The item with tabIndex 0: the list's one Tab stop.
   const [active, setActive] = useState(FIRST_LOW);
 
   const figureRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
   const scanRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
@@ -92,14 +95,21 @@ export function Figure() {
   const arrivalRef = useRef<HTMLSpanElement>(null);
   const anchorRefs = useRef<Record<string, HTMLElement | null>>({});
   const itemRefs = useRef<(HTMLLIElement | null)[]>([]);
+  // When the labels started arriving; null until they have, or if the
+  // figure was never armed.
+  const enteredAt = useRef<number | null>(null);
+
+  // The scan has loaded and decoded: until then no line or leader is drawn.
+  const [painted, onLoad] = usePainted(imageRef);
 
   const measure = useCallback(() => {
     const figure = figureRef.current?.getBoundingClientRect();
+    const stage = stageRef.current?.getBoundingClientRect();
     const image = scanRef.current?.getBoundingClientRect();
     const list = listRef.current?.getBoundingClientRect();
-    if (!figure || !image || !list) return;
+    if (!figure || !stage || !image || !list) return;
     // Stacked (the fields under the scan): no room for a leader.
-    if (list.left < image.right) {
+    if (list.left < stage.right) {
       setGeometry(null);
       return;
     }
@@ -107,7 +117,8 @@ export function Figure() {
       image.left - figure.left + (x / PAGE.width) * image.width,
       image.top - figure.top + (y / PAGE.height) * image.height,
     ];
-    const gutter = crisp((image.right + list.left) / 2 - figure.left);
+    // Down the middle of the empty column between the stage and the fields.
+    const gutter = crisp((stage.right + list.left) / 2 - figure.left);
     const end = Math.round(list.left - figure.left - 8);
     const paths: Record<string, string> = {};
     for (const field of FIELDS) {
@@ -126,19 +137,6 @@ export function Figure() {
     setGeometry({ width: figure.width, height: figure.height, paths });
   }, []);
 
-  // Lines and leaders only once the scan can be painted. The scan can
-  // finish loading before hydration, before onLoad is attached, so this
-  // also runs once on mount.
-  const whenDecoded = useCallback((image: HTMLImageElement | null) => {
-    if (!image?.complete || image.naturalWidth === 0) return;
-    image.decode().then(
-      () => setPainted(true),
-      () => {},
-    );
-  }, []);
-
-  useEffect(() => whenDecoded(imageRef.current), [whenDecoded]);
-
   // On a phone the scan scrolls sideways: open it at the dates, which are
   // on the right.
   useLayoutEffect(() => {
@@ -149,7 +147,7 @@ export function Figure() {
   useLayoutEffect(() => {
     measure();
     const observer = new ResizeObserver(measure);
-    for (const element of [figureRef.current, scanRef.current, listRef.current]) {
+    for (const element of [figureRef.current, stageRef.current, scanRef.current, listRef.current]) {
       if (element) observer.observe(element);
     }
     // The display face arriving can rewrap the fields.
@@ -157,20 +155,50 @@ export function Figure() {
     return () => observer.disconnect();
   }, [measure]);
 
-  useEffect(() => {
-    const element = arrivalRef.current;
-    if (!element) return;
+  // Labels, then values: armed before the first paint after hydration, and
+  // only if the figure starts below the screen. The attributes are set on
+  // the element, not through state, so arming costs no render; React leaves
+  // attributes it didn't write alone.
+  useLayoutEffect(() => {
+    const figure = figureRef.current;
+    if (!figure || figure.getBoundingClientRect().top < window.innerHeight) return;
+    figure.dataset.armed = "";
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry?.isIntersecting) {
-          setArrived(true);
+          figure.dataset.entered = "";
+          enteredAt.current = performance.now();
           observer.disconnect();
         }
+      },
+      { rootMargin: "0px 0px -10% 0px" },
+    );
+    observer.observe(figure);
+    return () => observer.disconnect();
+  }, []);
+
+  // Then the leaders. After a jump straight to the dates both observers
+  // fire together, so the leaders wait out the labels and values.
+  useEffect(() => {
+    const element = arrivalRef.current;
+    const figure = figureRef.current;
+    if (!element || !figure) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry?.isIntersecting) return;
+        observer.disconnect();
+        const since = performance.now() - (enteredAt.current ?? performance.now());
+        const wait = "armed" in figure.dataset ? Math.max(0, VALUES_DONE_MS - since) : 0;
+        timer = setTimeout(() => setArrived(true), wait);
       },
       { rootMargin: "0px 0px -45% 0px" },
     );
     observer.observe(element);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      clearTimeout(timer);
+    };
   }, []);
 
   // Input draws a leader even if the figure never "arrived": a visitor who
@@ -213,62 +241,67 @@ export function Figure() {
   return (
     <div ref={figureRef} className={`${styles.grid} ${styles.figureGrid}`}>
       <figure className={styles.scanFigure}>
-        <div ref={frameRef} className={styles.scanFrame}>
-          <div ref={scanRef} className={styles.scan} data-painted={painted || undefined}>
-            <Image
-              ref={imageRef}
-              src={scan}
-              preload
-              alt="Page 1 of a scanned invoice from Northgate Fixings & Supply Co. to Bramhall Interiors Ltd: slightly skewed, with a coffee ring over the unit prices, “days” struck through in the terms, handwritten notes (“ext. to 04/06 per DK” under the dates, “1,546.26 o/s” under the total, “chased 12/5 - part pd 500”, “check line 3 qty w/ site”) and a RECEIVED 03 MAY 2026 stamp."
-              sizes="(min-width: 82rem) 50rem, (min-width: 64rem) 62vw, (min-width: 48rem) 100vw, 40rem"
-              onLoad={(event) => whenDecoded(event.currentTarget)}
-            />
-            {FIELDS.filter((field) => isShown(shown, field)).flatMap((field) =>
-              field.marks.map((mark) => (
-                <span
-                  key={`${field.name}-${mark.join(",")}`}
-                  ref={mark === ARRIVAL_MARK ? arrivalRef : undefined}
-                  className={styles.mark}
-                  style={markStyle(mark)}
-                  aria-hidden="true"
-                />
-              )),
-            )}
+        <div className={styles.panelHead}>
+          <h2 id="fig-1" className={styles.label}>
+            Fig. 1
+          </h2>
+          <p className={styles.label}>Page 1 of {RUN.pages}</p>
+        </div>
+
+        <div ref={stageRef} className={styles.stage}>
+          <div ref={frameRef} className={styles.scanFrame}>
+            <div ref={scanRef} className={styles.scan} data-painted={painted || undefined}>
+              <Image
+                ref={imageRef}
+                src={scan}
+                alt="Page 1 of a scanned invoice from Northgate Fixings & Supply Co. to Bramhall Interiors Ltd: slightly skewed, with a coffee ring over the unit prices, “days” struck through in the terms, handwritten notes (“ext. to 04/06 per DK” under the dates, “1,546.26 o/s” under the total, “chased 12/5 - part pd 500”, “check line 3 qty w/ site”) and a RECEIVED 03 MAY 2026 stamp."
+                sizes={SCAN_SIZES}
+                onLoad={onLoad}
+              />
+              {FIELDS.filter((field) => isShown(shown, field)).flatMap((field) =>
+                field.marks.map((mark) => (
+                  <span
+                    key={`${field.name}-${mark.join(",")}`}
+                    ref={mark === ARRIVAL_MARK ? arrivalRef : undefined}
+                    className={styles.mark}
+                    style={markStyle(mark, WHOLE_PAGE)}
+                    aria-hidden="true"
+                  />
+                )),
+              )}
+            </div>
           </div>
         </div>
 
         <figcaption className={styles.caption}>
-          <div>
-            <h2 id="fig-1" className={styles.label}>
-              Fig. 1
-            </h2>
-            <p className={`${styles.small} ${styles.captionText}`}>
-              A live run on the deployed app, {RUN.date}. Page 1 of the two-page scan is shown. The document is
-              fictional test data.
-            </p>
+          <p className={`${styles.small} ${styles.captionText}`}>
+            A live run on the deployed app, {RUN.date}. The document is fictional test data.
+          </p>
+          <div className={styles.runPanel}>
+            <p className={styles.label}>Run</p>
+            <dl className={`${styles.small} ${styles.run}`}>
+              <dt>File</dt>
+              <dd>
+                {RUN.filename}, {RUN.pages} pages
+              </dd>
+              <dt>Result</dt>
+              <dd>
+                {RUN.fieldsFound} of {RUN.fieldsTotal} fields, 2 Low: sent to review
+              </dd>
+              <dt>Model</dt>
+              <dd>
+                {RUN.model}, {RUN.calls} call
+              </dd>
+              <dt>Tokens</dt>
+              <dd>
+                {number.format(RUN.inputTokens)} in, {number.format(RUN.outputTokens)} out
+              </dd>
+              <dt>Time</dt>
+              <dd>{RUN.seconds} s</dd>
+              <dt>Cost</dt>
+              <dd>{RUN.costUsd} USD</dd>
+            </dl>
           </div>
-          <dl className={`${styles.small} ${styles.run}`}>
-            <dt>File</dt>
-            <dd>
-              {RUN.filename}, {RUN.pages} pages
-            </dd>
-            <dt>Result</dt>
-            <dd>
-              {RUN.fieldsFound} of {RUN.fieldsTotal} fields, 2 Low: sent to review
-            </dd>
-            <dt>Model</dt>
-            <dd>
-              {RUN.model}, {RUN.calls} call
-            </dd>
-            <dt>Tokens</dt>
-            <dd>
-              {number.format(RUN.inputTokens)} in, {number.format(RUN.outputTokens)} out
-            </dd>
-            <dt>Time</dt>
-            <dd>{RUN.seconds} s</dd>
-            <dt>Cost</dt>
-            <dd>{RUN.costUsd} USD</dd>
-          </dl>
         </figcaption>
       </figure>
 
@@ -290,7 +323,7 @@ export function Figure() {
               onClick={() => take(index)}
               onMouseEnter={field.marks.length > 0 ? () => show(field.name) : undefined}
             >
-              <div className={styles.fieldHead}>
+              <div className={`${styles.fieldHead} ${styles.seqLabel}`}>
                 <span
                   ref={(element) => {
                     anchorRefs.current[field.name] = element;
@@ -303,36 +336,27 @@ export function Figure() {
                   {low ? "Low" : "High"} {field.confidencePercent}%
                 </span>
               </div>
-              <p className={styles.value}>{displayValue(field)}</p>
-              {field.sourceText && <p className={`${styles.small} ${styles.quote}`}>“{field.sourceText}”</p>}
-              {field.name === "due_date" && (
-                <div className={styles.question}>
-                  <p className={styles.label}>To confirm, both dates</p>
-                  <p className={styles.small}>{QUESTION}</p>
-                </div>
-              )}
+              <div className={styles.seqValue}>
+                <p className={styles.value}>{displayValue(field)}</p>
+                {field.sourceText && <p className={`${styles.small} ${styles.quote}`}>“{field.sourceText}”</p>}
+                {field.name === "due_date" && (
+                  <div className={styles.question}>
+                    <p className={styles.label}>To confirm, both dates</p>
+                    <p className={styles.small}>{QUESTION}</p>
+                  </div>
+                )}
+              </div>
             </li>
           );
         })}
       </ul>
 
       {geometry && arrived && painted && (
-        <svg
-          className={styles.leaders}
-          width={geometry.width}
-          height={geometry.height}
-          viewBox={`0 0 ${geometry.width} ${geometry.height}`}
-          aria-hidden="true"
-        >
-          {FIELDS.filter((field) => isShown(shown, field) && geometry.paths[field.name]).map((field) => (
-            <path
-              key={`${field.name}-${draws}`}
-              d={geometry.paths[field.name]}
-              pathLength={1}
-              className={`${styles.leader} ${draws === 0 ? styles.arrival : ""}`}
-            />
-          ))}
-        </svg>
+        <Leaders
+          geometry={geometry}
+          names={FIELDS.filter((field) => isShown(shown, field)).map((field) => field.name)}
+          drawn={draws}
+        />
       )}
     </div>
   );

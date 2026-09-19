@@ -4,15 +4,24 @@
 
   Three colours, named for their job, in both themes: paper (the ground),
   ink (all text and rules), signal (the one accent: the main action, the
-  fields to check, the lines under what they quote, the leader). Dark swaps paper and ink;
-  signal stays. Text on signal is always the darker of the two (5.06:1).
-  Signal is never text on paper: 3.22:1 on the light ground.
+  fields to check, the lines under what they quote, the leader). Dark is
+  the default; light swaps paper and ink, and signal stays. Text on signal
+  is always the darker of the two (5.06:1, in both themes). Signal is
+  never text on paper: 3.22:1 on the light ground.
 
-  One radius: none. No shadows, no gradients, no opacity.
+  The stage is where a scan sits: always the dark one of the two, so the
+  scan reads as paper on a dark ground in either theme. In dark it is the
+  page itself; in light it is a plate of ink. Its edge colour is the light
+  one. Both are aliases, not new colours.
 
-  Two faces: Archivo set wide for the headline, labels and keys; Geist
-  (the app's own family) for reading. Four sizes: display, body 18/28,
-  small 15/22, label 12/16.
+  One radius: none. No shadows, no gradients, no translucent colour.
+  Opacity appears once, as the arrival's from-state.
+
+  Two faces: Archivo for the headline (normal width, so a nine-letter word
+  fits a phone at 64px), and set wide for labels, keys and the wordmark;
+  Geist (the app's own family) for reading. Four sizes: display (64 to
+  140px), body 18/28, small 15/22, label 12/16. The distance from the
+  first to the last is the point.
 
   The tokens sit on <html> while this page is mounted, so the body behind
   it (overscroll, the gap under a short page) is paper too.
@@ -22,12 +31,16 @@
   --ink: #f2f1ec;
   --signal: #e8560f;
   --on-signal: var(--paper);
+  --stage: var(--paper);
+  --stage-edge: var(--ink);
 }
 
 :global(html[data-theme="light"]):has(.page) {
   --paper: #f2f1ec;
   --ink: #141413;
   --on-signal: var(--ink);
+  --stage: var(--ink);
+  --stage-edge: var(--paper);
 }
 
 :global(body):has(.page) {
@@ -65,11 +78,17 @@
   font-weight: 500;
 }
 
+/* 64px at 375, 140px at 1440, a straight line between. */
 .display {
-  font-size: clamp(2rem, 1.3rem + 2.2vw, 3rem);
-  line-height: 1.1;
-  letter-spacing: -0.015em;
-  text-wrap: balance;
+  font-size: clamp(4rem, 2.3275rem + 7.136vw, 8.75rem);
+  font-variation-settings: "wdth" 100;
+  line-height: 0.95;
+  letter-spacing: -0.035em;
+}
+
+/* One sentence to a line where it fits. */
+.display span {
+  display: block;
 }
 
 .label {
@@ -97,8 +116,8 @@
 /* ------------------------------------------------------------ grid */
 
 /* Twelve columns. Section labels take the first three, content the next
-   eight, and the last stays empty. The headline and Fig. 1 hang from the
-   left edge instead. Below 64rem everything is one column. */
+   eight, and the last stays empty. The headline, the detail and Fig. 1
+   hang from the left edge instead. Below 64rem everything is one column. */
 .frame {
   width: 100%;
   max-width: 82rem;
@@ -127,10 +146,6 @@
 }
 
 @media (min-width: 64rem) {
-  .grid > .wide {
-    grid-column: 1 / span 9;
-  }
-
   .grid > .margin {
     grid-column: 1 / span 3;
   }
@@ -206,10 +221,6 @@
 
 /* --------------------------------------------------------- actions */
 
-.hero {
-  padding-block: 3.5rem 5rem;
-}
-
 .action,
 .skip {
   display: inline-flex;
@@ -232,28 +243,155 @@
   color: var(--paper);
 }
 
+/* ------------------------------------------------------------ hero */
+
+/* The first screen: the headline, then an object. From 64rem the detail
+   takes the first nine columns (the stage seven, its readout two) and the
+   sentence the last three. */
+.hero {
+  row-gap: 1.5rem;
+  padding-block: 1.5rem 5rem;
+}
+
+.detail {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 0.75rem;
+}
+
+.readout {
+  /* Stacked, the leader comes down the stage's right margin and turns in
+     to the badge: keep the badge clear of it. */
+  padding-inline-end: 1.75rem;
+}
+
+.readoutHead {
+  display: flex;
+  min-height: 1.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+
+.readoutNote {
+  margin-top: 0.5rem;
+}
+
 @media (min-width: 64rem) {
+  /* One screen to itself, under the 4rem header: Fig. 1 starts below it,
+     so its arrival is seen. */
   .hero {
-    padding-block: 7rem 9rem;
+    min-height: calc(100svh - 4rem);
+    align-content: start;
+    row-gap: 3.5rem;
+    padding-block: 2.5rem 5rem;
   }
+
+  .grid > .detail {
+    grid-column: 1 / span 9;
+    grid-template-columns: subgrid;
+    align-items: start;
+  }
+
+  .detailStage {
+    grid-column: 1 / span 7;
+  }
+
+  .readout {
+    grid-column: 8 / span 2;
+    padding-inline-end: 0;
+  }
+
+  .readoutHead {
+    justify-content: start;
+  }
+
+  .grid > .lede {
+    grid-column: 10 / span 3;
+  }
+}
+
+/* ------------------------------------------------------- the stage */
+
+/* Paper on a dark ground: the scan has a real 1px edge and generous dark
+   around it. No shadow, no tilt. */
+.stage {
+  padding: 1rem;
+  background-color: var(--stage);
+}
+
+.detailStage {
+  padding: 1rem;
+}
+
+@media (min-width: 48rem) {
+  .stage {
+    padding: 3rem;
+  }
+
+  .detailStage {
+    padding: 2rem;
+  }
+}
+
+@media (min-width: 80rem) {
+  .stage {
+    padding: 4rem;
+  }
+
+  .detailStage {
+    padding: 2rem;
+  }
+}
+
+.crop,
+.scan {
+  position: relative;
+  border: 1px solid var(--stage-edge);
+}
+
+.crop {
+  overflow: hidden;
+}
+
+.crop img {
+  position: absolute;
+  max-width: none;
+  height: auto;
 }
 
 /* ---------------------------------------------------------- Fig. 1 */
 
+/* Three panels of three sizes. From 64rem: the figure (the scan on its
+   stage, then the caption and the run's box under it) in the first seven
+   columns, one empty column for the leaders, the eleven fields in the
+   last four. From 80rem the figure takes eight and the fields three.
+   Below 64rem they stack in that order. */
 .figureGrid {
   position: relative;
+  row-gap: 2.5rem;
+  align-items: start;
 }
 
+/* minmax(0, …): the phone's 40rem scan scrolls inside its frame and must
+   not widen the column, and the page with it. */
 .scanFigure {
-  align-self: start;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
 }
 
-.scan {
-  position: relative;
+.panelHead {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-block: 0.75rem;
+  border-top: 1px solid var(--ink);
 }
 
 /* On a phone the page would be too small to read, so it keeps a readable
-   width and scrolls sideways inside its frame, opened at the dates. */
+   width and scrolls sideways inside its stage, opened at the dates. */
 @media (width < 48rem) {
   .scanFrame {
     overflow-x: auto;
@@ -272,76 +410,105 @@
 
 /* A line under the quoted words. Placed by percentage, so it stays under
    them at any width. Hidden until the scan has loaded and decoded
-   (data-painted, set in figure.tsx), so no line is drawn over an empty box. */
+   (data-painted, set in scan.tsx), so no line is drawn over an empty box. */
 .mark {
   position: absolute;
   height: 2px;
   background-color: var(--signal);
 }
 
-.scan:not([data-painted]) .mark {
+:is(.scan, .crop):not([data-painted]) .mark {
   visibility: hidden;
-}
-
-/* From 64rem: the figure (scan and caption) in the first eight columns,
-   the eleven fields in the last four. Below that they stack in that
-   order. */
-@media (min-width: 64rem) {
-  .grid > .scanFigure {
-    grid-column: 1 / span 8;
-  }
-
-  .grid > .fields {
-    grid-column: 9 / span 4;
-    margin-top: 0;
-  }
 }
 
 .caption {
   display: grid;
-  align-content: start;
   gap: 1.5rem;
   padding-top: 1.5rem;
 }
 
-@media (min-width: 48rem) {
-  .caption {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 2rem;
-  }
-}
-
-.captionText {
-  margin-top: 0.5rem;
+.runPanel {
+  padding: 0.75rem 1rem 1rem;
+  border: 1px solid var(--ink);
 }
 
 .run {
   display: grid;
   grid-template-columns: auto 1fr;
-  align-content: start;
   column-gap: 1rem;
   row-gap: 0.25rem;
+  margin-top: 0.75rem;
+  overflow-wrap: anywhere;
 }
 
+@media (min-width: 64rem) {
+  .grid > .scanFigure {
+    grid-column: 1 / span 7;
+    grid-template-columns: subgrid;
+  }
+
+  .scanFigure > * {
+    grid-column: 1 / -1;
+  }
+
+  .caption {
+    grid-template-columns: subgrid;
+    align-items: start;
+  }
+
+  .captionText {
+    grid-column: 1 / span 3;
+  }
+
+  .runPanel {
+    grid-column: 4 / -1;
+  }
+
+  .grid > .fields {
+    grid-column: 9 / span 4;
+  }
+}
+
+@media (min-width: 80rem) {
+  .grid > .scanFigure {
+    grid-column: 1 / span 8;
+  }
+
+  .runPanel {
+    grid-column: 5 / -1;
+  }
+
+  .grid > .fields {
+    grid-column: 10 / span 3;
+  }
+}
+
+/* Dense: the rows are tight, and only the value is at reading size. */
 .fields {
-  margin-top: 2.5rem;
   border-top: 1px solid var(--ink);
 }
 
 .field {
-  padding-block: 0.75rem 0.875rem;
+  padding-block: 0.5rem 0.625rem;
   border-bottom: 1px solid var(--ink);
 }
 
 .fieldHead {
   display: flex;
   min-height: 1.5rem;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 0 1rem;
 }
 
-/* Low, and only Low: the field to check. */
+/* The confidence keeps to the right edge when a long label wraps it onto
+   a line of its own. */
+.fieldHead > :last-child {
+  margin-left: auto;
+}
+
+/* Low, and only Low: the field to check. Ink on signal, 5.06:1. */
 .key {
   display: inline-flex;
   height: 1.5rem;
@@ -353,26 +520,56 @@
 }
 
 .value {
-  margin-top: 0.25rem;
   overflow-wrap: anywhere;
 }
 
 .quote {
-  margin-top: 0.125rem;
   overflow-wrap: anywhere;
 }
 
 .question {
-  margin-top: 0.75rem;
+  margin-top: 0.625rem;
 }
 
 .question p + p {
   margin-top: 0.25rem;
 }
 
-/* The leader: a 1px line from a field to the words it was read from. It
-   draws once when the figure arrives and again for the field under the
-   pointer or focus. Nothing else on the page moves. */
+/* ---------------------------------------------------------- motion */
+
+/* One idea: a readout arrives in reading order. Labels (0 to 120ms), then
+   values (100 to 220ms), then the leader draws (160ms, started by script
+   no sooner than 220ms): under 400ms, ease-out, once. The hero's runs on
+   load; Fig. 1's when it comes on screen, and only if figure.tsx armed it.
+   A leader also draws for the field under the pointer or focus. Nothing
+   loops, and nothing else on the page moves. */
+@media (prefers-reduced-motion: no-preference) {
+  .detail .seqLabel,
+  .figureGrid[data-armed][data-entered] .seqLabel {
+    animation: arrive 120ms ease-out both;
+  }
+
+  .detail .seqValue,
+  .figureGrid[data-armed][data-entered] .seqValue {
+    animation: arrive 120ms ease-out 100ms both;
+  }
+
+  .figureGrid[data-armed]:not([data-entered]) :is(.seqLabel, .seqValue) {
+    opacity: 0;
+  }
+}
+
+@keyframes arrive {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* The leader: a 1px line from the words a field was read from to the
+   field. */
 .leaders {
   position: absolute;
   top: 0;
@@ -390,7 +587,7 @@
 }
 
 .arrival {
-  animation-duration: 320ms;
+  animation-duration: 160ms;
 }
 
 @keyframes draw {

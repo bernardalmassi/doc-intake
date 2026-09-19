@@ -187,6 +187,21 @@ export const FIELDS: readonly Fig1Field[] = [
 export const QUESTION =
   "The payment terms are 30 days, but the due date is 91 days after the document date. Check both dates against the document: a date written in numbers may have been read with the day and month swapped.";
 
+// The question's first sentence, the hero's one line of explanation.
+export const QUESTION_LEAD = QUESTION.slice(0, QUESTION.indexOf(".") + 1);
+
 // Page 1 of the scan, whole, as invoice-scan-page-1.jpg. Marks are placed
 // by percentage of it.
 export const PAGE = { width: 1654, height: 2339 } as const;
+
+// The hero's detail of page 1, in the same pixels: the Date, Due and Terms
+// lines and the handwritten "ext. to 04/06 per DK", from just under the
+// invoice number to just under the rule. The same file, cropped by CSS, so
+// it is as real as the figure. It shows the due date, whose marks are all
+// inside it (checked in tests/unit/landing-fig-1.test.ts).
+export const DETAIL = { x: 985, y: 278, width: 600, height: 210, field: "due_date" } as const;
+
+// Both images ask for the scan at its native width, so they resolve to one
+// URL and one download: the detail is shown larger than life, so it needs
+// every pixel anyway.
+export const SCAN_SIZES = `${PAGE.width}px`;
