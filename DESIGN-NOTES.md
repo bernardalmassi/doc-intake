@@ -56,7 +56,7 @@ Every pairing passes in both themes. The tightest is the light theme's control b
 
 ## Type
 
-One family: Geist Sans, self-hosted through `next/font`. Geist Mono is gone, and `code`, `kbd`, `samp` and `pre` inherit the sans. Numbers use the same family.
+One family: Geist Sans, self-hosted through `next/font`. Geist Mono is gone, and `code`, `kbd`, `samp` and `pre` inherit the sans. Numbers use the same family. The landing page is the one exception (DESIGN.md): it adds a display face, below under Landing, and none of it reaches the other pages.
 
 | Class | Size | Line height | Tracking | For |
 | --- | --- | --- | --- | --- |
@@ -116,11 +116,18 @@ What each page does beyond the primitives, and why.
 
 ### Landing (/)
 
-- The one line is also the meta description. "Create an account" is the primary action; "Sign in" is secondary.
-- Three architecture sentences as a definition list (Isolation, Uploads, Extraction). A fourth sentence on tests was cut to keep to three; the link reads "Source and tests on GitHub" when there is one.
-- "Every table of organization data", not "every table": the limits and prices tables carry no organization id.
-- Non-breaking spaces keep numbers with units and products with versions; the heading uses text-wrap: balance.
+Built to DESIGN.md from a brief approved on 19 Sep 2026. It has its own look, and all of it lives in `src/app/_landing/landing.module.css`, so /app keeps its tokens, family and four sizes.
+
+- **Reference.** Braun product manuals and Teenage Engineering: a figure with leaders, a Technical data table, section labels in a margin, signal orange used the way a key colour is.
+- **Three tokens, both themes.** `paper` `#f2f1ec`, `ink` `#141413`, `signal` `#e8560f`. Dark swaps paper and ink; signal stays. Ink on paper is 16.30:1. Text on signal is always `#141413` (`--on-signal`, an alias, not a fourth colour): 5.06:1. Signal against the light paper is 3.22:1, so it is a fill, a line or a focus ring, never text. No grey text: hierarchy comes from face, size and position. One radius (0), no shadows. The tokens sit on `<html>` through `:has(.page)` while the page is mounted, so the body behind it is paper too.
+- **Two faces, four sizes.** Archivo, wide (`wdth` 125) at 500, loaded by `next/font` in `page.tsx` only: headline (32 to 48px), 12px uppercase labels, and the wordmark at 18. Geist, the app's family, for reading at 18/28 and 15/22. Both carry tabular figures (checked in the files Google serves), and `tabular-nums` is set on the page root.
+- **Layout.** Twelve columns. The headline and Fig. 1 hang from the left edge; the other sections put their label in the first three columns and their rows in the next eight, and the last column stays empty. The first screen holds the headline alone; the two ways in sit in the header, where /app keeps its account controls. On a phone they drop to a second header row.
+- **Fig. 1** (`figure.tsx`, data in `fig-1.ts`). A live run on the deployed app on 19 Sep 2026, of a fictional two-page test scan, as reported by the person who ran it: all eleven fields with their values, confidences and quotes, nine High and two Low at 59%, claude-sonnet-5, one call, 7,972 tokens in, 822 out, 8.9 s, 0.0242 USD. The image is page 1 whole, rendered from the PDF with PDFKit at the scan's native width (1654 × 2339), not cropped or retouched. The rows are in schema order, values shown as the app shows them (only the document type capitalized); Low is the only band in signal. The date question appears once, under Due date, since it is the same for both. `tests/unit/landing-fig-1.test.ts` puts the eleven values through the real `validateExtraction` and `gateFields` and checks each band, percentage and the question against what the figure shows, that every quoted field has a mark on the page, and that the cost is what the database's formula gives the tokens.
+- **The one motion.** A 2px signal line sits under each phrase a field quoted, measured on a gridded render. A 1px leader runs from the end of the first line to the field. Where a straight line to the page's edge would cross other words, the field's first line or a turn (`via`) routes it round them: Sender goes up to the clear top margin, Recipient leaves from the last line of the address. The two Low leaders draw when the date lines first reach the upper half of the screen (320ms, ease-out); pointing at or focusing any field with a quote draws its leader alone (200ms), whether or not the figure has arrived. Nothing else moves; with reduced motion it doesn't animate. Leaders need the scan and the fields side by side (64rem up); below that, the lines on the scan remain.
+- **Phone.** The scan keeps 40rem and scrolls sideways inside its frame, opened at the dates, because at 343px its text can't be read.
+- **Copy.** Every claim is checked against the repo: the bucket's size and types in the migrations, the limits, thresholds, models, timeout, output cap and retry in `config.ts`, the eval figures in EVALS.md. The headline says what it does and what it does when unsure, and nothing about who it is for, because the project has no customer to name. It is also the meta description.
 - The source link renders only when `NEXT_PUBLIC_REPO_URL` is set to an http or https URL, and names GitHub only when it points there. A deployment of the private repository leaves it unset, so no visitor meets a 404.
+- **Not checked:** Safari and Firefox (the leader uses `pathLength`, and `:has()` places the tokens), and a real screen reader. Each of the ten fields with a quote is a button, so the figure is ten Tab stops; a roving tab index would make it one, at the cost of a pattern screen readers don't announce for a list.
 
 ### Sign in and sign up
 

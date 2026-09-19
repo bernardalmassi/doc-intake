@@ -4,7 +4,7 @@
 export const SITE_NAME = "doc-intake";
 
 export const SITE_SUMMARY =
-  "doc-intake pulls the key details out of uploaded documents and flags anything uncertain for review.";
+  "Reads invoices, receipts, contracts and letters into eleven fields, and marks any field it is unsure of for a person to check.";
 
 // Where the source lives, from NEXT_PUBLIC_REPO_URL, which Next inlines at
 // build time. The landing page links to it only when this is set: unset,

@@ -1,0 +1,475 @@
+/*
+  The landing page, and only the landing page. DESIGN.md has the rules;
+  the brief they were built from is in DESIGN-NOTES.md, "Landing (/)".
+
+  Three colours, named for their job, in both themes: paper (the ground),
+  ink (all text and rules), signal (the one accent: the main action, the
+  fields to check, the lines under what they quote, the leader). Dark swaps paper and ink;
+  signal stays. Text on signal is always the darker of the two (5.06:1).
+  Signal is never text on paper: 3.22:1 on the light ground.
+
+  One radius: none. No shadows, no gradients, no opacity.
+
+  Two faces: Archivo set wide for the headline, labels and keys; Geist
+  (the app's own family) for reading. Four sizes: display, body 18/28,
+  small 15/22, label 12/16.
+
+  The tokens sit on <html> while this page is mounted, so the body behind
+  it (overscroll, the gap under a short page) is paper too.
+*/
+:global(html):has(.page) {
+  --paper: #141413;
+  --ink: #f2f1ec;
+  --signal: #e8560f;
+  --on-signal: var(--paper);
+}
+
+:global(html[data-theme="light"]):has(.page) {
+  --paper: #f2f1ec;
+  --ink: #141413;
+  --on-signal: var(--ink);
+}
+
+:global(body):has(.page) {
+  background-color: var(--paper);
+  color: var(--ink);
+}
+
+.page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  font-size: 1.125rem;
+  line-height: 1.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.page :focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+}
+
+.page ::selection {
+  background-color: var(--ink);
+  color: var(--paper);
+}
+
+/* ------------------------------------------------------------ type */
+
+.display,
+.label,
+.wordmark {
+  font-family: var(--font-archivo), ui-sans-serif, sans-serif;
+  font-variation-settings: "wdth" 125;
+  font-weight: 500;
+}
+
+.display {
+  font-size: clamp(2rem, 1.3rem + 2.2vw, 3rem);
+  line-height: 1.1;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+}
+
+.label {
+  font-size: 0.75rem;
+  line-height: 1rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.small {
+  font-size: 0.9375rem;
+  line-height: 1.375rem;
+}
+
+.link {
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.25em;
+}
+
+.link:hover {
+  text-decoration-thickness: 2px;
+}
+
+/* ------------------------------------------------------------ grid */
+
+/* Twelve columns. Section labels take the first three, content the next
+   eight, and the last stays empty. The headline and Fig. 1 hang from the
+   left edge instead. Below 64rem everything is one column. */
+.frame {
+  width: 100%;
+  max-width: 82rem;
+  margin-inline: auto;
+  padding-inline: 1rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  column-gap: 1rem;
+}
+
+.grid > * {
+  grid-column: 1 / -1;
+}
+
+@media (min-width: 48rem) {
+  .frame {
+    padding-inline: 2.5rem;
+  }
+
+  .grid {
+    column-gap: 2rem;
+  }
+}
+
+@media (min-width: 64rem) {
+  .grid > .wide {
+    grid-column: 1 / span 9;
+  }
+
+  .grid > .margin {
+    grid-column: 1 / span 3;
+  }
+
+  .grid > .content {
+    grid-column: 4 / span 8;
+  }
+}
+
+/* ---------------------------------------------------------- header */
+
+/* One row from 48rem: name, the two ways in, the theme. On a phone the
+   ways in drop to a second row. */
+.header {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "wordmark toggle"
+    "account account";
+  align-items: center;
+  column-gap: 1rem;
+  row-gap: 0.75rem;
+  padding-block: 0.75rem;
+}
+
+@media (min-width: 48rem) {
+  .header {
+    grid-template-columns: 1fr auto auto;
+    grid-template-areas: "wordmark account toggle";
+  }
+}
+
+.wordmark {
+  grid-area: wordmark;
+  font-size: 1.125rem;
+  line-height: 1.75rem;
+}
+
+.account {
+  grid-area: account;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.skip {
+  position: absolute;
+  top: 0.75rem;
+  left: 0;
+  z-index: 10;
+  transform: translateY(-5rem);
+  background-color: var(--paper);
+}
+
+.skip:focus {
+  transform: none;
+}
+
+.toggle {
+  grid-area: toggle;
+  display: inline-flex;
+  width: 2.5rem;
+  height: 2.5rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  color: var(--ink);
+}
+
+.toggle:hover {
+  border-color: var(--ink);
+}
+
+/* --------------------------------------------------------- actions */
+
+.hero {
+  padding-block: 3.5rem 5rem;
+}
+
+.action,
+.skip {
+  display: inline-flex;
+  height: 2.5rem;
+  align-items: center;
+  padding-inline: 1.25rem;
+  border: 1px solid var(--ink);
+  color: var(--ink);
+}
+
+.primary {
+  border-color: var(--signal);
+  background-color: var(--signal);
+  color: var(--on-signal);
+}
+
+.action:hover {
+  border-color: var(--ink);
+  background-color: var(--ink);
+  color: var(--paper);
+}
+
+@media (min-width: 64rem) {
+  .hero {
+    padding-block: 7rem 9rem;
+  }
+}
+
+/* ---------------------------------------------------------- Fig. 1 */
+
+.figure {
+  position: relative;
+}
+
+.scanFrame {
+  align-self: start;
+}
+
+.scan {
+  position: relative;
+}
+
+/* On a phone the page would be too small to read, so it keeps a readable
+   width and scrolls sideways inside its frame, opened at the dates. */
+@media (width < 48rem) {
+  .scanFrame {
+    overflow-x: auto;
+  }
+
+  .scan {
+    width: 40rem;
+  }
+}
+
+.scan img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* A line under the quoted words. Placed by percentage, so it stays under
+   them at any width. */
+.mark {
+  position: absolute;
+  height: 2px;
+  background-color: var(--signal);
+}
+
+/* From 64rem: the scan in the first eight columns with its caption under
+   it, the eleven fields in the last four, alongside both. Below that they
+   stack in that order. */
+@media (min-width: 64rem) {
+  .figure {
+    grid-template-rows: auto 1fr;
+  }
+
+  .grid > .scanFrame {
+    grid-column: 1 / span 8;
+    grid-row: 1;
+  }
+
+  .grid > .caption {
+    grid-column: 1 / span 8;
+    grid-row: 2;
+  }
+
+  .grid > .fields {
+    grid-column: 9 / span 4;
+    grid-row: 1 / span 2;
+    margin-top: 0;
+  }
+}
+
+.caption {
+  display: grid;
+  align-content: start;
+  gap: 1.5rem;
+  padding-top: 1.5rem;
+}
+
+@media (min-width: 48rem) {
+  .caption {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2rem;
+  }
+}
+
+.captionText {
+  margin-top: 0.5rem;
+}
+
+.run {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-content: start;
+  column-gap: 1rem;
+  row-gap: 0.25rem;
+}
+
+.fields {
+  margin-top: 2.5rem;
+  border-top: 1px solid var(--ink);
+}
+
+.field {
+  padding-block: 0.75rem 0.875rem;
+  border-bottom: 1px solid var(--ink);
+}
+
+.fieldHead {
+  display: flex;
+  min-height: 1.5rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.fieldName {
+  text-align: left;
+  cursor: default;
+}
+
+/* Low, and only Low: the field to check. */
+.key {
+  display: inline-flex;
+  height: 1.5rem;
+  align-items: center;
+  padding-inline: 0.5rem;
+  background-color: var(--signal);
+  color: var(--on-signal);
+  white-space: nowrap;
+}
+
+.value {
+  margin-top: 0.25rem;
+  overflow-wrap: anywhere;
+}
+
+.quote {
+  margin-top: 0.125rem;
+  overflow-wrap: anywhere;
+}
+
+.question {
+  margin-top: 0.75rem;
+}
+
+.question p + p {
+  margin-top: 0.25rem;
+}
+
+/* The leader: a 1px line from a field to the words it was read from. It
+   draws once when the figure arrives and again for the field under the
+   pointer or focus. Nothing else on the page moves. */
+.leaders {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.leader {
+  fill: none;
+  stroke: var(--signal);
+  stroke-width: 1;
+  stroke-dasharray: 1;
+  animation: draw 200ms ease-out both;
+}
+
+.arrival {
+  animation-duration: 320ms;
+}
+
+@keyframes draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .leader {
+    animation: none;
+  }
+}
+
+/* ------------------------------------------------- the other sections */
+
+.section {
+  padding-block: 5rem;
+}
+
+.section + .section {
+  padding-top: 0;
+}
+
+.sectionTitle {
+  padding-top: 0.25rem;
+}
+
+.specs {
+  margin-top: 1.25rem;
+  border-top: 1px solid var(--ink);
+}
+
+.spec {
+  display: grid;
+  gap: 0.25rem;
+  padding-block: 0.875rem;
+  border-bottom: 1px solid var(--ink);
+}
+
+.spec dt {
+  padding-top: 0.375rem;
+}
+
+@media (min-width: 48rem) {
+  .spec {
+    grid-template-columns: 11rem 1fr;
+    gap: 2rem;
+  }
+}
+
+@media (min-width: 64rem) {
+  .section {
+    padding-block: 8rem;
+  }
+
+  .specs {
+    margin-top: 0;
+  }
+}
+
+.source {
+  margin-top: 1.5rem;
+}
+
+.end {
+  padding-bottom: 6rem;
+}
