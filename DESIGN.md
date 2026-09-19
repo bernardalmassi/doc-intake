@@ -43,6 +43,10 @@ Before any UI code, write a design brief (palette as named tokens with hex, type
 - Motion: one idea, ease-out under 400ms, only on arrival or input.
 - Product imagery is a real capture or a real recorded result.
 
+## Documented exceptions
+
+- **The scan's stage, landing page, light theme.** The rule is one background. A scan is the exception: in both themes it sits on the dark neutral, `#141413`, with a 1px edge in the light neutral, `#f2f1ec`. In dark that is the page's own background, so the exception only shows in light, where the stage is a second ground. It adds no colour: the stage is the light theme's ink, and its edge is the light theme's paper (`--stage` and `--stage-edge` in `landing.module.css` are aliases). The reason is the capture, which the rules say must be real and so can't be retouched to suit the page. Its paper is `#e5ded7`, 1.18:1 against the light ground, so on it the sheet has almost no edge and stops reading as an object; against the stage it is 13.84:1. Its corners show the scanner's bed, `#3d3b44`, 9.73:1 against the light ground, where they read as three dark wedges stuck to the page; against the stage they are 1.67:1 and recede. Measured on `invoice-scan-page-1.jpg`, 20 Sep 2026. Scope: the stage around a scan, in the hero's detail and in Fig. 1, and nothing else. No text sits on the stage, and no other element may take a second background on the strength of this.
+
 ## Self-review
 
 Go through the page and list every element that is on the banned list, could be deleted with no loss of information, would sit unchanged on a generic SaaS template, makes a claim not on the true list, or uses a colour, radius or shadow not in the brief. Fix all of it, then show me the page and the list of what you changed.
