@@ -364,34 +364,70 @@
 
 /* ---------------------------------------------------------- Fig. 1 */
 
-/* Three panels of three sizes. From 64rem: the figure (the scan on its
-   stage, then the caption and the run's box under it) in the first seven
-   columns, one empty column for the leaders, the eleven fields in the
-   last four. From 80rem the figure takes eight and the fields three.
-   Below 64rem they stack in that order. */
+/* Three panels of three sizes. From 64rem: the figure (its head, and the
+   scan on its stage) in the first seven columns, one empty column for the
+   leader, the eleven fields in the last four; under the scan, the caption
+   and the run's box. From 80rem the figure takes eight and the fields
+   three. Below 64rem they are plain blocks: figure, fields, caption.
+
+   This much is the server's HTML and needs no script. The walkthrough's
+   layout is further down, under [data-walk], which figure.tsx sets. */
 .figureGrid {
   position: relative;
-  row-gap: 2.5rem;
   align-items: start;
 }
 
-/* minmax(0, …): the phone's 40rem scan scrolls inside its frame and must
-   not widen the column, and the page with it. */
+@media (width < 64rem) {
+  .figureGrid {
+    display: block;
+  }
+
+  .fields,
+  .caption {
+    margin-top: 2.5rem;
+  }
+}
+
 .scanFigure {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  display: block;
+}
+
+.panelHead,
+.panelTitle,
+.steps {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem 1rem;
 }
 
 .panelHead {
-  display: flex;
+  min-height: 3.5rem;
+  flex-wrap: wrap;
   justify-content: space-between;
-  gap: 1rem;
-  padding-block: 0.75rem;
+  padding-block: 0.5rem;
   border-top: 1px solid var(--ink);
 }
 
-/* On a phone the page would be too small to read, so it keeps a readable
-   width and scrolls sideways inside its stage, opened at the dates. */
+.steps {
+  gap: 0.5rem;
+}
+
+.steps p {
+  margin-inline-end: 0.5rem;
+}
+
+/* At an end of the walk. aria-disabled, not disabled: a focused button
+   that becomes disabled drops focus to the body. */
+.action[aria-disabled="true"],
+.action[aria-disabled="true"]:hover {
+  border-style: dotted;
+  background-color: transparent;
+  color: var(--ink);
+  cursor: not-allowed;
+}
+
+/* Without the walkthrough, on a phone: the page would be too small to
+   read, so it keeps a readable width and scrolls sideways in its stage. */
 @media (width < 48rem) {
   .scanFrame {
     overflow-x: auto;
@@ -409,7 +445,7 @@
 }
 
 /* A line under the quoted words. Placed by percentage, so it stays under
-   them at any width. Hidden until the scan has loaded and decoded
+   them at any size. Hidden until the scan has loaded and decoded
    (data-painted, set in scan.tsx), so no line is drawn over an empty box. */
 .mark {
   position: absolute;
@@ -424,7 +460,6 @@
 .caption {
   display: grid;
   gap: 1.5rem;
-  padding-top: 1.5rem;
 }
 
 .runPanel {
@@ -441,19 +476,25 @@
   overflow-wrap: anywhere;
 }
 
+/* The list spans both rows, so the caption sits right under the scan
+   however long the list is; what the list needs beyond the scan goes to
+   the second row. */
 @media (min-width: 64rem) {
+  .figureGrid {
+    grid-template-rows: auto 1fr;
+  }
+
   .grid > .scanFigure {
     grid-column: 1 / span 7;
-    grid-template-columns: subgrid;
+    grid-row: 1;
   }
 
-  .scanFigure > * {
-    grid-column: 1 / -1;
-  }
-
-  .caption {
+  .grid > .caption {
+    grid-column: 1 / span 7;
+    grid-row: 2;
     grid-template-columns: subgrid;
     align-items: start;
+    padding-top: 1.5rem;
   }
 
   .captionText {
@@ -466,11 +507,13 @@
 
   .grid > .fields {
     grid-column: 9 / span 4;
+    grid-row: 1 / span 2;
   }
 }
 
 @media (min-width: 80rem) {
-  .grid > .scanFigure {
+  .grid > .scanFigure,
+  .grid > .caption {
     grid-column: 1 / span 8;
   }
 
@@ -481,6 +524,140 @@
   .grid > .fields {
     grid-column: 10 / span 3;
   }
+}
+
+/* -------------------------------------------- Fig. 1, the walkthrough */
+
+/* The figure pins and the fields scroll past it. The scan is seen through
+   a window that fits the screen: the whole page fitted inside it, or
+   panned and scaled to a field's words (walk.ts, set inline by
+   figure.tsx). --zoom is registered as a number so the 2px lines can be
+   scaled back by it. */
+@property --zoom {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
+}
+
+/* Above the list's cover, which on a phone lies behind it. */
+.figureGrid[data-walk] .scanFigure {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background-color: var(--paper);
+}
+
+.figureGrid[data-walk] .stage {
+  container-type: inline-size;
+  padding: 1rem;
+}
+
+.figureGrid[data-walk] .scanFrame {
+  position: relative;
+  height: min(34svh, 141.41cqw);
+  overflow: hidden;
+}
+
+/* The edge is drawn by .edge while the scan is scaled: a border would be
+   scaled with it, and a border of 1px / zoom is rounded up to a whole
+   pixel before it is. */
+.figureGrid[data-walk] .scan {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: 0;
+  transform-origin: 0 0;
+}
+
+/* The page's box, unscaled, given by figure.tsx from the same numbers as
+   the transform and moved with the same timing, so the two stay together. */
+.edge {
+  position: absolute;
+  border: 1px solid var(--stage-edge);
+  pointer-events: none;
+}
+
+/* Not shown until its window has been measured and it has been placed. */
+.figureGrid[data-walk] .scan:not([data-placed]) {
+  visibility: hidden;
+}
+
+/* Scaled back, so the line stays 2px on screen. By transform, which isn't
+   rounded, not by height, which is. */
+.figureGrid[data-walk] .mark {
+  transform: scaleY(calc(1 / var(--zoom)));
+  transform-origin: 0 0;
+}
+
+/* A field's head holds at the line while its block is the active one, so
+   the leader always has somewhere to end. */
+.figureGrid[data-walk] .fieldHead {
+  position: sticky;
+  top: var(--line, 0);
+  z-index: 1;
+  background-color: var(--paper);
+}
+
+/* What has scrolled above the line is covered, up to the top of the
+   screen, so the active field is the first thing in its column. The cover
+   sits above the list, where it takes no room, and pins with it. */
+.figureGrid[data-walk] .fields::before {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: block;
+  height: var(--line, 0);
+  margin-top: calc(-1 * var(--line, 0px));
+  border-bottom: 1px solid var(--ink);
+  background-color: var(--paper);
+  content: "";
+}
+
+.field {
+  position: relative;
+}
+
+.figureGrid[data-walk] .field[aria-current]::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -0.75rem;
+  width: 2px;
+  background-color: var(--signal);
+  content: "";
+}
+
+@media (min-width: 48rem) {
+  .figureGrid[data-walk] .stage {
+    padding: 2rem;
+  }
+}
+
+/* Side by side: the figure pins 1rem down, and its window takes what is
+   left of the screen under the 3.5rem head, inside 2rem of stage. The
+   list keeps to the first row, so the row, and the figure's travel, is as
+   long as the list and its tail. */
+@media (min-width: 64rem) {
+  .figureGrid[data-walk] .scanFigure {
+    top: 1rem;
+  }
+
+  .figureGrid[data-walk] .scanFrame {
+    height: min(calc(100svh - 9.5rem), 141.41cqw);
+  }
+
+  .figureGrid[data-walk] > .fields {
+    grid-row: 1;
+  }
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 /* Dense: the rows are tight, and only the value is at reading size. */
@@ -537,12 +714,16 @@
 
 /* ---------------------------------------------------------- motion */
 
-/* One idea: a readout arrives in reading order. Labels (0 to 120ms), then
-   values (100 to 220ms), then the leader draws (160ms, started by script
-   no sooner than 220ms): under 400ms, ease-out, once. The hero's runs on
-   load; Fig. 1's when it comes on screen, and only if figure.tsx armed it.
-   A leader also draws for the field under the pointer or focus. Nothing
-   loops, and nothing else on the page moves. */
+/* One idea: a readout arrives in reading order, and each step ends in the
+   leader. On arrival: labels (0 to 120ms), then values (100 to 220ms),
+   then, in the hero, the leader (160ms, started by script no sooner than
+   220ms). On a step of Fig. 1's walkthrough: the view moves to the words
+   (180ms), then the line and the leader (160ms, started by script once
+   the view has stopped). Under 400ms, ease-out, once, and only on arrival
+   or the viewer's input. The hero's runs on load; Fig. 1's arrival when it
+   comes on screen, and only if figure.tsx armed it. Nothing loops, and
+   nothing else on the page moves. With reduced motion none of it
+   animates: a step is a jump. */
 @media (prefers-reduced-motion: no-preference) {
   .detail .seqLabel,
   .figureGrid[data-armed][data-entered] .seqLabel {
@@ -557,6 +738,21 @@
   .figureGrid[data-armed]:not([data-entered]) :is(.seqLabel, .seqValue) {
     opacity: 0;
   }
+
+  /* From the first settled state on, so being placed isn't a move. */
+  .figureGrid[data-walk] .scan[data-live] {
+    transition:
+      transform 180ms ease-out,
+      --zoom 180ms ease-out;
+  }
+
+  .figureGrid[data-walk] .edge[data-live] {
+    transition:
+      left 180ms ease-out,
+      top 180ms ease-out,
+      width 180ms ease-out,
+      height 180ms ease-out;
+  }
 }
 
 @keyframes arrive {
@@ -570,10 +766,12 @@
 
 /* The leader: a 1px line from the words a field was read from to the
    field. */
+/* Above the pinned figure, which it crosses. */
 .leaders {
   position: absolute;
   top: 0;
   left: 0;
+  z-index: 5;
   overflow: visible;
   pointer-events: none;
 }
@@ -583,11 +781,7 @@
   stroke: var(--signal);
   stroke-width: 1;
   stroke-dasharray: 1;
-  animation: draw 200ms ease-out both;
-}
-
-.arrival {
-  animation-duration: 160ms;
+  animation: draw 160ms ease-out both;
 }
 
 @keyframes draw {

@@ -44,19 +44,10 @@ export const crisp = (n: number) => Math.round(n) + 0.5;
 
 export type Geometry = { width: number; height: number; paths: Record<string, string> };
 
-// The leaders, over whatever they were measured against. `drawn` changes
-// with every new selection, so the paths remount and draw again; the
-// arrival draw is the last step of the arrival sequence and a little
-// shorter, so the three steps end inside 400ms.
-export function Leaders({
-  geometry,
-  names,
-  drawn = 0,
-}: {
-  geometry: Geometry;
-  names: readonly string[];
-  drawn?: number;
-}) {
+// The leaders, over whatever they were measured against. Each draws once,
+// when it is mounted: the last step of a sequence, 160ms, so the whole
+// sequence ends inside 400ms.
+export function Leaders({ geometry, names }: { geometry: Geometry; names: readonly string[] }) {
   return (
     <svg
       className={styles.leaders}
@@ -68,12 +59,7 @@ export function Leaders({
       {names
         .filter((name) => geometry.paths[name])
         .map((name) => (
-          <path
-            key={`${name}-${drawn}`}
-            d={geometry.paths[name]}
-            pathLength={1}
-            className={`${styles.leader} ${drawn === 0 ? styles.arrival : ""}`}
-          />
+          <path key={name} d={geometry.paths[name]} pathLength={1} className={styles.leader} />
         ))}
     </svg>
   );
