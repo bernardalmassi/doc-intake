@@ -347,9 +347,15 @@
   gap: 1rem;
 }
 
-.fieldName {
-  text-align: left;
-  cursor: default;
+/* The list is one Tab stop; the ring goes round the field the arrow keys
+   are on, not round the whole list. */
+.fields:focus-visible {
+  outline: none;
+}
+
+.fields:focus-visible > [data-active] {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
 }
 
 /* Low, and only Low: the field to check. */

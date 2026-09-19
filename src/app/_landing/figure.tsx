@@ -11,10 +11,15 @@ import styles from "./landing.module.css";
 // end of that line to the field.
 //
 // The two Low fields are shown when their words first come on screen;
-// pointing at or focusing a field shows that one. The lines on the scan
-// are in the server's HTML, so the figure makes sense before hydration;
-// the leaders need measurements, so they are drawn only in the browser and
-// only side by side (64rem up).
+// pointing at, clicking or arrowing to a field shows that one. The lines
+// on the scan are in the server's HTML, so the figure makes sense before
+// hydration; the leaders need measurements, so they are drawn only in the
+// browser and only side by side (64rem up).
+//
+// The fields are one Tab stop: a listbox whose active option follows the
+// arrow keys (aria-activedescendant), so a screen reader hears a list and
+// each field's position in it. Focus alone shows a field; there is nothing
+// to press.
 
 // "low": both Low fields, the figure's state on arrival. Otherwise the
 // name of the one field shown.
@@ -30,6 +35,14 @@ const isShown = (shown: Shown, field: Fig1Field) => (shown === LOW ? field.band 
 // screen too.
 const ARRIVAL_MARK = FIELDS.find((f) => f.band === "low")?.marks[0];
 
+// Where the arrow keys start: the first Low field.
+const FIRST_LOW = Math.max(
+  0,
+  FIELDS.findIndex((f) => f.band === "low"),
+);
+
+const optionId = (field: Fig1Field) => `fig-1-${field.name}`;
+
 function markStyle([x, y, width]: Mark): React.CSSProperties {
   return {
     left: `${(x / PAGE.width) * 100}%`,
@@ -43,6 +56,17 @@ function displayValue(field: Fig1Field): string {
   return field.name === "document_type" ? field.value.charAt(0).toUpperCase() + field.value.slice(1) : field.value;
 }
 
+// What a screen reader says for a field: written out, because the row's
+// labels are uppercased by CSS and Chrome carries that into the name. The
+// Low fields both get the question; on screen it is shown once.
+function spokenName(field: Fig1Field): string {
+  const low = field.band === "low";
+  let name = `${field.label}, ${low ? "Low" : "High"} ${field.confidencePercent}%, ${displayValue(field)}`;
+  if (field.sourceText) name += `, read from “${field.sourceText}”`;
+  if (low) name += `. To confirm: ${QUESTION}`;
+  return name;
+}
+
 // On the half pixel, so a 1px line covers one row of pixels, not two.
 const crisp = (n: number) => Math.round(n) + 0.5;
 
@@ -54,6 +78,8 @@ export function Figure() {
   // Changes with every new selection, so the leaders remount and draw again.
   const [draws, setDraws] = useState(0);
   const [geometry, setGeometry] = useState<Geometry | null>(null);
+  // The listbox's active option: the field the arrow keys are on.
+  const [active, setActive] = useState(FIRST_LOW);
 
   const figureRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
@@ -61,6 +87,7 @@ export function Figure() {
   const listRef = useRef<HTMLUListElement>(null);
   const arrivalRef = useRef<HTMLSpanElement>(null);
   const anchorRefs = useRef<Record<string, HTMLElement | null>>({});
+  const optionRefs = useRef<(HTMLLIElement | null)[]>([]);
 
   const measure = useCallback(() => {
     const figure = figureRef.current?.getBoundingClientRect();
@@ -138,6 +165,39 @@ export function Figure() {
     setArrived(true);
   }
 
+  // A key or a click makes a field the active option and shows it.
+  function select(index: number) {
+    const field = FIELDS[index];
+    if (!field) return;
+    setActive(index);
+    show(field.name);
+    // Focus stays on the list, so the browser won't scroll to the option.
+    optionRefs.current[index]?.scrollIntoView({ block: "nearest" });
+  }
+
+  function onListKeyDown(event: React.KeyboardEvent<HTMLUListElement>) {
+    const last = FIELDS.length - 1;
+    const target =
+      event.key === "ArrowDown"
+        ? Math.min(active + 1, last)
+        : event.key === "ArrowUp"
+          ? Math.max(active - 1, 0)
+          : event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? last
+              : null;
+    if (target === null) return;
+    event.preventDefault();
+    select(target);
+  }
+
+  // Focus from the keyboard shows the active field. A click focuses the
+  // list too, but its own handler shows the field clicked.
+  function onListFocus(event: React.FocusEvent<HTMLUListElement>) {
+    if (event.target === event.currentTarget && event.currentTarget.matches(":focus-visible")) select(active);
+  }
+
   return (
     <div ref={figureRef} className={`${styles.grid} ${styles.figure}`}>
       <div ref={frameRef} className={styles.scanFrame}>
@@ -195,43 +255,50 @@ export function Figure() {
         </dl>
       </div>
 
-      <ul ref={listRef} className={styles.fields} aria-label="The eleven fields">
-        {FIELDS.map((field) => {
+      <ul
+        ref={listRef}
+        role="listbox"
+        tabIndex={0}
+        aria-label="The eleven fields"
+        aria-activedescendant={optionId(FIELDS[active] ?? FIELDS[0])}
+        className={styles.fields}
+        onKeyDown={onListKeyDown}
+        onFocus={onListFocus}
+      >
+        {FIELDS.map((field, index) => {
           const low = field.band === "low";
           return (
             <li
               key={field.name}
+              id={optionId(field)}
+              ref={(element) => {
+                optionRefs.current[index] = element;
+              }}
+              role="option"
+              aria-label={spokenName(field)}
+              aria-posinset={index + 1}
+              aria-setsize={FIELDS.length}
+              aria-selected={index === active}
+              data-active={index === active || undefined}
               className={styles.field}
               onMouseEnter={field.marks.length > 0 ? () => show(field.name) : undefined}
+              onClick={() => select(index)}
             >
               <div className={styles.fieldHead}>
-                {field.marks.length > 0 ? (
-                  <button
-                    type="button"
-                    ref={(element) => {
-                      anchorRefs.current[field.name] = element;
-                    }}
-                    className={`${styles.label} ${styles.fieldName}`}
-                    aria-pressed={isShown(shown, field)}
-                    onFocus={() => show(field.name)}
-                    onClick={() => show(field.name)}
-                  >
-                    {field.label}
-                  </button>
-                ) : (
-                  <span className={styles.label}>{field.label}</span>
-                )}
+                <span
+                  ref={(element) => {
+                    anchorRefs.current[field.name] = element;
+                  }}
+                  className={styles.label}
+                >
+                  {field.label}
+                </span>
                 <span className={`${styles.label} ${low ? styles.key : ""}`}>
-                  <span className="sr-only">Confidence: </span>
                   {low ? "Low" : "High"} {field.confidencePercent}%
                 </span>
               </div>
               <p className={styles.value}>{displayValue(field)}</p>
-              {field.sourceText && (
-                <p className={`${styles.small} ${styles.quote}`}>
-                  <span className="sr-only">Read from: </span>“{field.sourceText}”
-                </p>
-              )}
+              {field.sourceText && <p className={`${styles.small} ${styles.quote}`}>“{field.sourceText}”</p>}
               {field.name === "due_date" && (
                 <div className={styles.question}>
                   <p className={styles.label}>To confirm, both dates</p>
