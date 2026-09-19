@@ -459,7 +459,15 @@ Policies can't prevent this. They evaluate one row at a time and can't see what 
 3. If the tenant row no longer exists, the tenant is being deleted by `delete_tenant`'s cascade and the change is allowed.
 4. Otherwise, if no other owner row remains, it raises `23514` "a tenant must keep at least one owner".
 
-The trigger applies to every role, `service_role` and `postgres` included. **Deleting a user who is the sole owner of a tenant now fails, including from the Supabase dashboard.** Transfer ownership or delete the tenant first. `delete_own_account` already refused this case with its own error.
+The trigger applies to every role, `service_role` and `postgres` included. **Deleting a user who is the sole owner of a tenant fails, including from the Supabase dashboard**, and that is intended: letting it through would leave a tenant nobody can administer or delete, holding files SQL can't remove. The dashboard says only "Database error deleting user"; the auth logs have the real error, `a tenant must keep at least one owner (SQLSTATE 23514)`. Seen live on the app project on 2026-09-19, when the dashboard's Delete user on five sole owners failed this way. `delete_own_account` refuses the same case earlier, with its own error.
+
+**Account deletion therefore goes through `delete_own_account`, not the dashboard's Delete user**, which succeeds only for a user who is no tenant's sole owner. In order:
+
+1. Remove each of the user's tenants' files through the Storage API, since SQL can't delete them: as the owner, or with `npx supabase storage rm --linked --experimental --yes` and explicit `ss:///documents/<tenant_id>/<document_id>` paths. Without `--yes` a non-interactive shell answers the CLI's confirmation with no and nothing is deleted.
+2. `delete_tenant(tenant_id)` as the owner. It refuses while files remain, and cascades to memberships, documents, runs and fields.
+3. `delete_own_account()` as the user.
+
+Without the user's session, steps 2 and 3 can be run as them over SQL (`set local role authenticated` and their id as `sub` in `request.jwt.claims`), which goes through the same checks. That is how four test accounts and five test tenants were removed from the app project on 2026-09-19, leaving nothing behind in auth, the tables or storage.
 
 **Test coverage.** One test (below) checks that a sole owner can't demote themselves (refused by the update policy, zero rows) or delete their own membership (refused by the trigger with `23514`). The allowed cascade is exercised on every run, because cleanup's `delete_tenant` calls remove tenants whose only owner row goes with them.
 
@@ -467,7 +475,7 @@ The trigger applies to every role, `service_role` and `postgres` included. **Del
 
 - the concurrent case: two owners removing each other at the same moment. The locking argument above has been reasoned through, not exercised.
 - an owner leaving when another owner remains, which should be allowed
-- the trigger blocking a dashboard or `service_role` user deletion
+- the trigger blocking a `service_role` or dashboard user deletion, beyond the live observation above
 
 ## Isolation test
 
@@ -547,17 +555,17 @@ See the README section "Tenant isolation test" for details.
 - **The Next.js app.** There are no automated tests for the app layer. The upload, download, delete and extract UI was built against the tested database rules but has not been exercised end to end with a browser. `/auth/confirm` has never run successfully, because email confirmation is off. The extraction Server Action's steps (download, magic bytes, providers, close) were exercised once outside the UI by the live check above.
 - **The real providers**, beyond that one live check and the recorded fixture runs (see [Untrusted document content](#untrusted-document-content)). The SDKs' own timeout and HTTP status handling is exercised by `tests/unit/provider-errors.test.ts` with real SDK clients over a fake `fetch` (a hung request, a refused connection, 500/502/503/529, 400/401/403/404/429), and refusal and truncation handling by `tests/unit/interpret.test.ts` against objects typed as the SDKs' own responses. A real outage, refusal or truncated answer from the live APIs has not been observed.
 - **That it stays true.** CI (`.github/workflows/ci.yml`) runs only the database-free tests on every push; the isolation and extraction suites need the test project's secrets and run in CI only when started by hand. They are point-in-time evidence against one project, and a later migration could break isolation without anyone noticing unless they are run again.
-- **Isolation in a separate project.** It runs against the same project the app uses, not a dedicated test project.
+- **The app project itself.** Since `5d04d85` (2026-09-18) the suites run against the test project only. Every migration goes to both projects, so the schema, grants, policies and functions they exercise are the app's too, but settings made in the dashboard (auth settings such as the password minimum and email confirmation) are per project and no test compares them.
 
 ## Auth configuration
 
 Auth settings live in the Supabase dashboard, not in this repo. `supabase/config.toml` only configures a local stack, which isn't used. What is known about the linked project:
 
-- **Email confirmation is off** so the isolation test can get a session straight from sign-up. Anyone can create an account with an email address they don't control, and then create tenants.
-- **Minimum password length is 15**, enforced by Supabase, not just the form: the test `Supabase itself rejects a password shorter than 15 characters` calls `auth.signUp` directly with 14 characters and expects `weak_password`. It failed on 2026-09-17 because the dashboard setting hadn't been saved (the account it created was removed by the test), and passed once the setting was re-saved the same day. Supabase caps passwords at 72 characters (bcrypt). The sign-up form enforces both before submitting and shows Supabase's `weak_password` reasons when the server rejects one.
+- **Email confirmation is off on both projects** (`mailer_autoconfirm` is true in each project's `/auth/v1/settings`, checked 2026-09-19). Anyone can create an account with an email address they don't control, and then create tenants. The test project needs it off so the suites get a session straight from sign-up. The app project is off only because the suites used to run there; nothing needs it off any more, so turning it on is a dashboard change (with email delivery set up for it).
+- **Minimum password length is 15**, enforced by Supabase, not just the form: the test `Supabase itself rejects a password shorter than 15 characters` calls `auth.signUp` directly with 14 characters and expects `weak_password`. It failed on 2026-09-17 because the dashboard setting hadn't been saved (the account it created was removed by the test), and passed once the setting was re-saved the same day. Supabase caps passwords at 72 characters (bcrypt). The sign-up form enforces both before submitting and shows Supabase's `weak_password` reasons when the server rejects one. The test now runs against the test project, so on the app project the minimum was last proven by runs before `5d04d85` (2026-09-18); a later change to the app project's setting would not be caught.
 - **Leaked password protection is off, and can't be turned on** (security advisor warning). It is a Pro plan feature and this project isn't on Pro (confirmed 2026-09-19), so passwords are not screened against known breaches. This is an accepted gap, not a pending setting; the 15 character minimum above is the only password strength control. See [Known gaps](#known-gaps-in-the-current-design).
 - **Other auth settings haven't been reviewed.** MFA and auth rate limits on the project haven't been checked. The app implements no MFA.
-- **Tests share the production project.** The test suite and the app use one project. A dedicated test project would allow re-enabling email confirmation for real users.
+- **Tests run against a separate project**, never the app's, since `5d04d85` (2026-09-18); see [How to run it](#how-to-run-it). Because dashboard settings are per project, the app project's auth settings above are not re-checked by any test run.
 
 ## Known gaps in the current design
 
