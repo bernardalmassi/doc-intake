@@ -14,6 +14,13 @@ const FRAMES = [
 ];
 
 describe("Fig. 1's walkthrough", () => {
+  // Every test below loops over FIELDS, so with a field missing they would
+  // all still pass. The walkthrough says "Field 5 of 11" and its list is
+  // named "The eleven fields": the count is a claim, so it is checked.
+  it("walks eleven fields", () => {
+    expect(FIELDS).toHaveLength(11);
+  });
+
   for (const frame of FRAMES) {
     describe(`in a ${frame.name} window`, () => {
       it("fits the whole page inside the window, centred", () => {
