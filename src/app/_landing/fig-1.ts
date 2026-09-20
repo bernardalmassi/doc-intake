@@ -192,7 +192,23 @@ export const QUESTION_LEAD = QUESTION.slice(0, QUESTION.indexOf(".") + 1);
 
 // Page 1 of the scan, whole, as invoice-scan-page-1.jpg. Marks are placed
 // by percentage of it.
+//
+// The file is the uploaded PDF's own image of page 1, taken out of it byte
+// for byte and never re-encoded: the PDF (written by Pillow's PDF driver)
+// is two A4 pages, each one JPEG of 1654 x 2339, which is 200 dots to the
+// inch, and nothing else, so there is no sharper source. It carries a JFIF
+// header and no colour profile, Exif, comment or device name; an earlier
+// copy was a re-rendering that embedded the profile of the monitor it was
+// made on. tests/unit/landing-fig-1.test.ts checks the file is this one
+// and carries nothing else. It is not what the model read: the app uploads
+// the PDF, and the provider makes its own image of each page.
 export const PAGE = { width: 1654, height: 2339 } as const;
+
+export const SCAN_FILE = {
+  sha256: "8c3398be19368319d67634a286f4f4b40657c555d02adc50f22ccbc1a6761762",
+  bytes: 271278,
+  dotsPerInch: 200,
+} as const;
 
 // The hero's detail of page 1, in the same pixels: the Date, Due and Terms
 // lines and the handwritten "ext. to 04/06 per DK", from just under the

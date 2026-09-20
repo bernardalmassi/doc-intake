@@ -2,11 +2,11 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { FIELDS, PAGE, QUESTION, RUN, SCAN_SIZES, type Fig1Field, type Point } from "./fig-1";
+import { FIELDS, PAGE, QUESTION, RUN, SCAN_FILE, SCAN_SIZES, type Fig1Field, type Point } from "./fig-1";
 import scan from "./invoice-scan-page-1.jpg";
 import styles from "./landing.module.css";
-import { crisp, type Geometry, Leaders, markStyle, type Region, usePainted } from "./scan";
-import { type Frame, viewFor } from "./walk";
+import { crisp, type Geometry, Leaders, usePainted } from "./scan";
+import { type Frame, inWindow, viewFor, zoomOf } from "./walk";
 
 // Fig. 1: three panels of different sizes on the page's grid. Page 1 of
 // the scan, large, as paper on a dark stage; the eleven fields the run
@@ -36,9 +36,6 @@ import { type Frame, viewFor } from "./walk";
 // keys move focus between fields, Home and End go to the ends, and focus
 // alone makes a field the active one. Each item carries its position
 // (aria-posinset, aria-setsize) and a written-out name.
-
-// The whole page: marks are placed by percentage of it.
-const WHOLE_PAGE: Region = { x: 0, y: 0, ...PAGE };
 
 // The view's move (landing.module.css). The line and the leader wait for
 // it to end; if no end is reported, this long and a little more.
@@ -322,8 +319,7 @@ export function Figure() {
     itemRefs.current[to]?.focus({ preventScroll: true });
   }
 
-  const scanStyle =
-    walk && view ? ({ width: view.base, transform, "--zoom": view.scale } as React.CSSProperties) : undefined;
+  const scanStyle = walk && view ? { width: view.base, transform } : undefined;
   // The page's 1px edge, beside the scan rather than on it, where it would
   // be scaled: the same box the transform gives the page, moved in step.
   const edgeStyle =
@@ -386,16 +382,24 @@ export function Figure() {
                 sizes={SCAN_SIZES}
                 onLoad={onLoad}
               />
-              {settled &&
-                field?.marks.map((mark) => (
+            </div>
+            {/* The lines, in the window and not on the scaled scan: there a
+                position is rounded to a whole pixel before the scale, which
+                at five times is two or three pixels on screen. */}
+            {view &&
+              settled &&
+              painted &&
+              field?.marks.map(([x, y, width]) => {
+                const [left, top] = inWindow([x, y], view);
+                return (
                   <span
-                    key={mark.join(",")}
+                    key={`${x},${y},${width}`}
                     className={styles.mark}
-                    style={markStyle(mark, WHOLE_PAGE)}
+                    style={{ left, top, width: width * zoomOf(view) }}
                     aria-hidden="true"
                   />
-                ))}
-            </div>
+                );
+              })}
             {edgeStyle && <div className={styles.edge} style={edgeStyle} data-live={settledKey !== "" || undefined} />}
           </div>
         </div>
@@ -453,7 +457,8 @@ export function Figure() {
 
       <div className={styles.caption}>
         <p className={`${styles.small} ${styles.captionText}`}>
-          A live run on the deployed app, {RUN.date}. The document is fictional test data.
+          A live run on the deployed app, {RUN.date}. The scan is the uploaded file’s own image of page 1: A4 at{" "}
+          {SCAN_FILE.dotsPerInch}&nbsp;dpi, JPEG. The document is fictional test data.
         </p>
         <div className={styles.runPanel}>
           <p className={styles.label}>Run</p>

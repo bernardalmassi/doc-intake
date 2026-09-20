@@ -6,8 +6,10 @@
 // token counts. If validation, gating or the price changes, the figure is
 // stale and this fails.
 
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { DETAIL, FIELDS, PAGE, QUESTION, QUESTION_LEAD, RUN } from "@/app/_landing/fig-1";
+import { DETAIL, FIELDS, PAGE, QUESTION, QUESTION_LEAD, RUN, SCAN_FILE } from "@/app/_landing/fig-1";
 import { computeCostUsd } from "@/lib/extraction/config";
 import { FIELDS as SCHEMA_FIELDS, gateFields, validateExtraction } from "@/lib/extraction/schema";
 
@@ -69,6 +71,38 @@ describe("Fig. 1", () => {
     expect(QUESTION_LEAD).toBe(
       "The payment terms are 30 days, but the due date is 91 days after the document date.",
     );
+  });
+
+  it("shows the PDF's own page image, which carries nothing but the picture", () => {
+    const file = readFileSync("src/app/_landing/invoice-scan-page-1.jpg");
+    // The bytes taken out of test-invoice-messy-scan.pdf. Any re-encoding,
+    // by any tool, changes them.
+    expect(file.length).toBe(SCAN_FILE.bytes);
+    expect(createHash("sha256").update(file).digest("hex")).toBe(SCAN_FILE.sha256);
+
+    // Every segment before the picture's data. Allowed: the JFIF header
+    // (APP0), the tables and the frame header. Not allowed: APP1 (Exif,
+    // XMP), APP2 (a colour profile, which names the display it came from),
+    // APP13 (Photoshop), any other APPn, or a comment.
+    expect(file.subarray(0, 2).toString("hex")).toBe("ffd8");
+    const allowed = new Set([0xe0, 0xdb, 0xc0, 0xc4, 0xdd]);
+    let frame: { width: number; height: number } | null = null;
+    let at = 2;
+    for (;;) {
+      expect(file[at], `marker at ${at}`).toBe(0xff);
+      const marker = file[at + 1] ?? 0;
+      if (marker === 0xda) break; // the picture's data starts
+      expect(allowed.has(marker), `segment 0x${marker.toString(16)}`).toBe(true);
+      const length = file.readUInt16BE(at + 2);
+      if (marker === 0xe0) expect(file.subarray(at + 4, at + 8).toString("latin1")).toBe("JFIF");
+      if (marker === 0xc0) frame = { height: file.readUInt16BE(at + 5), width: file.readUInt16BE(at + 7) };
+      at += 2 + length;
+    }
+    expect(frame).toEqual(PAGE);
+
+    // "A4 at 200 dpi": A4 is 210 x 297 mm.
+    expect(Math.round(PAGE.width / (210 / 25.4))).toBe(SCAN_FILE.dotsPerInch);
+    expect(Math.round(PAGE.height / (297 / 25.4))).toBe(SCAN_FILE.dotsPerInch);
   });
 
   it("states the cost the database would record for its token counts", () => {

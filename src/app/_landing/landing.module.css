@@ -531,14 +531,9 @@
 /* The figure pins and the fields scroll past it. The scan is seen through
    a window that fits the screen: the whole page fitted inside it, or
    panned and scaled to a field's words (walk.ts, set inline by
-   figure.tsx). --zoom is registered as a number so the 2px lines can be
-   scaled back by it. */
-@property --zoom {
-  syntax: "<number>";
-  inherits: true;
-  initial-value: 1;
-}
-
+   figure.tsx). The lines and the page's edge are drawn in the window,
+   unscaled, from the same numbers, so they keep their weight and their
+   place to the pixel. */
 /* Above the list's cover, which on a phone lies behind it. */
 .figureGrid[data-walk] .scanFigure {
   position: sticky;
@@ -580,13 +575,6 @@
 /* Not shown until its window has been measured and it has been placed. */
 .figureGrid[data-walk] .scan:not([data-placed]) {
   visibility: hidden;
-}
-
-/* Scaled back, so the line stays 2px on screen. By transform, which isn't
-   rounded, not by height, which is. */
-.figureGrid[data-walk] .mark {
-  transform: scaleY(calc(1 / var(--zoom)));
-  transform-origin: 0 0;
 }
 
 /* A field's head holds at the line while its block is the active one, so
@@ -741,9 +729,7 @@
 
   /* From the first settled state on, so being placed isn't a move. */
   .figureGrid[data-walk] .scan[data-live] {
-    transition:
-      transform 180ms ease-out,
-      --zoom 180ms ease-out;
+    transition: transform 180ms ease-out;
   }
 
   .figureGrid[data-walk] .edge[data-live] {
