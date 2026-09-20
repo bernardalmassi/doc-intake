@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { DETAIL, FIELDS, PAGE, QUESTION_LEAD, SCAN_SIZES } from "./fig-1";
+import { DETAIL, FIELDS, PAGE, QUESTION_LEAD } from "./fig-1";
 import scan from "./invoice-scan-page-1.jpg";
 import styles from "./landing.module.css";
 import { crisp, type Geometry, Leaders, markStyle, usePainted } from "./scan";
@@ -95,9 +95,13 @@ export function Detail() {
           <Image
             ref={imageRef}
             src={scan}
+            // The file itself, not the optimizer's copy of it: a variant sized
+            // for a layout box and re-encoded would be what gets magnified,
+            // and the bytes the test guards would reach no browser. Both
+            // images are this one URL, so it is one download.
+            unoptimized
             preload
             alt="Detail of a scanned invoice: Date 05/03/2026, Due 04/06/2026, Terms 30 days net with “days” struck through in pen, and a handwritten note under them, “ext. to 04/06 per DK”."
-            sizes={SCAN_SIZES}
             style={{
               width: `${(PAGE.width / DETAIL.width) * 100}%`,
               left: `${(-DETAIL.x / DETAIL.width) * 100}%`,

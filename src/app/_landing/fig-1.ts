@@ -217,7 +217,3 @@ export const SCAN_FILE = {
 // inside it (checked in tests/unit/landing-fig-1.test.ts).
 export const DETAIL = { x: 985, y: 278, width: 600, height: 210, field: "due_date" } as const;
 
-// Both images ask for the scan at its native width, so they resolve to one
-// URL and one download: the detail is shown larger than life, so it needs
-// every pixel anyway.
-export const SCAN_SIZES = `${PAGE.width}px`;

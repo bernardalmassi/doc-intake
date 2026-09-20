@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { FIELDS, PAGE, QUESTION, RUN, SCAN_FILE, SCAN_SIZES, type Fig1Field, type Point } from "./fig-1";
+import { FIELDS, PAGE, QUESTION, RUN, SCAN_FILE, type Fig1Field, type Point } from "./fig-1";
 import scan from "./invoice-scan-page-1.jpg";
 import styles from "./landing.module.css";
 import { crisp, type Geometry, Leaders, usePainted } from "./scan";
@@ -378,8 +378,9 @@ export function Figure() {
               <Image
                 ref={imageRef}
                 src={scan}
+                // The file itself, as in the hero (detail.tsx).
+                unoptimized
                 alt="Page 1 of a scanned invoice from Northgate Fixings & Supply Co. to Bramhall Interiors Ltd: slightly skewed, with a coffee ring over the unit prices, “days” struck through in the terms, handwritten notes (“ext. to 04/06 per DK” under the dates, “1,546.26 o/s” under the total, “chased 12/5 - part pd 500”, “check line 3 qty w/ site”) and a RECEIVED 03 MAY 2026 stamp."
-                sizes={SCAN_SIZES}
                 onLoad={onLoad}
               />
             </div>
