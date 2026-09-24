@@ -31,6 +31,14 @@ export const organizations: Organization[] = [
   { id: "00000000-0000-4000-8000-00000000b003", name: "Sheffield fit-out archive", slug: "sheffield-archive", role: "member" },
 ];
 
+// A name and an address at their longest, for wrapping on a phone.
+export const longOrganization: Organization = {
+  id: "00000000-0000-4000-8000-00000000b004",
+  name: "Northgate & Calder Wharf joint venture: site offices, snagging and handover records 2026",
+  slug: "northgate-calder-wharf-joint-venture-handover-26",
+  role: "admin",
+};
+
 function at(iso: string): string {
   return new Date(iso).toISOString();
 }

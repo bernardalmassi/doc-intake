@@ -1,18 +1,37 @@
 import Link from "next/link";
-import { hintClass, pageTitleClass, panelClass, secondaryButtonClass } from "@/app/ui";
+import { linkClass, pageTitleClass } from "@/app/ui";
+import { ChevronRightIcon } from "./[slug]/icons";
+import { roleAbilities } from "./[slug]/messages";
 
 // Presentational: /app fetches the data and passes it in, the design
 // preview passes fixtures. The create form comes in as a slot so this
 // file doesn't depend on the Server Action.
+//
+// The organization page's register, one level up: the title hangs from the
+// left edge, and each section sits in the landing's grid, its label in the
+// first three columns and its lines in the next eight. An organization is
+// one ruled line: its name (the link), its address, and what the reader
+// can do in it, in the words the organization page uses under its title.
+// No role's name: "Owner" says nothing on an organization of one.
 
 export type Role = "owner" | "admin" | "member";
 
 export type Organization = { id: string; name: string; slug: string; role: Role };
 
-const roleLabels: Record<Role, string> = { owner: "Owner", admin: "Admin", member: "Member" };
-
 // Case- and accent-insensitive, and "Team 2" before "Team 10".
 const collator = new Intl.Collator("en", { sensitivity: "base", numeric: true });
+
+const LIST_HEADING_ID = "organizations-heading";
+const CREATE_HEADING_ID = "create-heading";
+
+// What the creator can do in the organization they create: an owner's
+// abilities, said as the rows say them.
+const CREATOR_CAN = `In the organization you create, you can ${lowerFirst(roleAbilities("owner"))}`;
+
+// The same grid as the organization page's sections.
+const sectionClass = "grid grid-cols-1 gap-x-8 lg:grid-cols-12";
+const sectionLabelClass = "label lg:col-span-3";
+const sectionBodyClass = "mt-3 min-w-0 lg:col-span-8 lg:col-start-4 lg:mt-0";
 
 export function OrganizationsView({
   organizations,
@@ -21,118 +40,102 @@ export function OrganizationsView({
   organizations: Organization[];
   createForm: React.ReactNode;
 }) {
-  if (organizations.length === 0) return <NoOrganizations createForm={createForm} />;
-
   const sorted = [...organizations].sort(
     (a, b) => collator.compare(a.name, b.name) || collator.compare(a.slug, b.slug),
   );
+  const none = sorted.length === 0;
 
   return (
     <>
       <h1 className={pageTitleClass}>Organizations</h1>
-      <p className="mt-2 text-ink">Open an organization to upload and review its documents.</p>
 
-      <ul className="mt-6 max-w-2xl space-y-2">
-        {sorted.map((organization) => (
-          <li key={organization.id}>
-            <OrganizationLink organization={organization} />
-          </li>
-        ))}
-      </ul>
-
-      {/* Secondary to the list: one click away, and the primary button
-          only shows once it's open. A native disclosure, so it works
-          before hydration and stays open when the action returns an
-          error. */}
-      <details className="group mt-8 max-w-2xl">
-        <summary
-          className={`${secondaryButtonClass} list-none [&::-webkit-details-marker]:hidden`}
-        >
-          Create another organization
-          <ChevronDownIcon className="group-open:rotate-180" />
-        </summary>
-        <div className={`mt-4 max-w-md ${panelClass}`}>
-          <p className={hintClass}>You&apos;ll be the owner of the new organization.</p>
-          <div className="mt-4">{createForm}</div>
+      <section aria-labelledby={LIST_HEADING_ID} className={`mt-10 md:mt-14 ${sectionClass}`}>
+        <h2 id={LIST_HEADING_ID} className={sectionLabelClass}>
+          Your organizations · {sorted.length}
+        </h2>
+        <div className={sectionBodyClass}>
+          {none ? (
+            // Empty is one plain line, as an empty register is on the
+            // organization page, then what an organization is.
+            <div className="border-y border-ink py-4">
+              <p className="max-w-prose">
+                None yet. An organization is a shared workspace: its documents, what was extracted from them and its
+                monthly extraction budget are seen only by its members.
+              </p>
+            </div>
+          ) : (
+            <ul className="border-t border-ink">
+              {sorted.map((organization) => (
+                <li key={organization.id}>
+                  <OrganizationLine organization={organization} />
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
-      </details>
+      </section>
+
+      <section aria-labelledby={CREATE_HEADING_ID} className={`mt-14 md:mt-20 ${sectionClass}`}>
+        <h2 id={CREATE_HEADING_ID} className={sectionLabelClass}>
+          New organization
+        </h2>
+        <div className={sectionBodyClass}>
+          {none ? (
+            <>
+              <p className="max-w-prose pb-4 text-small">{CREATOR_CAN}</p>
+              <div className="border-b border-ink">{createForm}</div>
+            </>
+          ) : (
+            // Secondary to the list: a fold of the register, as the fields
+            // that were read are on the organization page, and the form's
+            // primary button only shows once it is open. A native
+            // disclosure, so it works before hydration and stays open when
+            // the action returns an error.
+            <details className="group border-y border-ink">
+              <summary className="flex cursor-pointer list-none flex-col gap-1 py-3 md:grid md:grid-cols-[11rem_minmax(0,1fr)] md:gap-x-4 [&::-webkit-details-marker]:hidden">
+                <span className="label inline-flex min-h-6 items-center gap-2">
+                  Create
+                  <ChevronRightIcon className="group-open:rotate-90" />
+                </span>
+                <span className="min-w-0 max-w-prose text-small md:pt-0.5">{CREATOR_CAN}</span>
+              </summary>
+              <div className="ledger-arrive">{createForm}</div>
+            </details>
+          )}
+        </div>
+      </section>
     </>
   );
 }
 
-function NoOrganizations({ createForm }: { createForm: React.ReactNode }) {
+// One organization's line. The name is the link, underlined like every
+// link, and its ::after covers the line, so the whole line is the target;
+// the chevron says so without being a second control.
+function OrganizationLine({ organization }: { organization: Organization }) {
   return (
-    <>
-      <h1 className={pageTitleClass}>Create an organization</h1>
-      <p className="mt-3 max-w-2xl text-ink">
-        An organization is a shared workspace. Its documents, the details extracted from them and
-        its monthly extraction budget are visible only to its members. Whoever creates an
-        organization becomes its owner.
+    <div className="relative border-b border-ink py-4">
+      <div className="flex items-start gap-4">
+        <h3 className="min-w-0 flex-1">
+          <Link
+            href={`/app/${organization.slug}`}
+            className={`${linkClass} [overflow-wrap:anywhere] after:absolute after:inset-0 after:content-['']`}
+          >
+            {organization.name}
+          </Link>
+        </h3>
+        <span aria-hidden="true" className="flex h-7 items-center">
+          <ChevronRightIcon />
+        </span>
+      </div>
+      <p className="mt-1 text-small [overflow-wrap:anywhere]">/app/{organization.slug}</p>
+      <p className="mt-2 max-w-prose text-small">
+        <span className="label mr-2">You can</span>
+        {roleAbilities(organization.role)}
       </p>
-      <div className={`mt-6 max-w-md ${panelClass}`}>{createForm}</div>
-    </>
+    </div>
   );
 }
 
-// The whole row is the link. The name is underlined like every other link,
-// so the row doesn't rely on its border or color to read as one.
-function OrganizationLink({ organization }: { organization: Organization }) {
-  return (
-    <Link
-      href={`/app/${organization.slug}`}
-      className="group flex items-center gap-4 border border-ink bg-paper px-4 py-3 hover:border-ink"
-    >
-      <span className="min-w-0 flex-1">
-        <span className="block font-medium wrap-anywhere underline decoration-ink underline-offset-4 group-hover:decoration-ink">
-          {organization.name}
-        </span>
-        <span className="mt-0.5 block text-small text-ink wrap-anywhere">
-          /app/{organization.slug}
-        </span>
-      </span>
-      <span className="shrink-0 text-small text-ink">
-        <span className="sr-only">Your role: </span>
-        {roleLabels[organization.role]}
-      </span>
-      <ChevronRightIcon />
-    </Link>
-  );
-}
-
-function ChevronRightIcon() {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      width="16"
-      height="16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      className="shrink-0 text-ink group-hover:text-ink"
-    >
-      <path d="M6 3.5L10.5 8L6 12.5" />
-    </svg>
-  );
-}
-
-function ChevronDownIcon({ className }: { className: string }) {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      width="16"
-      height="16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      className={className}
-    >
-      <path d="M3.5 6L8 10.5L12.5 6" />
-    </svg>
-  );
+function lowerFirst(text: string): string {
+  return text.charAt(0).toLowerCase() + text.slice(1);
 }

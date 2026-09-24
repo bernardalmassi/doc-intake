@@ -30,6 +30,7 @@ import {
   entriesFor,
   FAILED_ID,
   FAILURE_IDS,
+  longOrganization,
   NEEDS_REVIEW_ID,
   organization,
   organizations,
@@ -352,13 +353,19 @@ export const SCREENS: Screen[] = [
   },
 
   // Organizations
-  { id: "orgs-none", group: "Organizations", title: "No organizations yet: create the first", render: () => <OrgsPage list={[]} /> },
+  { id: "orgs-none", group: "Organizations", title: "No organizations yet: the create form is open", render: () => <OrgsPage list={[]} /> },
   { id: "orgs-one", group: "Organizations", title: "One organization, owner", render: () => <OrgsPage list={organizations.slice(0, 1)} /> },
   {
     id: "orgs-several",
     group: "Organizations",
-    title: "Three organizations, one per role (click summary to open the create form)",
+    title: "Three organizations, one per role (the plan clicks the summary to open the create form)",
     render: () => <OrgsPage list={organizations} />,
+  },
+  {
+    id: "orgs-long",
+    group: "Organizations",
+    title: "Four organizations, one with the longest name and address",
+    render: () => <OrgsPage list={[...organizations, longOrganization]} />,
   },
   {
     id: "org-create-pending",

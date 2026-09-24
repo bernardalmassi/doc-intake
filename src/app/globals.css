@@ -303,6 +303,12 @@
     .ledger-arrive:not([hidden]) {
       animation: ledger-arrive 160ms cubic-bezier(0, 0, 0.2, 1) 1 both;
     }
+
+    /* In a closed <details> (the organizations list's Create fold) it has
+       no animation, so it gets one, and plays it, as the fold opens. */
+    details:not([open]) > .ledger-arrive {
+      animation: none;
+    }
   }
 }
 
