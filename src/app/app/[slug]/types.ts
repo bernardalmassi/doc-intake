@@ -26,7 +26,7 @@ export type DocumentRow = {
 export type RunRecord = {
   id: string;
   document_id: string | null;
-  // running, succeeded, failed
+  // queued, running, succeeded, failed
   status: string;
   provider: string | null;
   model: string | null;
@@ -37,7 +37,12 @@ export type RunRecord = {
   cost_usd: number | string | null;
   latency_ms: number | null;
   error: string | null;
+  // when the run was enqueued, or opened before the queue
   started_at: string;
+  // when a worker claimed it; null while queued, and for runs from before
+  // the queue. Optional so rows built without it (the design preview's
+  // fixtures) still type.
+  claimed_at?: string | null;
 };
 
 // A run as the components get it: the stored error only as its code from
@@ -76,7 +81,11 @@ export type DocumentEntry = {
   runs: RunRow[];
   // in the order of FIELDS in src/lib/extraction/schema.ts
   fields: FieldRow[];
-  // processing, but its run has been running longer than the database's
-  // stale limit, so the next Extract click fails it and starts again
+  // processing, but its latest run has been queued (since it was enqueued)
+  // or running (since it was claimed) longer than the database's stale
+  // limit, so the queue's sweep or the next Extract click ends it
   staleRun: boolean;
+  // while the document is processing and its latest run isn't stale: queued
+  // until a worker claims the run, running after that; otherwise null
+  extraction: "queued" | "running" | null;
 };

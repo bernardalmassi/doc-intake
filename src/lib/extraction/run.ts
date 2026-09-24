@@ -12,7 +12,7 @@
 //   5. still invalid: the run fails and the last raw answer is kept
 //
 // Never switching after an answer means every token a run counts comes from
-// one model, the one close_extraction_run prices the whole run at. It also
+// one model, the one finish_extraction_run prices the whole run at. It also
 // bounds a run at three calls (primary times out, fallback answers invalid,
 // fallback retried); tests/unit/orchestrator.test.ts checks every
 // combination. The database's bounds on a run, its attempts check and token
@@ -275,8 +275,9 @@ function failureText(error: string): string {
   return scrubbed.trim().length > 0 ? scrubbed : "unknown error";
 }
 
-// The arguments close_extraction_run takes for an outcome. Shared by the
-// Server Action and the tests so both close a run the same way. Validation
+// The outcome as the database takes it: the text-bearing arguments of
+// finish_extraction_run (toFinishParams below). Shared by the worker and the
+// tests so both record a run the same way. Validation
 // already cleaned what the model wrote; every string is made NUL-free, well
 // formed and within its column here again, whatever produced it (an error
 // message, a raw answer that failed validation), so the close can't be
@@ -335,7 +336,7 @@ export function toFinishParams(runId: string, claimToken: string, outcome: RunOu
   };
 }
 
-// What to close a run with when close_extraction_run refused to record its
+// What to finish a run with when finish_extraction_run refused to record its
 // outcome: a model it has no price for, a check this code doesn't know, a
 // dropped connection. A refused close changes nothing, so the run is still
 // open and its token still valid; closing it as failed with no fields puts

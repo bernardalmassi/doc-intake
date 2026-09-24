@@ -106,15 +106,18 @@ const FUNCTION_OPERATIONS: Record<string, DatabaseOperation[]> = {
   refuse_document_delete_while_file_exists: ["delete_document"],
   complete_document_upload: ["complete_document_upload"],
   enqueue_extraction_run: ["enqueue_extraction_run"],
-  open_extraction_run: ["open_extraction_run"],
-  close_extraction_run: ["close_extraction_run"],
   finish_extraction_run: ["finish_extraction_run"],
+  // The pre-queue RPCs, live until a later migration drops them. The app
+  // no longer calls them (tests/unit/worker-boundary.test.ts); their errors
+  // read as their queue counterparts' would.
+  open_extraction_run: ["enqueue_extraction_run"],
+  close_extraction_run: ["finish_extraction_run"],
   // helpers, surfacing through the RPCs that call them
-  check_extraction_limits: ["enqueue_extraction_run", "open_extraction_run"],
-  extraction_charge: ["close_extraction_run", "finish_extraction_run"],
+  check_extraction_limits: ["enqueue_extraction_run"],
+  extraction_charge: ["finish_extraction_run"],
   // the ledger's append-only trigger: only the definer functions that end a
   // run write the ledger, and they only insert
-  refuse_spend_change: ["close_extraction_run", "finish_extraction_run"],
+  refuse_spend_change: ["finish_extraction_run"],
 };
 
 // The reviewed code for every raise. A new or reworded raise fails the test
@@ -222,23 +225,19 @@ const DATABASE_CASES: DbCase[] = [
   ["malformed document id on delete", pgError("22P02", 'invalid input syntax for type uuid: "x"'), "delete_document", "document.not_found"],
   ["anonymous completion", pgError("42501", "permission denied for function complete_document_upload"), "complete_document_upload", "upload.not_allowed"],
   // extraction
-  ["anonymous open", pgError("42501", "permission denied for function open_extraction_run"), "open_extraction_run", "extraction.not_allowed"],
   ["anonymous enqueue", pgError("42501", "permission denied for function enqueue_extraction_run"), "enqueue_extraction_run", "extraction.not_allowed"],
   ["malformed id on enqueue", pgError("22P02", 'invalid input syntax for type uuid: "x"'), "enqueue_extraction_run", "extraction.not_allowed"],
   ["a 53400 on enqueue in words no migration raises", pgError("53400", SECRET), "enqueue_extraction_run", "unknown"],
-  ["malformed id on open", pgError("22P02", 'invalid input syntax for type uuid: "x"'), "open_extraction_run", "extraction.not_allowed"],
-  ["a 53400 in words no migration raises", pgError("53400", SECRET), "open_extraction_run", "unknown"],
-  ["a 55000 in words no migration raises", pgError("55000", SECRET), "open_extraction_run", "unknown"],
-  ["a lost connection on close", { code: "", message: "TypeError: fetch failed" }, "close_extraction_run", "extraction.record_failed"],
+  ["a 55000 in words no migration raises", pgError("55000", SECRET), "enqueue_extraction_run", "unknown"],
   ["a lost connection on the worker's finish", { code: "", message: "TypeError: fetch failed" }, "finish_extraction_run", "extraction.record_failed"],
   // anywhere
   ["no response", { code: "", message: "TypeError: fetch failed", details: "Caused by: ...", hint: "" } as PostgrestError, "select", "network.unavailable"],
   ["aborted", { code: "", message: "AbortError: This operation was aborted", details: "", hint: "Request was aborted (timeout or manual cancellation)" } as PostgrestError, "insert_document", "network.unavailable"],
   ["expired JWT", pgError("PGRST303", "JWT expired"), "select", "auth.session_expired"],
-  ["undecodable JWT", pgError("PGRST301", "No suitable key or wrong key type"), "open_extraction_run", "auth.session_expired"],
+  ["undecodable JWT", pgError("PGRST301", "No suitable key or wrong key type"), "enqueue_extraction_run", "auth.session_expired"],
   ["HTTP 401 without a code", { message: "Unauthorized", status: 401 }, "select", "auth.session_expired"],
   ["PostgREST can't reach Postgres", pgError("PGRST001", "Database client error. Retrying the connection."), "select", "service.unavailable"],
-  ["statement timeout", pgError("57014", "canceling statement due to statement timeout"), "open_extraction_run", "service.unavailable"],
+  ["statement timeout", pgError("57014", "canceling statement due to statement timeout"), "enqueue_extraction_run", "service.unavailable"],
   ["serialization failure", pgError("40001", "could not serialize access due to concurrent update"), "update_membership", "service.unavailable"],
   ["connection exception", pgError("08006", "connection failure"), "select", "service.unavailable"],
   ["a gateway's HTML 502", { message: "<html><body>502 Bad Gateway</body></html>", status: 502 }, "select", "service.unavailable"],
@@ -825,10 +824,13 @@ describe("the migrations", () => {
 
 describe("the sources that write run errors", () => {
   it("still write the markers the module reads", () => {
-    const action = read("src/app/app/extract-action.ts");
-    expect(action).toContain(RUN_ERROR_MARKERS.downloadFailed);
-    expect(action).toContain(RUN_ERROR_MARKERS.typeMismatch);
-    expect(action).toContain("does not match its declared type");
+    const delivery = read("src/lib/extraction/delivery.ts");
+    expect(delivery).toContain(RUN_ERROR_MARKERS.downloadFailed);
+    expect(delivery).toContain(RUN_ERROR_MARKERS.typeMismatch);
+    expect(delivery).toContain("does not match its declared type");
+    expect(delivery).toContain("RUN_ERROR_MARKERS.pagesUnreadable");
+    expect(delivery).toContain("RUN_ERROR_MARKERS.tooManyPages");
+    expect(delivery).toContain("RUN_ERROR_MARKERS.pageCountMismatch");
 
     const run = read("src/lib/extraction/run.ts");
     expect(run).toContain(RUN_ERROR_MARKERS.invalidAfterRetry);
@@ -949,7 +951,7 @@ describe("what the user sees", () => {
     const secretParts = ["sk-ant-api03", "7c9e6679", "<script>", "orders"];
     for (const input of garbage) {
       const codes = [
-        classifyDatabaseError(input as never, "open_extraction_run"),
+        classifyDatabaseError(input as never, "enqueue_extraction_run"),
         classifyAuthError(input as never, "signUp"),
         classifyStorageError(input as never, "createSignedUrl"),
         classifyProviderError(input as never),
@@ -971,7 +973,7 @@ describe("what the user sees", () => {
     };
     const fields = ["code", "message", "name", "status", "statusCode", "kind", "reasons"];
     const classifyAll = (input: unknown) => [
-      classifyDatabaseError(input as never, "open_extraction_run"),
+      classifyDatabaseError(input as never, "enqueue_extraction_run"),
       classifyAuthError(input as never, "signUp"),
       classifyStorageError(input as never, "upload"),
       classifyProviderError(input as never),

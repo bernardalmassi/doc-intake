@@ -394,10 +394,10 @@ export function userFacingError(code: ErrorCode): UserFacingError {
 export const DATABASE_PHRASES = {
   // create_tenant raises it without an errcode (P0001); the others as 42501
   authenticationRequired: "authentication required",
-  // enqueue_extraction_run and open_extraction_run, 55000
+  // enqueue_extraction_run, 55000
   documentHasNoFile: "the document has no file yet",
   extractionAlreadyRunning: "an extraction is already running for this document",
-  // check_extraction_limits (called by both), 53400
+  // check_extraction_limits (called by enqueue_extraction_run), 53400
   tenantCeilingReached: "this organization has reached its monthly extraction spend ceiling",
   globalCeilingReached: "the monthly extraction spend ceiling across all organizations has been reached",
   // delete_tenant, 55000
@@ -450,8 +450,8 @@ export const RUN_ERROR_MARKERS = {
   abandoned: "abandoned: ",
   // a run ended before any delivery claimed it, at no cost
   expired: "expired: ",
-  // failedCloseAttempts (run.ts), when close_extraction_run refused a
-  // successful run and the Extract action closed it as failed instead
+  // failedCloseAttempts (run.ts), when the database refused to record a
+  // successful run and the worker finished it as failed instead
   resultNotRecorded: "the result could not be recorded",
   // A run charged an estimate rather than its recorded usage: by
   // failedCloseAttempts (run.ts) when the close with the run's own model was
@@ -542,8 +542,6 @@ export type DatabaseOperation =
   | "delete_document"
   | "complete_document_upload"
   | "enqueue_extraction_run"
-  | "open_extraction_run"
-  | "close_extraction_run"
   | "finish_extraction_run"
   | "select";
 
@@ -585,11 +583,10 @@ export function classifyDatabaseError(
 
 function databaseCode(error: DatabaseErrorLike | null | undefined, operation: DatabaseOperation): ErrorCode {
   if (!isRecord(error)) return "unknown";
-  // Whatever stopped the close or the worker's finish (lost connection,
-  // expired session, a price missing for the model), the outcome for the
-  // user is the same: the run stays open until the reaper or the sweep
-  // releases the document.
-  if (operation === "close_extraction_run" || operation === "finish_extraction_run") return "extraction.record_failed";
+  // Whatever stopped the worker's finish (lost connection, a price missing
+  // for the model), the outcome for the user is the same: the run stays
+  // open until the queue's sweep releases the document.
+  if (operation === "finish_extraction_run") return "extraction.record_failed";
 
   const code = stringField(error, "code");
   const message = stringField(error, "message") ?? "";
@@ -695,7 +692,6 @@ function byOperation(operation: DatabaseOperation, code: string, message: string
       return undefined;
 
     case "enqueue_extraction_run":
-    case "open_extraction_run":
       // missing and not-admin are one 42501 on purpose
       if (code === "42501" || code === "22P02") return "extraction.not_allowed";
       if (code === "54000") return "extraction.rate_limited";
@@ -709,7 +705,6 @@ function byOperation(operation: DatabaseOperation, code: string, message: string
       }
       return undefined;
 
-    case "close_extraction_run":
     case "finish_extraction_run":
     case "select":
       return undefined;

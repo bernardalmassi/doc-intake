@@ -363,7 +363,7 @@ function truncate(text: string | null, max: number): string | null {
 // Gating -------------------------------------------------------------------
 
 // flags: why the output guard lowered this field, empty when it didn't.
-// Not stored (close_extraction_run takes the fields it knows); the band and
+// Not stored (finish_extraction_run takes the fields it knows); the band and
 // the question carry the result into the database.
 export type GatedField = ExtractedField & { band: ConfidenceBand; flags: GuardFlag[] };
 

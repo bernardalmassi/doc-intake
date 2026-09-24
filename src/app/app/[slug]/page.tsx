@@ -5,19 +5,11 @@ import { AccountControls, MAIN_ID, SiteHeader } from "@/app/components/site-head
 import { pageClass } from "@/app/ui";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { buildEntries } from "./entries";
+import { buildEntries, shouldPoll } from "./entries";
 import { LiveOperations } from "./live-operations";
 import { OrganizationView } from "./organization-view";
+import { RefreshWhileExtracting } from "./refresh-while-extracting";
 import { type DocumentRow, type FieldRow, type Organization, type Role, type RunRecord, toRunRow } from "./types";
-
-// Seconds this page's function may run, which Next.js applies to every
-// Server Action used on the page, the Extract action included. A run's
-// model calls are bounded at 180 s (three calls of 60 s, config.ts); this
-// leaves a minute for the download and the open and close RPCs, stays under
-// the host's 300 s ceiling, and ends well before the stale-run reaper
-// (10 minutes) could fail a run still in flight. A literal, because Next.js
-// reads it statically; tests/unit/max-duration.test.ts checks the bounds.
-export const maxDuration = 240;
 
 function toRole(value: string | undefined): Role {
   return value === "owner" || value === "admin" ? value : "member";
@@ -79,7 +71,7 @@ export default async function OrganizationPage({ params }: PageProps<"/app/[slug
     supabase
       .from("extraction_runs")
       .select(
-        "id, document_id, status, provider, model, attempts, input_tokens, output_tokens, cost_usd, latency_ms, error, started_at",
+        "id, document_id, status, provider, model, attempts, input_tokens, output_tokens, cost_usd, latency_ms, error, started_at, claimed_at",
       )
       .eq("tenant_id", tenant.id)
       .order("started_at", { ascending: false }),
@@ -111,6 +103,7 @@ export default async function OrganizationPage({ params }: PageProps<"/app/[slug
         <AccountControls email={user.email} />
       </SiteHeader>
       <main id={MAIN_ID} className={pageClass}>
+        <RefreshWhileExtracting active={shouldPoll(entries)} />
         <LiveOperations>
           <OrganizationView organization={tenant} role={role} entries={entries} />
         </LiveOperations>

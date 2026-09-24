@@ -74,12 +74,6 @@ export const LOG_EVENTS = [
   "extraction.enqueue_refused",
   "extraction.download_failed",
   "extraction.type_mismatch",
-  "extraction.run_opened",
-  "extraction.open_refused",
-  "extraction.unexpected_error",
-  "extraction.run_closed",
-  "extraction.close_failed",
-  "extraction.close_retried",
   // src/app/api/extraction-worker/route.ts and extraction/worker.ts,
   // extraction/delivery.ts: one line per step of a delivery
   "worker.unauthorized",
@@ -159,7 +153,7 @@ const provider = oneOf(keysOf(PROVIDERS));
 // A model id as a provider reports it: one priced in config.ts, or one of
 // those followed by a date snapshot (gpt-5-nano-2025-08-07, or -20251001 in
 // Anthropic's style). A reported id that isn't one of these is dropped, and
-// close_extraction_run would refuse to price it anyway.
+// finish_extraction_run would refuse to price it anyway.
 const PRICED_MODELS = Object.keys(PRICING);
 const SNAPSHOT_SUFFIX = /^-20\d{2}(-?)(0[1-9]|1[0-2])\1(0[1-9]|[12]\d|3[01])$/;
 const model: Format<string> = (value) => {

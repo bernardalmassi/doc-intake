@@ -7,7 +7,9 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Everything except Next internals and static image assets.
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    // Everything except Next internals, static image assets and the queue
+    // worker's route, whose requests come from pg_net with a bearer and no
+    // session cookie, so there is no session to refresh.
+    "/((?!_next/static|_next/image|favicon.ico|api/extraction-worker|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

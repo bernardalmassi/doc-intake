@@ -8,10 +8,16 @@ import type { RunRow } from "./types";
 const PROVIDER_LABELS: Record<string, string> = { anthropic: "Anthropic", openai: "OpenAI" };
 
 const RUN_STATUS_LABELS: Record<string, string> = {
+  queued: "Queued",
   running: "Running",
   succeeded: "Succeeded",
   failed: "Failed",
 };
+
+// Queued for a worker, or claimed by one: not ended yet.
+function inFlight(run: RunRow): boolean {
+  return run.status === "queued" || run.status === "running";
+}
 
 // What the Cost cell can say about a run:
 //   recorded   the database priced it
@@ -107,7 +113,7 @@ export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filen
         </thead>
         <tbody role="rowgroup" className="max-md:block">
           {runs.map((run, index) => {
-            const stalled = index === 0 && staleRun && run.status === "running";
+            const stalled = index === 0 && staleRun && inFlight(run);
             return (
               <Fragment key={run.id}>
                 <tr role="row" className="border-t border-line max-md:grid max-md:grid-cols-2 max-md:gap-x-4 max-md:gap-y-2 max-md:py-3">
@@ -132,7 +138,7 @@ export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filen
                         <span className="block text-muted [overflow-wrap:anywhere]">{run.model}</span>
                       </>
                     ) : (
-                      <Missing label={run.status === "running" ? "Not known yet" : "No model answered"} />
+                      <Missing label={inFlight(run) ? "Not known yet" : "No model answered"} />
                     )}
                   </td>
                   <td role="cell" data-label="Tokens in" className={`${td} ${num}`}>
@@ -191,7 +197,7 @@ export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filen
 
 function describeAttempts(run: RunRow, stalled: boolean): string {
   if (stalled) return "Stopped responding";
-  if (run.attempts === 0) return run.status === "running" ? "In progress" : "No model call";
+  if (run.attempts === 0) return inFlight(run) ? "In progress" : "No model call";
   return `${run.attempts} model ${run.attempts === 1 ? "call" : "calls"}`;
 }
 

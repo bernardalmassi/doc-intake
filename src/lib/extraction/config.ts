@@ -73,7 +73,7 @@ export const DEFAULT_MODELS: Record<ProviderName, string> = {
 export const ANTHROPIC_MODEL_ENV_VAR = "EXTRACTION_ANTHROPIC_MODEL";
 
 // Anthropic models that EXTRACTION_ANTHROPIC_MODEL may name: those with a
-// price on file, so close_extraction_run can price every run.
+// price on file, so finish_extraction_run can price every run.
 export function selectableAnthropicModels(): string[] {
   return Object.entries(PRICING)
     .filter(([, price]) => price.provider === "anthropic")
@@ -167,8 +167,8 @@ export function priceForModel(model: string): ModelPrice {
 }
 
 // The priced model that makes these token counts cost the most. When
-// close_extraction_run can't price the model a run was served by, the run
-// is closed at this model's price instead of at no cost (failedCloseAttempts
+// finish_extraction_run can't price the model a run was served by, the run
+// is finished at this model's price instead of at no cost (failedCloseAttempts
 // in run.ts): the dearest rate on file for the tokens the provider reported.
 // The app only ever asks for models it prices, so whatever id comes back is
 // one of them under another name, and can't cost more than this.
@@ -182,12 +182,14 @@ export function dearestModelFor(inputTokens: number, outputTokens: number): stri
   return dearest.model;
 }
 
-// What open_extraction_run's reaper charges a run it abandons, for a
-// document of `pages` pages (null: unknown, charged as the most a document
-// can have): at most maxCallsPerRun calls, each sending the prompt plus
-// every page (and no more than a call can take), each capped at
-// maxOutputTokensPerCall out, at abandonedRunPriceModel's price. The same
-// formula as the SQL; the database's number is the one that counts.
+// What a run abandoned while running is charged (reap_extraction_run), and
+// what every run in flight holds against the ceilings
+// (check_extraction_limits), for a document of `pages` pages (null:
+// unknown, charged as the most a document can have): at most
+// maxCallsPerRun calls, each sending the prompt plus every page (and no
+// more than a call can take), each capped at maxOutputTokensPerCall out, at
+// abandonedRunPriceModel's price. The same formula as
+// private.abandoned_estimate; the database's number is the one that counts.
 export function abandonedRunUsage(pages: number | null): { inputTokens: number; outputTokens: number; pages: number } {
   const limits = EXTRACTION_LIMITS;
   const counted = Math.min(Math.max(1, pages ?? limits.maxPagesPerDocument), limits.maxPagesPerDocument);
@@ -204,9 +206,9 @@ export function abandonedRunCostUsd(pages: number | null): number {
   return computeCostUsd(EXTRACTION_LIMITS.abandonedRunPriceModel, inputTokens, outputTokens);
 }
 
-// What close_extraction_run will record for a call: the same clamp and
-// rounding as the SQL, for display and for the drift test. The database's
-// number is the one that counts.
+// What finish_extraction_run will record for a run: the same clamp and
+// rounding as private.extraction_charge, for display and for the drift
+// test. The database's number is the one that counts.
 export function computeCostUsd(model: string, inputTokens: number, outputTokens: number): number {
   if (!Number.isInteger(inputTokens) || inputTokens < 0) {
     throw new Error(`input token count must be a non-negative integer, got ${inputTokens}`);
