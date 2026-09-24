@@ -625,5 +625,11 @@ export const SCREENS: Screen[] = [
 
   // Errors
   { id: "error-page", group: "Errors", title: "A page that failed to render, with its reference", render: () => <FixtureError digest="2841937645" /> },
+  {
+    id: "error-page-no-reference",
+    group: "Errors",
+    title: "A page that failed in the browser: no reference (a server error always has one in production)",
+    render: () => <FixtureError />,
+  },
   { id: "not-found", group: "Errors", title: "Not found, or no access", render: () => <NotFound /> },
 ];
