@@ -13,10 +13,6 @@ export const containerClass = "mx-auto w-full max-w-[82rem] px-4 md:px-10";
 // A page's <main>. flex-1 because <body> is a full-height flex column.
 export const pageClass = `${containerClass} flex-1 py-8 sm:py-10`;
 
-// A bordered block. One background: a panel is a 1px ink rule on paper,
-// never a raised surface. Add spacing at the call site.
-export const panelClass = "border border-ink bg-paper p-4 sm:p-5";
-
 // ------------------------------------------------------------------ type
 
 export const pageTitleClass = "display";
@@ -28,21 +24,15 @@ export const sectionTitleClass = "label";
 // One ink: secondary is told by size, never by a grey.
 export const hintClass = "text-small text-ink";
 
-export const labelClass = "label block text-ink";
-
 // Error text: ink words. What marks it as an error is the rule beside it
-// (errorInkRuleClass, or errorRuleClass for a form), never a red, and never
-// a state glyph: those mean a document's state.
+// (errorInkRuleClass), never a red or a signal, and never a state glyph:
+// those mean a document's state.
 export const errorClass = "text-small text-ink";
 
-// An action's error or refusal on the organization page (a refused
-// Extract, a failed download or upload): the words against a 2px ink rule
-// on their left.
+// Every error or refusal, on a field, a form or the organization page (a
+// refused Extract, a failed download or upload): the words against a 2px
+// ink rule on their left.
 export const errorInkRuleClass = "border-l-2 border-ink pl-3";
-
-// A form-level error or notice: the words with a 2px signal rule on their
-// left.
-export const errorRuleClass = "border-l-2 border-signal pl-3";
 
 // Underlined, so a link is told apart from the text around it by more
 // than color. 1px at rest, 2px on hover, as on the landing.
@@ -101,31 +91,6 @@ const fieldBase =
   "mt-1 block w-full max-w-sm border border-ink bg-paper text-ink disabled:cursor-not-allowed disabled:border-dotted";
 
 export const inputClass = `${fieldBase} h-10 px-3 text-body`;
-
-// <input type="file">: the picker button is styled as a secondary button.
-export const fileInputClass = `${fieldBase} h-10 pr-3 pl-1 text-small file:mr-3 file:h-8 file:cursor-pointer file:border file:border-ink file:bg-paper file:px-3 file:text-ink hover:file:bg-ink hover:file:text-paper`;
-
-// ---------------------------------------------------------------- tables
-
-export const tableClass = "w-full text-left text-small";
-
-// Header cell. Columns of numbers also get `text-right`.
-export const thClass = "label py-2 pr-4 text-ink";
-
-// Body cell, with the row divider.
-export const tdClass = "border-t border-ink py-2 pr-4 align-top";
-
-// ------------------------------------------------------------------ tags
-
-// Rectangular tags in the label face, 24px tall.
-const badgeBase = "label inline-flex h-6 items-center whitespace-nowrap border px-2";
-
-// A status: pending, processing, extracted, failed, a run's status.
-export const badgeClass = `${badgeBase} border-ink text-ink`;
-
-// needs_review, and only that: filled signal with on-signal text. Signal
-// marks what a person must look at, and is never text on paper.
-export const reviewBadgeClass = `${badgeBase} border-signal bg-signal text-on-signal`;
 
 // ---- public pages
 
