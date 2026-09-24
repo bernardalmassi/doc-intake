@@ -7,11 +7,11 @@ import {
   buttonClass,
   dangerButtonClass,
   errorClass,
+  errorInkRuleClass,
   linkClass,
   secondaryButtonClass,
   textTargetClass,
 } from "@/app/ui";
-import { AlertIcon, CheckIcon, SpinnerIcon } from "./icons";
 import { classifyThrown, type ErrorCode, userFacingError } from "@/lib/errors";
 import { DOCUMENTS_HEADING_ID, describeExtractResult, type Explained } from "./messages";
 import { useOperations } from "./operations";
@@ -37,10 +37,12 @@ type Notice = (Explained & { tone: "progress" | "done" | "error" }) | null;
 
 // The buttons never move. Labels that swap keep one width (min-w-28 fits
 // Extract, Extract again and Extracting…; min-w-24 fits Delete, Yes, delete
-// and Deleting…, measured in Geist at text-small), and
-// every message (progress, result, error, the delete confirmation) appears
-// beside the buttons from sm up and below them on a phone, never before
-// them.
+// and Deleting…, in the label face). The root is display: contents, so its
+// two parts, the buttons (data-part="buttons") and every message beside
+// them (data-part="notice": progress, result, error, the delete
+// confirmation), are placed by the row that holds them: the register line
+// puts the buttons in its action column and the message on a line of its
+// own under the detail (globals.css, "The register").
 export function DocumentActions({ id, slug, filename, storagePath, canDownload, canDelete, extract }: Props) {
   const operations = useOperations();
   const questionId = useId();
@@ -146,8 +148,8 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
     extracting || extract?.mode === "running" ? "Extracting…" : extract?.mode === "again" ? "Extract again" : "Extract";
 
   return (
-    <div className="mt-4 flex flex-wrap items-start gap-x-4 gap-y-2">
-      <div className="flex flex-wrap gap-2">
+    <div data-actions className="contents">
+      <div data-part="buttons" className="flex flex-wrap gap-2">
         {extract && (
           <form
             action={extractAction}
@@ -197,10 +199,8 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
         )}
       </div>
 
-      {/* basis-64: the message sits beside the buttons when there is room,
-          below them when not, whatever it says. */}
-      <div className="flex min-w-0 flex-1 basis-64 items-center text-small sm:min-h-9">
-        <div className="min-w-0 flex-1">
+      <div data-part="notice" className="min-w-0 text-small">
+        <div className="min-w-0">
           {/* Two regions, always rendered so what appears in them is
               announced, and side by side rather than nested so nothing is
               announced twice: polite for the question, progress and
@@ -208,7 +208,7 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
               sentence for a code, never a call's own text. */}
           <div aria-live="polite">
             {confirming ? (
-              <p>
+              <p className="mt-2">
                 <span id={questionId}>
                   Delete this document and everything extracted from it? This can&apos;t be undone.
                 </span>{" "}
@@ -237,19 +237,13 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
   );
 }
 
+// A message about what the user just did. An error or a refusal stands
+// against a 2px ink rule; progress and results are plain words. No glyph:
+// the state glyphs mean a document's state, and a refused Extract on a
+// ready document leaves it ready. No spinner: the words say it is under
+// way.
 function NoticeLine({ notice }: { notice: NonNullable<Notice> }) {
-  if (notice.tone === "error") {
-    return (
-      <p className={`flex items-start gap-1.5 ${errorClass}`}>
-        <AlertIcon className="mt-0.5 text-signal" />
-        <span className="min-w-0">{notice.text}</span>
-      </p>
-    );
-  }
   return (
-    <p className={`flex items-start gap-1.5 ${notice.tone === "progress" ? "text-ink" : "text-ink"}`}>
-      {notice.tone === "progress" ? <SpinnerIcon className="mt-0.5" /> : <CheckIcon className="mt-0.5" />}
-      <span className="min-w-0">{notice.text}</span>
-    </p>
+    <p className={`mt-2 min-w-0 ${errorClass} ${notice.tone === "error" ? errorInkRuleClass : ""}`}>{notice.text}</p>
   );
 }

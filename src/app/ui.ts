@@ -5,9 +5,10 @@
 
 // ---------------------------------------------------------------- layout
 
-// Same max width and gutters as the site header, so content lines up with
-// the wordmark. 16px gutters on a phone.
-export const containerClass = "mx-auto w-full max-w-5xl px-4 sm:px-6";
+// The landing's frame: 82rem wide at most, 16px gutters on a phone and
+// 40px from 48rem, so the wordmark and every page's left edge sit where the
+// landing's do (x = 104 at 1440). Same for the site header and the page.
+export const containerClass = "mx-auto w-full max-w-[82rem] px-4 md:px-10";
 
 // A page's <main>. flex-1 because <body> is a full-height flex column.
 export const pageClass = `${containerClass} flex-1 py-8 sm:py-10`;
@@ -29,9 +30,15 @@ export const hintClass = "text-small text-ink";
 
 export const labelClass = "label block text-ink";
 
-// Error text: ink words. What marks it as an error is the signal glyph or
-// rule beside it, never a red.
+// Error text: ink words. What marks it as an error is the rule beside it
+// (errorInkRuleClass, or errorRuleClass for a form), never a red, and never
+// a state glyph: those mean a document's state.
 export const errorClass = "text-small text-ink";
+
+// An action's error or refusal on the organization page (a refused
+// Extract, a failed download or upload): the words against a 2px ink rule
+// on their left.
+export const errorInkRuleClass = "border-l-2 border-ink pl-3";
 
 // A form-level error or notice: the words with a 2px signal rule on their
 // left.

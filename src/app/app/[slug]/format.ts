@@ -55,8 +55,17 @@ export function formatUsd(value: number): string {
   return `$${value.toFixed(4)}`;
 }
 
-// Milliseconds as seconds: "3.2 s", "72 s".
+// Milliseconds as seconds, always one decimal, so a column of them lines
+// up: "3.2 s", "120.3 s".
 export function formatSeconds(ms: number): string {
-  const seconds = ms / 1000;
-  return `${seconds < 100 ? seconds.toFixed(1) : Math.round(seconds)}${NBSP}s`;
+  return `${(ms / 1000).toFixed(1)}${NBSP}s`;
+}
+
+// The time of day in UTC to the second: "09:29:20 UTC". For a running
+// extraction's start, where minutes are too coarse.
+export function formatClock(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  const parts = [date.getUTCHours(), date.getUTCMinutes(), date.getUTCSeconds()].map((n) => String(n).padStart(2, "0"));
+  return `${parts.join(":")} UTC`;
 }

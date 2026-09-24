@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { buttonClass, errorClass, ghostButtonClass, hintClass, secondaryButtonClass } from "@/app/ui";
+import { buttonClass, errorClass, errorInkRuleClass, ghostButtonClass, hintClass, secondaryButtonClass } from "@/app/ui";
 import { fileKind, formatBytes } from "./format";
-import { AlertIcon, CheckIcon, DotIcon, FileIcon, SpinnerIcon, UploadIcon } from "./icons";
+import { StateGlyph } from "./state-glyph";
 import { checkPageCount, checkUploadFile, classifyThrown, UPLOAD_MIME_TYPES, userFacingError } from "@/lib/errors";
 import { countPdfPagesInBrowser } from "@/lib/page-count-browser";
 import { describeRejection, type RejectReason, UPLOAD_LIMIT_TEXT, UPLOAD_STEPS } from "./messages";
@@ -165,7 +165,7 @@ export function UploadForm({
   const showPicker = state.kind === "idle" || state.kind === "rejected";
 
   return (
-    <div className="mt-3 max-w-2xl">
+    <div>
       <input
         ref={input}
         type="file"
@@ -199,22 +199,15 @@ export function UploadForm({
           setDragging(false);
           pick(event.dataTransfer.files);
         }}
-        className={` border p-4 sm:p-5 ${
-          dragging
-            ? "border-solid border-ink bg-paper"
-            : showPicker
-              ? `border-dashed bg-transparent ${state.kind === "rejected" ? "border-ink" : "border-ink"}`
-              : "border-solid border-ink bg-paper"
-        }`}
+        // A ruled line of the register, like every other: the drop area is
+        // the whole line, and a file dragged over it draws a 2px ink frame.
+        className={`border-y border-ink py-4 ${dragging ? "outline-2 -outline-offset-2 outline-ink" : ""}`}
       >
         {showPicker ? (
-          <div className="flex items-center gap-4">
-            <span className="hidden h-10 w-10 shrink-0 items-center justify-center border border-ink text-ink sm:flex">
-              <UploadIcon />
-            </span>
+          <div>
             <div className="min-w-0">
               <p className="flex flex-wrap items-center gap-x-2 gap-y-2">
-                <span className="pointer-coarse:hidden">{dragging ? "Drop it here" : "Drag a file here, or"}</span>
+                <span className="pointer-coarse:hidden">{dragging ? "Drop it here." : "Drag a file here, or"}</span>
                 {/* Described by the limits only. The last result is announced
                     by the regions below as it happens; focus often lands here
                     at that same moment, and a description holding the result
@@ -276,18 +269,14 @@ export function UploadForm({
       <div className="mt-2 min-h-5 text-small">
         <div aria-live="polite">
           {state.kind === "idle" && state.uploaded && (
-            <p className="flex items-start gap-1.5">
-              <CheckIcon className="mt-0.5" />
-              <span className="min-w-0 [overflow-wrap:anywhere]">Uploaded {state.uploaded}.</span>
-            </p>
+            <p className="min-w-0 [overflow-wrap:anywhere]">Uploaded {state.uploaded}.</p>
           )}
           {state.kind === "uploading" && <span className="sr-only">{UPLOAD_STEPS[state.step - 1]}…</span>}
         </div>
         <div role="alert">
           {state.kind === "rejected" && (
-            <p className={`flex items-start gap-1.5 ${errorClass}`}>
-              <AlertIcon className="mt-0.5 text-signal" />
-              <span className="min-w-0 [overflow-wrap:anywhere]">{describeRejection(state.reason, state.file)}</span>
+            <p className={`min-w-0 [overflow-wrap:anywhere] ${errorClass} ${errorInkRuleClass}`}>
+              {describeRejection(state.reason, state.file)}
             </p>
           )}
         </div>
@@ -310,10 +299,9 @@ function ChosenFile({
 
   return (
     <>
-      <div className="flex items-start gap-3">
-        <FileIcon className="mt-0.5 text-ink" />
+      <div>
         <div className="min-w-0">
-          <p className="font-medium [overflow-wrap:anywhere]">{file.name}</p>
+          <p className="[overflow-wrap:anywhere]">{file.name}</p>
           <p className={`${hintClass} tabular-nums`}>
             {kind ? `${kind} · ` : ""}
             {formatBytes(file.size)}
@@ -327,11 +315,8 @@ function ChosenFile({
           in the page before a failure is written into it. */}
       <div role="alert">
         {state.kind === "failed" && (
-          <p className={`mt-4 flex items-start gap-1.5 ${errorClass}`}>
-            <AlertIcon className="mt-0.5 text-signal" />
-            <span className="min-w-0">
-              The upload didn&apos;t finish. {userFacingError(state.failure.code).message}
-            </span>
+          <p className={`mt-4 min-w-0 ${errorClass} ${errorInkRuleClass}`}>
+            The upload didn&apos;t finish. {userFacingError(state.failure.code).message}
           </p>
         )}
       </div>
@@ -339,7 +324,7 @@ function ChosenFile({
         <>
           {state.failure.rowCreated && (
             <p className={`mt-1 ${hintClass}`}>
-              An unfinished entry for this file is now in the list below.{" "}
+              An unfinished entry for this file is now in the list above.{" "}
               {canManage ? "You can delete it there." : "An admin can delete it."}
             </p>
           )}
@@ -352,12 +337,14 @@ function ChosenFile({
 function UploadSteps({ current }: { current: UploadStep }) {
   return (
     <ol aria-label="Upload progress" className="mt-4 space-y-1.5 text-small">
+      {/* The state glyphs, meaning what they mean everywhere: full for a
+          step done, half for the one under way, empty for one to come. */}
       {UPLOAD_STEPS.map((label, index) => {
         const step = index + 1;
         const status = step < current ? "done" : step === current ? "current" : "waiting";
         return (
-          <li key={label} className={`flex items-center gap-2 ${status === "waiting" ? "text-ink" : "text-ink"}`}>
-            {status === "done" ? <CheckIcon /> : status === "current" ? <SpinnerIcon /> : <DotIcon />}
+          <li key={label} className="flex items-center gap-2">
+            <StateGlyph glyph={status === "done" ? "full" : status === "current" ? "half" : "empty"} />
             <span>
               {label}
               {status === "current" && "…"}

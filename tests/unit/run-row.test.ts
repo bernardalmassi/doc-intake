@@ -91,9 +91,11 @@ describe("runHistoryMeta", () => {
     // failed before any call: nothing spent, not "not known"
     const noCall = toRunRow({ ...base, error: `${RUN_ERROR_MARKERS.downloadFailed}: download.not_found` });
 
-    expect(runHistoryMeta([recorded, estimated, dropped, noCall])).toBe("4 runs · $0.0300 total · 1 estimated · 1 not known");
-    expect(runHistoryMeta([recorded, noCall])).toBe("2 runs · $0.0100 total");
-    expect(runHistoryMeta([dropped])).toBe("1 run · cost not known yet");
+    expect(runHistoryMeta([recorded, estimated, dropped, noCall])).toBe("Runs 4 · 3 failed · $0.0300 · 1 estimated · 1 not known");
+    expect(runHistoryMeta([recorded, noCall])).toBe("Runs 2 · 1 failed · $0.0100");
+    // counts are printed at zero
+    expect(runHistoryMeta([recorded])).toBe("Runs 1 · 0 failed · $0.0100");
+    expect(runHistoryMeta([dropped])).toBe("Runs 1 · 1 failed · cost not known yet");
   });
 });
 
@@ -110,6 +112,6 @@ describe("runHistoryMeta with an abandoned run", () => {
     expect(reaped.cost_estimated).toBe(true);
     // abandoned before the reaper charged anything: not known
     const older = toRunRow({ ...base, error: "abandoned: still running after 10 minutes; failed by a later open" });
-    expect(runHistoryMeta([reaped, older])).toBe("2 runs · $0.0532 total · 1 estimated · 1 not known");
+    expect(runHistoryMeta([reaped, older])).toBe("Runs 2 · 2 failed · $0.0532 · 1 estimated · 1 not known");
   });
 });

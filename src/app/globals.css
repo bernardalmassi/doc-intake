@@ -175,3 +175,139 @@
     }
   }
 }
+
+/*
+  The register (the organization page's document list). Each document is
+  one ruled line: the state and the name, the detail under them, the one
+  action and the chevron at the right; a message from the action (a
+  refusal, a delete to confirm) gets a line of its own under the detail.
+  On a phone the action drops under the detail. DocumentActions' root is
+  display: contents, so its two parts are placed here.
+*/
+@layer components {
+  .ledger-line {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "head chevron"
+      "detail detail"
+      "action action"
+      "notice notice";
+    column-gap: 1rem;
+  }
+
+  .ledger-head {
+    grid-area: head;
+  }
+
+  .ledger-detail {
+    grid-area: detail;
+  }
+
+  .ledger-chevron {
+    grid-area: chevron;
+  }
+
+  .ledger-line > [data-actions] > [data-part="buttons"] {
+    grid-area: action;
+    position: relative;
+    z-index: 1;
+    margin-top: 0.75rem;
+  }
+
+  /* Above the line's cover too: it can hold Cancel. */
+  .ledger-line > [data-actions] > [data-part="notice"] {
+    grid-area: notice;
+    position: relative;
+    z-index: 1;
+    max-width: 65ch;
+  }
+
+  /* The file's own line: its label, what it is, and Download and Delete,
+     with their message under them. */
+  .ledger-file {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 0.25rem;
+  }
+
+  .ledger-file > [data-actions] > [data-part="buttons"] {
+    margin-top: 0.5rem;
+  }
+
+  /* The run history's line: its summary, Extract again at the right, and
+     the action's message on a line of its own. */
+  .ledger-runs-row > [data-actions] > [data-part="notice"] {
+    flex-basis: 100%;
+  }
+
+  @media (min-width: 48rem) {
+    .ledger-line {
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      grid-template-areas:
+        "head action chevron"
+        "detail action chevron"
+        "notice notice notice";
+    }
+
+    .ledger-line > [data-actions] > [data-part="buttons"] {
+      margin-top: 0;
+      align-self: start;
+    }
+
+    .ledger-line > [data-actions] > [data-part="notice"] {
+      padding-left: 12rem;
+      max-width: none;
+    }
+
+    .ledger-file {
+      grid-template-columns: 11rem minmax(0, 1fr) auto;
+      grid-template-areas:
+        "label meta buttons"
+        ". notice notice";
+      column-gap: 1rem;
+      align-items: start;
+    }
+
+    .ledger-file-label {
+      grid-area: label;
+      padding-top: 0.25rem;
+    }
+
+    .ledger-file-meta {
+      grid-area: meta;
+      padding-top: 0.125rem;
+    }
+
+    .ledger-file > [data-actions] > [data-part="buttons"] {
+      grid-area: buttons;
+      margin-top: 0;
+    }
+
+    .ledger-file > [data-actions] > [data-part="notice"] {
+      grid-area: notice;
+    }
+  }
+
+  /* The one motion: what a line opens onto arrives, 4px from above to its
+     place and from clear to solid, 160ms ease-out, once per opening (an
+     animation starts when the hidden attribute goes). On arrival the line
+     that needs review opens the same way. Nothing loops; with reduced
+     motion it is simply there. */
+  @media (prefers-reduced-motion: no-preference) {
+    .ledger-arrive:not([hidden]) {
+      animation: ledger-arrive 160ms cubic-bezier(0, 0, 0.2, 1) 1 both;
+    }
+  }
+}
+
+@keyframes ledger-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
