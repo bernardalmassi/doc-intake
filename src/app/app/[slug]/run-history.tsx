@@ -154,7 +154,7 @@ export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filen
                   {run.provider || run.model ? (
                     <>
                       {run.provider && <span className="block">{PROVIDER_LABELS[run.provider] ?? run.provider}</span>}
-                      {run.model && <span className="block [overflow-wrap:break-word]">{run.model}</span>}
+                      {run.model && <span className="block [overflow-wrap:break-word] xl:whitespace-nowrap">{run.model}</span>}
                     </>
                   ) : (
                     <span>{run.status === "running" ? "Not known yet" : "No model answered"}</span>
