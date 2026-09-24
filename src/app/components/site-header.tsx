@@ -37,15 +37,27 @@ export function SiteHeader({ children }: { children?: React.ReactNode }) {
 }
 
 // The header slot for a signed-in page: who is signed in, and Sign out.
-// The email truncates rather than pushing the header wider on a phone.
 export function AccountControls({ email }: { email: string | undefined }) {
+  return <AccountControlsView email={email} signOutAction={signOut} />;
+}
+
+// What AccountControls shows, with the sign-out action passed in, so
+// /dev/states can render it with one that does nothing. The email
+// truncates rather than pushing the header wider on a phone.
+export function AccountControlsView({
+  email,
+  signOutAction,
+}: {
+  email: string | undefined;
+  signOutAction: () => void | Promise<void>;
+}) {
   return (
     <>
       <p className="min-w-0 truncate text-sm text-muted">
         <span className="hidden sm:inline">Signed in as </span>
         {email}
       </p>
-      <form action={signOut} className="shrink-0">
+      <form action={signOutAction} className="shrink-0">
         <button type="submit" className={secondaryButtonClass}>
           Sign out
         </button>

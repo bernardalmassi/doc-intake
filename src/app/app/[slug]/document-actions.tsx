@@ -161,6 +161,7 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
             <button
               ref={extractButton}
               type="submit"
+              data-action="extract"
               disabled={busy || extract.mode === "running"}
               className={`${extract.primary ? buttonClass : secondaryButtonClass} min-w-28`}
             >
@@ -169,7 +170,7 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
           </form>
         )}
         {canDownload && (
-          <button type="button" onClick={download} className={secondaryButtonClass}>
+          <button type="button" data-action="download" onClick={download} className={secondaryButtonClass}>
             Download
           </button>
         )}
@@ -180,6 +181,7 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
             <button
               ref={deleteButton}
               type="submit"
+              data-action="delete"
               disabled={busy}
               onClick={onDeleteClick}
               onKeyDown={onEscape}

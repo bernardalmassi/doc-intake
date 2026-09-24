@@ -36,7 +36,10 @@ function Field({ field }: { field: FieldRow }) {
   return (
     // Phone: label and confidence on one line, the value below. From sm:
     // label, value and confidence in three columns.
-    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-4 gap-y-1 py-3 sm:grid-cols-[10rem_minmax(0,1fr)_auto]">
+    <div
+      data-field-band={field.band}
+      className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-4 gap-y-1 py-3 sm:grid-cols-[10rem_minmax(0,1fr)_auto]"
+    >
       <dt className="text-sm font-medium">{fieldLabel(field.name)}</dt>
 
       <dd className="col-span-2 min-w-0 sm:col-span-1 sm:col-start-2 sm:row-start-1">

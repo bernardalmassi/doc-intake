@@ -4,19 +4,22 @@ import { DocumentList } from "./document-list";
 import { ChevronRightIcon } from "./icons";
 import { canManage, DOCUMENTS_HEADING_ID, ROLE_LABELS, roleAbilities } from "./messages";
 import type { DocumentEntry, Organization, Role } from "./types";
-import { UploadForm } from "./upload-form";
+import { UploadForm, type UploadState } from "./upload-form";
 
 // Everything inside <main> on /app/[slug]. Takes data only, so the design
 // preview renders it from fixture rows. The role only decides what is
-// rendered; the database decides what each role may do.
+// rendered; the database decides what each role may do. uploadState starts
+// the upload form in a given state, for /dev/states; the page leaves it out.
 export function OrganizationView({
   organization,
   role,
   entries,
+  uploadState,
 }: {
   organization: Organization;
   role: Role;
   entries: DocumentEntry[];
+  uploadState?: UploadState;
 }) {
   const manage = canManage(role);
 
@@ -47,7 +50,7 @@ export function OrganizationView({
         <h2 id="upload-heading" className={sectionTitleClass}>
           Upload a document
         </h2>
-        <UploadForm tenantId={organization.id} canManage={manage} />
+        <UploadForm tenantId={organization.id} canManage={manage} initialState={uploadState} />
       </section>
 
       <section aria-labelledby={DOCUMENTS_HEADING_ID} className="mt-10">

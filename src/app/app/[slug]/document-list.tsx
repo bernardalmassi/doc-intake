@@ -120,6 +120,7 @@ function DocumentItem({ entry, slug, canManage }: { entry: DocumentEntry; slug: 
     // the list, so it never rests on color alone.
     <article
       aria-labelledby={`document-${document.id}`}
+      data-doc-status={document.status}
       className={`rounded-lg border bg-surface p-4 sm:p-5 ${review ? "border-accent" : "border-line"}`}
     >
       <div className="flex items-start justify-between gap-3">
@@ -147,13 +148,15 @@ function DocumentItem({ entry, slug, canManage }: { entry: DocumentEntry; slug: 
         // Open from the start when the document needs review: the fields
         // to check are the reason to be here.
         <details open={review} className="group mt-4 border-t border-line pt-3">
-          <Summary>Extracted fields</Summary>
+          <Summary reveals="fields">Extracted fields</Summary>
           <ExtractionPanel fields={fields} />
         </details>
       )}
       {runs.length > 0 && (
         <details className="group mt-4 border-t border-line pt-3">
-          <Summary meta={runHistoryMeta(runs)}>Run history</Summary>
+          <Summary reveals="runs" meta={runHistoryMeta(runs)}>
+            Run history
+          </Summary>
           <RunHistory runs={runs} filename={document.filename} staleRun={staleRun} />
         </details>
       )}
@@ -163,9 +166,19 @@ function DocumentItem({ entry, slug, canManage }: { entry: DocumentEntry; slug: 
 
 // The clickable line of a disclosure: a chevron that turns when open, the
 // name, and optional muted detail. At least 24px tall (textTargetClass).
-function Summary({ children, meta }: { children: React.ReactNode; meta?: string }) {
+// data-open names what it reveals, so /dev/states capture plans can open it.
+function Summary({
+  children,
+  meta,
+  reveals,
+}: {
+  children: React.ReactNode;
+  meta?: string;
+  reveals: "fields" | "runs";
+}) {
   return (
     <summary
+      data-open={reveals}
       className={`flex w-fit cursor-pointer list-none flex-wrap items-center gap-x-1.5 text-sm font-medium [&::-webkit-details-marker]:hidden ${textTargetClass}`}
     >
       <ChevronRightIcon className="text-muted group-open:rotate-90" />
