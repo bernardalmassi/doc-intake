@@ -10,6 +10,16 @@ export function fieldLabel(name: string): string {
   return FIELDS.find((field) => field.name === name)?.label ?? name.replace(/_/g, " ");
 }
 
+// What Extract reads, from the schema's fixed list, as one sentence:
+// "Extract reads 11 fields: document type, title, …, currency and
+// summary." Said beside the first Extract a reader meets, and in the empty
+// register's steps.
+export function extractReads(): string {
+  const names = FIELDS.map((field) => field.label.replace(/\s*\(.*\)$/, "").toLowerCase());
+  const list = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names.join("");
+  return `Extract reads ${names.length} fields: ${list}.`;
+}
+
 export const BAND_LABELS: Record<string, string> = { high: "High", medium: "Medium", low: "Low" };
 
 // The register's detail line for an extracted document, computed from the

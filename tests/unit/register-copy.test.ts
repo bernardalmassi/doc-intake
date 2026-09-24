@@ -4,7 +4,7 @@
 // database, no network.
 
 import { describe, expect, it } from "vitest";
-import { fieldSummary } from "@/app/app/[slug]/fields";
+import { extractReads, fieldSummary } from "@/app/app/[slug]/fields";
 import { formatClock, formatSeconds } from "@/app/app/[slug]/format";
 import { roleAbilities } from "@/app/app/[slug]/messages";
 import type { FieldRow } from "@/app/app/[slug]/types";
@@ -66,5 +66,13 @@ describe("roleAbilities", () => {
     expect(roleAbilities("owner")).toBe(roleAbilities("admin"));
     expect(roleAbilities("owner")).toMatch(/^Upload, extract, download and delete documents/);
     expect(roleAbilities("member")).toMatch(/An admin extracts and deletes them\.$/);
+  });
+});
+
+describe("extractReads", () => {
+  it("lists the schema's fields in one sentence", () => {
+    expect(extractReads()).toBe(
+      "Extract reads 11 fields: document type, title, sender, recipient, document date, due date, payment terms, reference number, total amount, currency and summary.",
+    );
   });
 });

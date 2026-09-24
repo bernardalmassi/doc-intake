@@ -4,7 +4,7 @@ import { userFacingError } from "@/lib/errors";
 import { DocumentActions, type ExtractMode } from "./document-actions";
 import { DOCUMENT_STATES, type DocumentState, failedExit, type StatedEntry, stateOf } from "./document-state";
 import { ExtractionPanel } from "./extraction-panel";
-import { fieldSummary } from "./fields";
+import { extractReads, fieldSummary } from "./fields";
 import { fileKind, formatBytes, formatClock, formatUtc } from "./format";
 import { Elapsed, LedgerLine, RunsToggle } from "./ledger";
 import { DOCUMENTS_HEADING_ID } from "./messages";
@@ -29,6 +29,8 @@ type ListProps = {
 // last empty. Each state is worked out once, here, and passed down.
 export function DocumentList({ entries, slug, canManage }: ListProps) {
   const stated = entries.map((entry) => ({ entry, state: stateOf(entry) }));
+  // What Extract reads is said once, beside the first Extract on the page.
+  const firstReady = stated.find(({ entry, state }) => state === "ready" && entry.document.status !== "uploading");
   const counts = new Map<DocumentState, number>();
   for (const { state } of stated) counts.set(state, (counts.get(state) ?? 0) + 1);
 
@@ -61,7 +63,13 @@ export function DocumentList({ entries, slug, canManage }: ListProps) {
           <ul className="border-t border-ink">
             {stated.map(({ entry, state }) => (
               <li key={entry.document.id}>
-                <DocumentLine entry={entry} state={state} slug={slug} canManage={canManage} />
+                <DocumentLine
+                  entry={entry}
+                  state={state}
+                  slug={slug}
+                  canManage={canManage}
+                  explainExtract={canManage && entry === firstReady?.entry}
+                />
               </li>
             ))}
           </ul>
@@ -78,11 +86,7 @@ function EmptyDocuments({ canManage }: { canManage: boolean }) {
     ["Upload", <>A PDF, PNG or JPEG of up to 10&nbsp;MB, in Upload below.</>],
     [
       "Extract",
-      canManage ? (
-        <>Its type, sender, recipient, dates, reference number, total and a one-line summary are read for you.</>
-      ) : (
-        <>An admin extracts it: its type, sender, recipient, dates, reference number, total and a summary are read.</>
-      ),
+      canManage ? extractReads() : `An admin extracts it. ${extractReads()}`,
     ],
     [
       "Check",
@@ -116,11 +120,13 @@ function DocumentLine({
   state,
   slug,
   canManage,
+  explainExtract,
 }: {
   entry: DocumentEntry;
   state: DocumentState;
   slug: string;
   canManage: boolean;
+  explainExtract: boolean;
 }) {
   const { document, runs, fields } = entry;
   const hasFile = document.status !== "uploading";
@@ -184,7 +190,7 @@ function DocumentLine({
             </span>
           </>
         }
-        detail={<Detail entry={entry} state={state} canManage={canManage} />}
+        detail={<Detail entry={entry} state={state} canManage={canManage} explainExtract={explainExtract} />}
         exit={exit}
       >
         {hasFields && latest?.status === "failed" && latest.error_code && (
@@ -268,13 +274,31 @@ function FileRow({
 
 // The line's one sentence: where the document stands and what happens
 // next, from data the page already has.
-function Detail({ entry, state, canManage }: { entry: DocumentEntry; state: DocumentState; canManage: boolean }) {
+function Detail({
+  entry,
+  state,
+  canManage,
+  explainExtract,
+}: {
+  entry: DocumentEntry;
+  state: DocumentState;
+  canManage: boolean;
+  explainExtract: boolean;
+}) {
   const { runs, fields } = entry;
   const latest = runs[0];
 
   switch (state) {
     case "ready":
-      return <p>{canManage ? "Not extracted yet." : "Not extracted yet. An admin can extract it."}</p>;
+      if (!canManage) return <p>Not extracted yet. An admin can extract it.</p>;
+      return (
+        <>
+          <p>Not extracted yet.</p>
+          {/* Beside Extract, what it will do, in words: no signal, no
+              control. Once per page. */}
+          {explainExtract && <p className="mt-1 max-w-prose">{extractReads()}</p>}
+        </>
+      );
 
     case "queued":
       return <p>Waiting to start.</p>;
