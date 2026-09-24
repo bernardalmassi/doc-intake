@@ -1,5 +1,6 @@
 // The model-call loop for one run. Takes providers as arguments so it can be
-// tested with fakes; the Server Action supplies the real ones.
+// tested with fakes; the queue worker (extraction/delivery.ts) supplies the
+// real ones.
 //
 //   1. call the primary provider
 //   2. on a timeout or 5xx, call the fallback provider instead: once per
@@ -41,8 +42,9 @@ export type RunInput = {
   bytes: Uint8Array;
   mimeType: SupportedMimeType;
   // Never sent to a provider: any member can choose or rename it, so it is
-  // attacker-controlled. Kept only so the caller's signature is unchanged.
-  filename: string;
+  // attacker-controlled. The worker doesn't pass one; tests do, to prove it
+  // goes nowhere.
+  filename?: string;
   primary: ExtractionProvider;
   fallback: ExtractionProvider | null;
   // ids put on every log line of this run; optional so callers that don't
@@ -307,6 +309,29 @@ export function toCloseParams(runId: string, closeToken: string, outcome: RunOut
             clarifying_question: closeText(f.clarifying_question, limits.question),
           }))
         : null,
+  };
+}
+
+// The arguments finish_extraction_run takes (20260925000002): the close's,
+// with the claim token in place of the close token, and whether the cost is
+// an estimate (the second of failedCloseAttempts), which the ledger records
+// as kind 'estimate'.
+export function toFinishParams(runId: string, claimToken: string, outcome: RunOutcome, costEstimated: boolean) {
+  const close = toCloseParams(runId, claimToken, outcome);
+  return {
+    p_run_id: runId,
+    p_claim_token: claimToken,
+    p_status: close.p_status,
+    p_provider: close.p_provider,
+    p_model: close.p_model,
+    p_input_tokens: close.p_input_tokens,
+    p_output_tokens: close.p_output_tokens,
+    p_latency_ms: close.p_latency_ms,
+    p_attempts: close.p_attempts,
+    p_cost_estimated: costEstimated,
+    p_error: close.p_error,
+    p_raw_response: close.p_raw_response,
+    p_fields: close.p_fields,
   };
 }
 

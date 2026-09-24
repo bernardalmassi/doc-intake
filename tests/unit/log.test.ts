@@ -235,6 +235,8 @@ const VALID: { [K in LogFieldName]-?: NonNullable<LogFields[K]> } = {
   output_tokens: 8_192,
   latency_ms: 60_000,
   size_bytes: 10_485_760,
+  page_count: 100,
+  expected_page_count: 1,
   field_count: 10,
   high_count: 8,
   medium_count: 1,

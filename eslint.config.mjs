@@ -15,8 +15,8 @@ import nextTs from "eslint-config-next/typescript";
 // errors.ts). The rest of src/lib, where the UI redesign may add browser
 // helpers that legitimately touch window or need an inline disable, gets
 // only the console and process-stream rules. In src/app the same two rules
-// cover the server-side code: the Server Actions and the auth route, which
-// log through the same module.
+// cover the server-side code: the Server Actions, the auth route and the
+// worker route, which log through the same module.
 const LOGGER = "src/lib/log.ts";
 const EXTENSIONS = "{js,mjs,cjs,ts,mts,cts,tsx,jsx}";
 const STRICT_FILES = [`src/lib/extraction/**/*.${EXTENSIONS}`, "src/lib/redact.ts", "src/lib/errors.ts"];
@@ -26,6 +26,7 @@ const SERVER_ACTIONS = [
   "src/app/auth/confirm/route.ts",
   "src/app/app/actions.ts",
   "src/app/app/extract-action.ts",
+  "src/app/api/extraction-worker/route.ts",
   "src/app/log-fields.ts",
 ];
 

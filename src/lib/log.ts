@@ -68,15 +68,30 @@ export const LOG_EVENTS = [
   "extraction.fallback",
   "extraction.validation_retry",
   "extraction.run_finished",
-  // src/app/app/extract-action.ts: one line per step around the RPCs
-  "extraction.run_opened",
-  "extraction.open_refused",
+  // src/app/app/extract-action.ts: the download and page count, then the
+  // enqueue
+  "extraction.enqueued",
+  "extraction.enqueue_refused",
   "extraction.download_failed",
   "extraction.type_mismatch",
+  "extraction.run_opened",
+  "extraction.open_refused",
   "extraction.unexpected_error",
   "extraction.run_closed",
   "extraction.close_failed",
   "extraction.close_retried",
+  // src/app/api/extraction-worker/route.ts and extraction/worker.ts,
+  // extraction/delivery.ts: one line per step of a delivery
+  "worker.unauthorized",
+  "worker.not_configured",
+  "worker.idle",
+  "worker.claim_failed",
+  "worker.claimed",
+  "worker.preflight_failed",
+  "worker.unexpected_error",
+  "worker.finished",
+  "worker.finish_failed",
+  "worker.finish_retried",
   // src/app/auth/actions.ts
   "auth.sign_up_refused",
   "auth.signed_up",
@@ -164,6 +179,9 @@ export const LOG_ERROR_CODES = [
   "invalid_provider_setting",
   "invalid_model_setting",
   "primary_key_missing",
+  // extraction/worker.ts: the worker's own configuration
+  "worker_key_missing",
+  "worker_target_refused",
 ] as const;
 
 export type LogErrorKind = ProviderErrorKind | "validation" | "unexpected";
@@ -178,7 +196,7 @@ const ERROR_KINDS: Record<LogErrorKind, true> = {
 };
 
 // public.extraction_run_status and public.document_status
-const RUN_STATUSES = ["running", "succeeded", "failed"] as const;
+const RUN_STATUSES = ["queued", "running", "succeeded", "failed"] as const;
 const DOCUMENT_STATUSES = ["uploading", "pending", "processing", "extracted", "needs_review", "failed"] as const;
 
 const LOG_FIELDS = {
@@ -204,6 +222,9 @@ const LOG_FIELDS = {
   output_tokens: count(),
   latency_ms: count(),
   size_bytes: count(),
+  // a document's pages as counted, and as the run was enqueued with
+  page_count: count(1000),
+  expected_page_count: count(1000),
   field_count: count(1000),
   high_count: count(1000),
   medium_count: count(1000),

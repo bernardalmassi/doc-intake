@@ -303,6 +303,13 @@ const CATALOG = {
     message: "The file couldn't be read for extraction. Please try again.",
     retryable: true,
   },
+  // the worker recounts a file's pages before any model call, and refuses
+  // one whose count isn't the one Extract was requested with
+  "extraction.page_count_mismatch": {
+    message:
+      "We couldn't confirm this document's page count, so it wasn't sent for extraction. Please try again.",
+    retryable: true,
+  },
   "extraction.file_type_mismatch": {
     message:
       "This file's contents don't match its file type, so it wasn't sent for extraction. Upload it again as a genuine PDF, PNG or JPEG file.",
@@ -410,8 +417,9 @@ export const CHECK_CONSTRAINTS = {
 } as const;
 
 // The pieces of a failed run's error, as extraction_runs.error stores it.
-// downloadFailed and typeMismatch start errors written by the Extract Server
-// Action; the next five are the orchestrator's (src/lib/extraction/run.ts);
+// downloadFailed to pageCountMismatch start errors written by the worker's
+// preflight (src/lib/extraction/delivery.ts); the next five are the
+// orchestrator's (src/lib/extraction/run.ts);
 // notConfigured, providerNotSelected and modelNotSelected come from selectProviders; abandoned
 // and expired from reap_extraction_run (20260925000002), which the reapers
 // and the queue's sweep call; and resultNotRecorded from
@@ -421,6 +429,10 @@ export const CHECK_CONSTRAINTS = {
 export const RUN_ERROR_MARKERS = {
   downloadFailed: "could not download the file",
   typeMismatch: "file content (",
+  // the worker's preflight (extraction/delivery.ts), after the type check
+  pagesUnreadable: "pages unreadable: ",
+  tooManyPages: "too many pages: ",
+  pageCountMismatch: "page count mismatch: ",
   invalidAfterRetry: "response failed validation after",
   retryFailed: "retry after invalid response (",
   retryFailedSeparator: ") failed: ",
@@ -1020,6 +1032,9 @@ function runCode(error: string | null | undefined): ErrorCode {
   if (error.startsWith(RUN_ERROR_MARKERS.downloadFailed)) return "extraction.download_failed";
   if (error.startsWith(RUN_ERROR_MARKERS.resultNotRecorded)) return "extraction.result_not_saved";
   if (error.startsWith(RUN_ERROR_MARKERS.typeMismatch)) return "extraction.file_type_mismatch";
+  if (error.startsWith(RUN_ERROR_MARKERS.pagesUnreadable)) return "document.pages_unreadable";
+  if (error.startsWith(RUN_ERROR_MARKERS.tooManyPages)) return "document.too_many_pages";
+  if (error.startsWith(RUN_ERROR_MARKERS.pageCountMismatch)) return "extraction.page_count_mismatch";
   // The validation error is built from the validator's own wording, but a
   // stored error can come from anywhere (an admin can close a run with any
   // text), and a document can steer the model. So nothing past these
