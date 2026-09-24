@@ -6,12 +6,15 @@
 // design-landing), so /app and the landing tell the same story. Everything
 // else is invented for the fixture and says nothing about a real run.
 
+import type { StatedEntry } from "@/app/app/[slug]/document-state";
 import { buildEntries } from "@/app/app/[slug]/entries";
-import type { DocumentEntry, DocumentRow, FieldRow, Organization as OrgRow, RunRow } from "@/app/app/[slug]/types";
+import type { DocumentRow, FieldRow, Organization as OrgRow, RunRow } from "@/app/app/[slug]/types";
 import type { Organization } from "@/app/app/organizations";
 
-// The request time the page would have read: 24 Sep 2026, 09:30 UTC.
-export const NOW = Date.parse("2026-09-24T09:30:00Z");
+// Documents and finished runs are dated around 24 Sep 2026. Runs still
+// running are dated from the time of the request (entriesFor), so their
+// start time, their elapsed time and the stale check all read true
+// against the browser's clock.
 
 export const EMAIL = "accounts@bramhall.example";
 
@@ -29,10 +32,6 @@ export const organizations: Organization[] = [
 
 function at(iso: string): string {
   return new Date(iso).toISOString();
-}
-
-function ago(seconds: number): string {
-  return new Date(NOW - seconds * 1000).toISOString();
 }
 
 function doc(
@@ -161,8 +160,6 @@ const runs: RunRow[] = [
     started_at: at("2026-09-23T16:05:12Z"),
   }),
 
-  // Running for 40 seconds.
-  run({ id: "run-4390", document_id: RUNNING_ID, status: "running", started_at: ago(40) }),
 
   // Failed with no usable answer, after an earlier run the reaper
   // abandoned and charged an estimate.
@@ -191,8 +188,6 @@ const runs: RunRow[] = [
     started_at: at("2026-09-22T11:06:30Z"),
   }),
 
-  // Still "running" 25 minutes on: past the 10-minute stale limit.
-  run({ id: "run-mandate", document_id: STALE_ID, status: "running", started_at: ago(25 * 60) }),
 
   // No model call: the file wasn't what it said it was.
   run({
@@ -296,23 +291,39 @@ const fields: FieldRow[] = [
 
 // ------------------------------------------------------------- entries
 
-// Grouped and sorted by the page's own buildEntries.
-export function entriesFor(ids: string[]): DocumentEntry[] {
+// Runs in progress at the time of the request: one 40 seconds in, one
+// still "running" 25 minutes on, past the 10-minute stale limit.
+function runningRuns(now: number): RunRow[] {
+  const ago = (seconds: number) => new Date(now - seconds * 1000).toISOString();
+  return [
+    run({ id: "run-4390", document_id: RUNNING_ID, status: "running", started_at: ago(40) }),
+    run({ id: "run-mandate", document_id: STALE_ID, status: "running", started_at: ago(25 * 60) }),
+  ];
+}
+
+// Grouped and sorted by the page's own buildEntries, then given an
+// explicit state where the data can't say it yet (queued).
+export function entriesFor(ids: string[], states: Partial<Record<string, StatedEntry["state"]>> = SIX_STATE_OVERRIDES): StatedEntry[] {
+  const now = Date.now();
   const chosen = ids.map((id) => documents[id]);
   const set = new Set(ids);
+  const all = [...runs, ...runningRuns(now)];
   return buildEntries(
     chosen,
-    runs.filter((r) => r.document_id !== null && set.has(r.document_id)),
+    all.filter((r) => r.document_id !== null && set.has(r.document_id)),
     fields.filter((f) => set.has(f.document_id)),
-    NOW,
-  );
+    now,
+  ).map((entry) => {
+    const state = states[entry.document.id];
+    return state ? { ...entry, state } : entry;
+  });
 }
 
 // One document per state: ready, queued, running, done, needs review,
 // failed. Queued has no source value yet, so its document is given the
 // state explicitly.
 export const SIX_STATE_IDS = [NEEDS_REVIEW_ID, DONE_ID, READY_ID, QUEUED_ID, RUNNING_ID, FAILED_ID];
-export const SIX_STATE_OVERRIDES = { [QUEUED_ID]: "queued" } as const;
+export const SIX_STATE_OVERRIDES: Partial<Record<string, StatedEntry["state"]>> = { [QUEUED_ID]: "queued" };
 
 // Every document status today's page can show.
 export const ALL_IDS = [...SIX_STATE_IDS.filter((id) => id !== QUEUED_ID), STALE_ID, UNFINISHED_ID, MISMATCH_ID];

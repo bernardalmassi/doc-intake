@@ -3,7 +3,8 @@ import { linkClass, pageTitleClass, sectionTitleClass, textTargetClass } from "@
 import { DocumentList } from "./document-list";
 import { ChevronRightIcon } from "./icons";
 import { canManage, DOCUMENTS_HEADING_ID, roleAbilities } from "./messages";
-import type { DocumentEntry, Organization, Role } from "./types";
+import type { StatedEntry } from "./document-state";
+import type { Organization, Role } from "./types";
 import { UploadForm, type UploadState } from "./upload-form";
 
 // Everything inside <main> on /app/[slug]. Takes data only, so the design
@@ -18,7 +19,7 @@ export function OrganizationView({
 }: {
   organization: Organization;
   role: Role;
-  entries: DocumentEntry[];
+  entries: StatedEntry[];
   uploadState?: UploadState;
 }) {
   const manage = canManage(role);

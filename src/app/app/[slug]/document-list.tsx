@@ -8,10 +8,11 @@ import { AlertIcon, ChevronRightIcon, DocumentsIcon, SpinnerIcon } from "./icons
 import { type ErrorCode, userFacingError } from "@/lib/errors";
 import { DOCUMENTS_HEADING_ID, statusLabel } from "./messages";
 import { RunHistory, runHistoryMeta } from "./run-history";
+import { type DocumentState, type StatedEntry, stateOf } from "./document-state";
 import type { DocumentEntry } from "./types";
 
 type ListProps = {
-  entries: DocumentEntry[];
+  entries: StatedEntry[];
   slug: string;
   canManage: boolean;
 };
@@ -39,7 +40,7 @@ export function DocumentList({ entries, slug, canManage }: ListProps) {
         <ul className="mt-4 space-y-3">
           {entries.map((entry) => (
             <li key={entry.document.id}>
-              <DocumentItem entry={entry} slug={slug} canManage={canManage} />
+              <DocumentItem entry={entry} state={stateOf(entry)} slug={slug} canManage={canManage} />
             </li>
           ))}
         </ul>
@@ -95,7 +96,19 @@ function EmptyDocuments({ canManage }: { canManage: boolean }) {
   );
 }
 
-function DocumentItem({ entry, slug, canManage }: { entry: DocumentEntry; slug: string; canManage: boolean }) {
+// state: which of the six states the card shows (document-state.ts),
+// worked out once by the list.
+function DocumentItem({
+  entry,
+  state,
+  slug,
+  canManage,
+}: {
+  entry: DocumentEntry;
+  state: DocumentState;
+  slug: string;
+  canManage: boolean;
+}) {
   const { document, runs, fields, staleRun } = entry;
   const review = document.status === "needs_review";
   const hasFile = document.status !== "uploading";
@@ -121,6 +134,7 @@ function DocumentItem({ entry, slug, canManage }: { entry: DocumentEntry; slug: 
     <article
       aria-labelledby={`document-${document.id}`}
       data-doc-status={document.status}
+      data-doc-state={state}
       className={` border bg-paper p-4 sm:p-5 ${review ? "border-signal" : "border-ink"}`}
     >
       <div className="flex items-start justify-between gap-3">
