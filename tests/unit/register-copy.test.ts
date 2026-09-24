@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { fieldSummary } from "@/app/app/[slug]/fields";
 import { formatClock, formatSeconds } from "@/app/app/[slug]/format";
+import { roleAbilities } from "@/app/app/[slug]/messages";
 import type { FieldRow } from "@/app/app/[slug]/types";
 
 function field(name: string, value: string | null, band: string, question: string | null = null): FieldRow {
@@ -54,5 +55,16 @@ describe("fieldSummary", () => {
     expect(summary.read).toBe("2 of 3 fields read, 1 not on the document.");
     expect(summary.check).toBeNull();
     expect(summary.questions).toBe("1 question to confirm.");
+  });
+});
+
+describe("roleAbilities", () => {
+  it("says what each role can do, never the role's bare name", () => {
+    for (const role of ["owner", "admin", "member"] as const) {
+      expect(roleAbilities(role)).not.toMatch(/your role|owner|member/i);
+    }
+    expect(roleAbilities("owner")).toBe(roleAbilities("admin"));
+    expect(roleAbilities("owner")).toMatch(/^Upload, extract, download and delete documents/);
+    expect(roleAbilities("member")).toMatch(/An admin extracts and deletes them\.$/);
   });
 });

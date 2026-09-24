@@ -30,10 +30,10 @@ export function OrganizationView({
 
   return (
     <>
+      {/* The trail stops at the organizations list: the title under it is
+          the page it leads to, so the name isn't printed twice. */}
       <nav aria-label="Breadcrumb">
-        <ol className="label flex flex-wrap items-center gap-x-2 text-ink">
-          {/* The separator ends the first item, so a wrapped trail never
-              starts a line with it. */}
+        <ol className="label flex items-center gap-2 text-ink">
           <li className="flex items-center gap-2">
             {/* 24px tall: the label's 16px line plus 4px above and below,
                 taken back by negative margins. */}
@@ -42,16 +42,18 @@ export function OrganizationView({
             </Link>
             <span aria-hidden="true">/</span>
           </li>
-          <li className="min-w-0">
-            <span aria-current="page" className="min-w-0 [overflow-wrap:anywhere]">
-              {organization.name}
-            </span>
-          </li>
         </ol>
       </nav>
 
-      <h1 className={`mt-4 ${pageTitleClass} [overflow-wrap:anywhere]`}>{organization.name}</h1>
-      <p className="mt-3 max-w-prose text-ink">{roleAbilities(role)}</p>
+      <h1 className={`mt-3 ${pageTitleClass} [overflow-wrap:anywhere]`}>{organization.name}</h1>
+
+      {/* What the reader's role lets them do, as a readout in the grid the
+          sections below use, not the role's name: "Owner" says nothing on
+          an organization of one. */}
+      <dl className="mt-6 grid grid-cols-1 gap-x-8 gap-y-1 lg:grid-cols-12">
+        <dt className="label lg:col-span-3 lg:pt-1.5">You can</dt>
+        <dd className="max-w-prose lg:col-span-8 lg:col-start-4">{roleAbilities(role)}</dd>
+      </dl>
 
       <section aria-labelledby={DOCUMENTS_HEADING_ID} className="mt-10 md:mt-14">
         <DocumentList entries={entries} slug={organization.slug} canManage={manage} />

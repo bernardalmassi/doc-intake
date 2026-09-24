@@ -16,11 +16,12 @@ export const ROLE_LABELS: Record<Role, string> = {
 
 // What the reader's role lets them do here, said instead of the role's
 // name: "Owner" reads oddly on an organization of one, and the name says
-// nothing about what the page will let you do.
+// nothing about what the page will let you do. Printed after "You can".
+// Owners and admins can do the same things on this page.
 export function roleAbilities(role: Role): string {
   return role === "member"
-    ? "You can upload and download documents here. Admins run extraction and delete documents."
-    : "You can upload, extract and delete documents here.";
+    ? "Upload and download documents, and read what was extracted from them. An admin extracts and deletes them."
+    : "Upload, extract, download and delete documents, and read what was extracted from them.";
 }
 
 export function canManage(role: Role): boolean {
