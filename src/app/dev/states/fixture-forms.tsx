@@ -5,6 +5,7 @@
 // an action that does nothing.
 
 import { AccountControlsView } from "@/app/components/site-header";
+import { CheckEmail } from "@/app/auth/check-email";
 import { CredentialsFormView, type Mode } from "@/app/auth/credentials-form";
 import { OrganizationForm } from "@/app/app/organization-form";
 import { ErrorView } from "@/app/error-view";
@@ -27,6 +28,13 @@ export function FixtureCredentials({
   pending?: boolean;
 }) {
   return <CredentialsFormView mode={mode} state={state} pending={pending} formAction={noop} />;
+}
+
+// What the sign-up form shows once the action asks for confirmation, with
+// the address the visitor typed (the form holds it in its own state, so
+// the sign-up fixture above can only show the panel without one).
+export function FixtureCheckEmail({ email }: { email: string }) {
+  return <CheckEmail email={email} onStartAgain={noop} />;
 }
 
 export function FixtureOrganizationForm(props: {

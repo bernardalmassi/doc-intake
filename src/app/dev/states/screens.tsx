@@ -15,7 +15,13 @@ import { SignInView } from "@/app/sign-in/sign-in-view";
 import { SignUpView } from "@/app/sign-up/sign-up-view";
 import { pageClass } from "@/app/ui";
 import type { ErrorCode } from "@/lib/errors";
-import { FixtureAccount, FixtureCredentials, FixtureError, FixtureOrganizationForm } from "./fixture-forms";
+import {
+  FixtureAccount,
+  FixtureCheckEmail,
+  FixtureCredentials,
+  FixtureError,
+  FixtureOrganizationForm,
+} from "./fixture-forms";
 import { FixtureOperations, type Outcome } from "./fixture-operations";
 import {
   ALL_IDS,
@@ -285,6 +291,48 @@ export const SCREENS: Screen[] = [
     render: signUp({ error: "auth.password_breached" }),
   },
   {
+    id: "sign-up-password-short",
+    group: "Sign up",
+    title: "Password under the minimum, refused by the server",
+    render: signUp({ error: "auth.password_too_short" }),
+  },
+  {
+    id: "sign-up-password-long",
+    group: "Sign up",
+    title: "Password over 72 bytes, refused by the server",
+    render: signUp({ error: "auth.password_too_long" }),
+  },
+  {
+    id: "sign-up-email-invalid",
+    group: "Sign up",
+    title: "The server refused the address",
+    render: signUp({ error: "auth.email_invalid" }),
+  },
+  {
+    id: "sign-up-email-not-allowed",
+    group: "Sign up",
+    title: "An address the project can't send to",
+    render: signUp({ error: "auth.email_not_allowed" }),
+  },
+  {
+    id: "sign-up-email-rate-limited",
+    group: "Sign up",
+    title: "No more confirmation emails for now (a form-level error)",
+    render: signUp({ error: "auth.email_rate_limited" }),
+  },
+  {
+    id: "sign-up-rate-limited",
+    group: "Sign up",
+    title: "Too many attempts",
+    render: signUp({ error: "auth.rate_limited" }),
+  },
+  {
+    id: "sign-up-error-network",
+    group: "Sign up",
+    title: "The server couldn't be reached",
+    render: signUp({ error: "network.unavailable" }),
+  },
+  {
     id: "sign-up-disabled",
     group: "Sign up",
     title: "Sign-ups turned off (a form-level error)",
@@ -295,6 +343,12 @@ export const SCREENS: Screen[] = [
     group: "Sign up",
     title: "Check your email, after a sign-up that needs confirming",
     render: signUp({ message: "Check your email and open the confirmation link to finish signing up." }),
+  },
+  {
+    id: "check-email-address",
+    group: "Sign up",
+    title: "Check your email, with the address that was typed",
+    render: () => <SignUpView form={<FixtureCheckEmail email={EMAIL} />} />,
   },
 
   // Organizations

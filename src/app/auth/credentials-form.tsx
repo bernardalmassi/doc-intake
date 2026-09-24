@@ -231,11 +231,8 @@ export function CredentialsFormView({ mode, state, pending, formAction }: ViewPr
             aria-describedby={passwordDescribedBy}
             className={inputClass}
           />
-          {passwordProblem && (
-            <p id={ids.passwordError} className={`mt-3 ${errorClass} ${errorInkRuleClass}`}>
-              {passwordProblem}
-            </p>
-          )}
+          {/* Sign-up: the rule first, where it always is, so an error
+              doesn't push it down; the error under it. */}
           {isSignUp && (
             <>
               <PasswordRule id={ids.passwordRule} length={password.length} />
@@ -243,6 +240,11 @@ export function CredentialsFormView({ mode, state, pending, formAction }: ViewPr
                 {password.announcement}
               </p>
             </>
+          )}
+          {passwordProblem && (
+            <p id={ids.passwordError} className={`mt-3 ${errorClass} ${errorInkRuleClass}`}>
+              {passwordProblem}
+            </p>
           )}
         </div>
       </div>
