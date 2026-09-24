@@ -10,8 +10,9 @@ import type { FieldRow } from "./types";
 // with only the characters that decide the value underlined in signal, the
 // landing's mark) and the question, all printed. When every field to check
 // asks the same question (gateFields asks one question about both dates),
-// it is printed once, after them, and each field points to it. Everything else follows under "Read · 9", Medium first (with
-// its question), then High, each group in schema order; when there is
+// it is printed once, after them, and each field says where it is.
+// Everything else follows under "Read · 9", Medium first (with its
+// question), then High, each group in schema order; when there is
 // something to check, that group is folded to one line.
 //
 // Values are shown as extracted, so they can be compared with the quoted
@@ -76,7 +77,8 @@ export function ExtractionPanel({ fields }: { fields: FieldRow[] }) {
                 Read · {rest.length}
                 <ChevronRightIcon className="group-open:rotate-90" />
               </span>
-              <span className="min-w-0 truncate text-small max-md:w-full">
+              {/* Wrapped, never cut mid-word: every name is read. */}
+              <span className="min-w-0 text-small max-md:w-full">
                 {rest.map((field) => fieldLabel(field.name)).join(", ")}
               </span>
             </summary>
@@ -172,7 +174,10 @@ function LowField({
         {sharedQuestionId ? (
           <p className="mt-2 text-small">
             <span className="label mr-2">To confirm</span>
-            The question below, for {of === 2 ? "both" : `all ${of}`}.
+            {/* Says where the question is, so the reader of 1 of 2
+                doesn't look for it under this field. */}
+            One question for {of === 2 ? "1\u00a0and\u00a02" : `all\u00a0${of}`},{" "}
+            {number === of ? "directly below." : `after ${of}\u00a0of\u00a0${of}.`}
           </p>
         ) : (
           field.clarifying_question && (
