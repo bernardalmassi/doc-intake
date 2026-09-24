@@ -1,9 +1,9 @@
 // The worker route's bearer check. pg_net sends
 // "Authorization: Bearer <extraction_worker_secret>" from the app project's
 // Vault (private.wake_extraction_worker, 20260925000002), and the route
-// compares it with EXTRACTION_WORKER_SECRET, which extraction/worker.ts reads
-// and passes in. Pure, so tests/unit/worker-auth.test.ts can drive it
-// without the secret's name or a server.
+// compares it with the same secret, which extraction/worker.ts alone reads
+// from the environment and passes in. Pure, so tests/unit/worker-auth.test.ts
+// can drive it without the secret or a server.
 //
 // Refused: no header, any scheme but Bearer, a value of another length or
 // content, and a configured secret that is unset or shorter than

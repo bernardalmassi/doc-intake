@@ -542,7 +542,8 @@ export type DatabaseOperation =
   | "delete_document"
   | "complete_document_upload"
   | "enqueue_extraction_run"
-  | "finish_extraction_run"
+  // the worker recording a run's outcome (finish_extraction_run)
+  | "record_run"
   | "select";
 
 // A PostgrestError, or the plain { code, message, details, hint } object
@@ -586,7 +587,7 @@ function databaseCode(error: DatabaseErrorLike | null | undefined, operation: Da
   // Whatever stopped the worker's finish (lost connection, a price missing
   // for the model), the outcome for the user is the same: the run stays
   // open until the queue's sweep releases the document.
-  if (operation === "finish_extraction_run") return "extraction.record_failed";
+  if (operation === "record_run") return "extraction.record_failed";
 
   const code = stringField(error, "code");
   const message = stringField(error, "message") ?? "";
@@ -705,7 +706,7 @@ function byOperation(operation: DatabaseOperation, code: string, message: string
       }
       return undefined;
 
-    case "finish_extraction_run":
+    case "record_run":
     case "select":
       return undefined;
   }

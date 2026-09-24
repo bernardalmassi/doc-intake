@@ -12,7 +12,7 @@
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
-    "test:unit": "vitest run tests/unit",
+    "test:unit": "vitest run --project unit",
     "test:db": "node scripts/test-db.mjs",
     "eval": "node evals/run.mjs"
   },

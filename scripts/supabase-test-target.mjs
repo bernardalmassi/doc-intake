@@ -17,8 +17,13 @@
 //
 // It refuses when the two share a project ref, a URL or a publishable key,
 // and when no app project is known at all, because then nothing was
-// checked. Plain JavaScript so `npm run test:db` can use it without a build
-// step; the Vitest suites import it too.
+// checked. SUPABASE_TEST_SECRET_KEY, the test project's secret key, which
+// only the local worker runner in the Vitest suites uses
+// (tests/helpers/local-worker.ts), must be a secret key (sb_secret_...) and
+// must not be the app's SUPABASE_SECRET_KEY from any of the app's .env
+// files; the Vitest suites require it, test:db doesn't. Plain JavaScript so
+// `npm run test:db` can use it without a build step; the Vitest suites
+// import it too.
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -62,10 +67,10 @@ export function projectRef(url) {
 /**
  * Checks the test target against every app project it knows of. Pure: the
  * caller supplies what it read.
- * @param {{ testUrl?: string, testKey?: string, appUrls: string[], appKeys: string[] }} input
- * @returns {{ url: string, publishableKey: string, ref: string }}
+ * @param {{ testUrl?: string, testKey?: string, appUrls: string[], appKeys: string[], testSecretKey?: string, appSecretKeys?: string[], requireSecretKey?: boolean }} input
+ * @returns {{ url: string, publishableKey: string, ref: string, secretKey?: string }}
  */
-export function checkTestTarget({ testUrl, testKey, appUrls, appKeys }) {
+export function checkTestTarget({ testUrl, testKey, appUrls, appKeys, testSecretKey, appSecretKeys = [], requireSecretKey = false }) {
   if (!testUrl || !testKey) {
     throw new Error("Set SUPABASE_TEST_URL and SUPABASE_TEST_PUBLISHABLE_KEY in .env.test (see .env.test.example).");
   }
@@ -89,7 +94,23 @@ export function checkTestTarget({ testUrl, testKey, appUrls, appKeys }) {
       "Refusing to run the Supabase tests: SUPABASE_TEST_PUBLISHABLE_KEY is the app's publishable key. Use the test project's key (see README, Tests).",
     );
   }
-  return { url: testUrl, publishableKey: testKey, ref };
+  if (!testSecretKey) {
+    if (requireSecretKey) {
+      throw new Error(
+        "Set SUPABASE_TEST_SECRET_KEY in .env.test: the test project's secret key, which the local worker runner uses (see .env.test.example).",
+      );
+    }
+    return { url: testUrl, publishableKey: testKey, ref };
+  }
+  if (!testSecretKey.startsWith("sb_secret_")) {
+    throw new Error("SUPABASE_TEST_SECRET_KEY must be one of the test project's secret keys (sb_secret_...).");
+  }
+  if (appSecretKeys.some((key) => key && key === testSecretKey)) {
+    throw new Error(
+      "Refusing to run the Supabase tests: SUPABASE_TEST_SECRET_KEY is the app's secret key. Use a secret key of the test project (see README, Tests).",
+    );
+  }
+  return { url: testUrl, publishableKey: testKey, ref, secretKey: testSecretKey };
 }
 
 function readEnvFiles(root, names) {
@@ -102,14 +123,20 @@ function readEnvFiles(root, names) {
 /**
  * Reads the test target and the app project(s) from the repository's .env
  * files and the environment, and checks them. The environment wins over the
- * files for the test target, as in CI.
+ * files for the test target, as in CI. The app's secret key is read from its
+ * .env files only: inside the Vitest suites the environment's
+ * SUPABASE_SECRET_KEY is the test key, mapped there for the local runner.
  * @param {string} root the repository root
  * @param {Record<string, string | undefined>} env
+ * @param {{ requireSecretKey?: boolean }} [options]
  */
-export function supabaseTestTarget(root, env = process.env) {
+export function supabaseTestTarget(root, env = process.env, { requireSecretKey = false } = {}) {
   const testFiles = Object.assign({}, ...readEnvFiles(root, TEST_ENV_FILES));
   const appFiles = readEnvFiles(root, APP_ENV_FILES);
   return checkTestTarget({
+    testSecretKey: env.SUPABASE_TEST_SECRET_KEY || testFiles.SUPABASE_TEST_SECRET_KEY,
+    appSecretKeys: appFiles.map((values) => values.SUPABASE_SECRET_KEY).filter((key) => typeof key === "string"),
+    requireSecretKey,
     testUrl: env.SUPABASE_TEST_URL || testFiles.SUPABASE_TEST_URL,
     testKey: env.SUPABASE_TEST_PUBLISHABLE_KEY || testFiles.SUPABASE_TEST_PUBLISHABLE_KEY,
     appUrls: [...appFiles.map((values) => values.NEXT_PUBLIC_SUPABASE_URL), env.SUPABASE_APP_URL, env.NEXT_PUBLIC_SUPABASE_URL].filter(

@@ -1,39 +1,53 @@
-// The LLM harness, from the database side:
+// The queued extraction run, against the TEST project (docs/worker-design.md,
+// section 10):
 //
 //   - the limits and prices in config.ts match the tables the database
 //     enforces and charges from
-//   - the spend ceilings and the hourly rate limit refuse a run before any
-//     model call, in open_extraction_run
-//   - a run is closed in one transaction, the database prices it from its
-//     own table, and a failed run leaves the document exactly as it was
-//   - runs and fields are readable by tenant members only; anon and other
-//     tenants are refused; nobody writes them directly
+//   - enqueue_extraction_run is the only user entry point: admins only, a
+//     queued run with no token, one run at a time per document, the hourly
+//     limit; the worker's claim and finish, and the private, pgmq and net
+//     schemas, are out of every user's reach
+//   - the worker, run in-process by the local runner
+//     (tests/helpers/local-worker.ts) with fake or replayed providers,
+//     claims the run, checks the file before any model call, and finishes
+//     it: gated fields, a failure that restores the document, a fallback,
+//     an unpriced model finished as an estimate, a forged page count or a
+//     file that isn't its type failed with no call at 0 USD, an idle queue
+//   - delete_tenant waits for a run in flight
+//   - members see a run queued, then running, then ended; other tenants
+//     and anon see nothing
+//   - the whole suite spends under 0.01 USD
 //
-// The database-free half (validation, the orchestrator's fallback and retry,
-// provider error classification, cost arithmetic, magic bytes) is in
-// tests/unit/, which needs no secrets: `npx vitest run tests/unit`. Both use
-// the fake providers in tests/helpers/fake-provider.ts.
-//
-// No model is called: runs are produced by the orchestrator with fake
-// providers, and the RPCs are driven directly with real signed-in sessions
-// against the project in .env.test, using only the publishable key. Runs
-// are "forged" with chosen token counts to reach the ceilings; that is also
-// a demonstration that a tenant admin can do the same, within the clamp
-// (see SECURITY.md). The stale-run reaper needs a run older than ten
-// minutes, so it is tested in SQL instead:
-// supabase/tests/extraction_stale_runs.sql.
+// Users sign in with the publishable key; only the local runner uses the
+// test project's secret key. No model is called. The spend ceilings are
+// tested in test:db (supabase/tests/extraction_queue.sql), inside a
+// rolled-back transaction: spend is recorded in an append-only ledger now,
+// so a ceiling reached here would block the test project for the rest of
+// the month. So is everything that needs a run older than the stale limit
+// (supabase/tests/extraction_stale_runs.sql).
 //
 // Like tenant-isolation.test.ts, tests here are order-dependent and users
-// are signed up once per run.
+// are signed up once per run. The runner claims whatever is next in the
+// test project's queue, so nothing else may enqueue there while this runs
+// (the Vitest config runs one file at a time).
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { computeCostUsd, dearestModelFor, EXTRACTION_LIMITS, PRICING, priceForModel } from "@/lib/extraction/config";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { buildPdf } from "../evals/pdf";
+import { FIXTURES } from "../evals/fixtures";
+import { committedPdf, loadRecording } from "../evals/harness";
+import { replayProvider } from "../evals/recording";
 import { classifyRunError, isCostEstimated } from "@/lib/errors";
-import { failedCloseAttempts, runExtraction, toCloseParams, type RunOutcome } from "@/lib/extraction/run";
+import { computeCostUsd, dearestModelFor, EXTRACTION_LIMITS, PRICING } from "@/lib/extraction/config";
+import type { ProviderPair } from "@/lib/extraction/delivery";
+import { countPages } from "@/lib/extraction/pages";
+import { ProviderError, type ExtractionProvider } from "@/lib/extraction/providers/types";
+import { toFinishParams, type RunOutcome } from "@/lib/extraction/run";
 import { FIELD_NAMES } from "@/lib/extraction/schema";
-import { answer, fakeProvider, pdfBytes, validJson } from "./helpers/fake-provider";
+import { APP_PROJECT_REF } from "@/lib/extraction/worker-target";
+import { answer, fakeProvider, validJson } from "./helpers/fake-provider";
+import { runLocalWorker, runWorkerPointedAt } from "./helpers/local-worker";
 import { SUPABASE_TEST_PUBLISHABLE_KEY, SUPABASE_TEST_URL, testEmail } from "./helpers/supabase-target";
 
 // the test project, never the app's: the import throws if they match
@@ -43,6 +57,11 @@ const publishableKey = SUPABASE_TEST_PUBLISHABLE_KEY;
 const BUCKET = "documents";
 const MIN_PASSWORD_LENGTH = 15;
 const runId = randomUUID().slice(0, 8);
+// what the suite may spend in all, and what one fake call costs: gpt-5-nano,
+// 1 000 tokens in and 100 out
+const SUITE_BUDGET_USD = 0.01;
+const NANO = "gpt-5-nano";
+const NANO_SNAPSHOT = "gpt-5-nano-2025-08-07";
 
 type TestUser = { client: SupabaseClient; id: string; email: string };
 type DocumentRow = { id: string; tenant_id: string; storage_path: string; status: string; filename: string };
@@ -60,7 +79,10 @@ type RunRow = {
   latency_ms: number | null;
   error: string | null;
   raw_response: string | null;
+  page_count: number | null;
+  queue_msg_id: number | null;
   started_at: string;
+  claimed_at: string | null;
   finished_at: string | null;
 };
 type FieldRow = {
@@ -75,7 +97,7 @@ type FieldRow = {
 };
 
 const RUN_COLUMNS =
-  "id, tenant_id, document_id, status, provider, model, attempts, input_tokens, output_tokens, cost_usd, latency_ms, error, raw_response, started_at, finished_at";
+  "id, tenant_id, document_id, status, provider, model, attempts, input_tokens, output_tokens, cost_usd, latency_ms, error, raw_response, page_count, queue_msg_id, started_at, claimed_at, finished_at";
 const FIELD_COLUMNS = "document_id, run_id, name, value, confidence, band, source_text, clarifying_question";
 
 function newClient() {
@@ -106,15 +128,21 @@ async function createTenant(user: TestUser, label: string): Promise<string> {
   return (data as { id: string }).id;
 }
 
+// A real, countable one-page PDF (evals/pdf.ts): the worker recounts pages
+// before any model call.
+function onePagePdf(label: string): Uint8Array {
+  return buildPdf([[{ kind: "text", x: 72, y: 720, text: `doc-intake extraction test ${label}` }]]);
+}
+
 // Row-first upload, as the app does it, so the document is 'pending'.
-async function uploadDocument(user: TestUser, tenantId: string, filename: string): Promise<DocumentRow> {
+async function uploadDocument(user: TestUser, tenantId: string, filename: string, bytes = onePagePdf(filename)): Promise<DocumentRow> {
   const created = await user.client
     .from("documents")
     .insert({ tenant_id: tenantId, filename })
     .select("id, tenant_id, storage_path, status, filename")
     .single<DocumentRow>();
   if (created.error) throw new Error(`creating a row failed: ${created.error.message}`);
-  const blob = new Blob([pdfBytes(filename)], { type: "application/pdf" });
+  const blob = new Blob([new Uint8Array(bytes)], { type: "application/pdf" });
   const upload = await user.client.storage
     .from(BUCKET)
     .upload(created.data.storage_path, blob, { contentType: "application/pdf", upsert: false, cacheControl: "0" });
@@ -135,93 +163,42 @@ async function readDocument(user: TestUser, id: string) {
 }
 
 async function readRun(user: TestUser, id: string) {
-  const { data, error } = await user.client
-    .from("extraction_runs")
-    .select(RUN_COLUMNS)
-    .eq("id", id)
-    .maybeSingle<RunRow>();
+  const { data, error } = await user.client.from("extraction_runs").select(RUN_COLUMNS).eq("id", id).maybeSingle<RunRow>();
   if (error) throw error;
   return data;
 }
 
 async function readFields(user: TestUser, documentId: string) {
-  const { data, error } = await user.client
-    .from("extracted_fields")
-    .select(FIELD_COLUMNS)
-    .eq("document_id", documentId)
-    .order("name");
+  const { data, error } = await user.client.from("extracted_fields").select(FIELD_COLUMNS).eq("document_id", documentId).order("name");
   if (error) throw error;
   return (data ?? []) as FieldRow[];
 }
 
-type Opened = { run_id: string; close_token: string };
-
-function open(user: TestUser, documentId: string) {
-  return user.client.rpc("open_extraction_run", { p_document_id: documentId, p_page_count: 1 });
+function enqueue(user: TestUser, documentId: string, pageCount: number | null = 1) {
+  return user.client.rpc("enqueue_extraction_run", { p_document_id: documentId, p_page_count: pageCount });
 }
 
-async function mustOpen(user: TestUser, documentId: string): Promise<Opened> {
-  const { data, error } = await open(user, documentId);
-  if (error) throw new Error(`open_extraction_run failed: ${error.code} ${error.message}`);
-  return (data as Opened[])[0];
+async function mustEnqueue(user: TestUser, documentId: string, pageCount: number | null = 1): Promise<string> {
+  const { data, error } = await enqueue(user, documentId, pageCount);
+  if (error) throw new Error(`enqueue_extraction_run failed: ${error.code} ${error.message}`);
+  return data as string;
 }
 
-function close(user: TestUser, runId: string, token: string, outcome: RunOutcome) {
-  return user.client.rpc("close_extraction_run", toCloseParams(runId, token, outcome));
+// One pass of the worker, which must claim and deliver `expected`.
+async function deliver(expected: string, providers: ProviderPair) {
+  const result = await runLocalWorker(providers);
+  if (result.kind !== "delivered") throw new Error(`the runner did not deliver ${expected}: ${result.kind}`);
+  expect(result.runId).toBe(expected);
+  return result;
 }
 
-// A failed run with no fields. The database computes its cost from the
-// token counts, so a test drives spend by choosing those.
-function failedOutcome(extra: Partial<RunOutcome> = {}): RunOutcome {
-  return {
-    status: "failed",
-    error: "forged by the test suite",
-    rawResponse: null,
-    provider: "anthropic",
-    model: "claude-haiku-4-5-20251001",
-    attempts: 1,
-    inputTokens: 1000,
-    outputTokens: 10,
-    latencyMs: 5,
-    ...extra,
-  } as RunOutcome;
-}
-
-// Token counts that cost exactly `costUsd` at Sonnet 5's input price, the
-// dearest model on file, so a whole ceiling fits inside one clamped run.
-const FORGE_MODEL = "claude-sonnet-5";
-function forgedUsage(costUsd: number) {
-  const inputTokens = Math.round((costUsd * 1_000_000) / priceForModel(FORGE_MODEL).inputUsdPerMillion);
-  if (inputTokens > EXTRACTION_LIMITS.maxInputTokensPerRun) throw new Error("can't forge that much in one run");
-  return { provider: "anthropic" as const, model: FORGE_MODEL, inputTokens, outputTokens: 0 };
-}
-
-// Opens and immediately closes a run whose recorded cost is `costUsd`.
-async function forgeRun(user: TestUser, documentId: string, costUsd: number) {
-  const opened = await mustOpen(user, documentId);
-  const { error } = await close(user, opened.run_id, opened.close_token, failedOutcome(forgedUsage(costUsd)));
-  if (error) throw new Error(`close_extraction_run failed: ${error.code} ${error.message}`);
-  const run = await readRun(user, opened.run_id);
-  expect(Number(run?.cost_usd)).toBe(costUsd);
-  return opened.run_id;
-}
-
-// Opens and closes a run that costs at least `costUsd`, in whole tokens at
-// the forging price; returns what it recorded.
-async function forgeTokens(user: TestUser, documentId: string, costUsd: number) {
-  const inputTokens = Math.ceil((costUsd * 1_000_000) / priceForModel(FORGE_MODEL).inputUsdPerMillion);
-  const opened = await mustOpen(user, documentId);
-  const { error } = await close(
-    user,
-    opened.run_id,
-    opened.close_token,
-    failedOutcome({ provider: "anthropic", model: FORGE_MODEL, inputTokens, outputTokens: 0 }),
-  );
-  if (error) throw new Error(`close_extraction_run failed: ${error.code} ${error.message}`);
-  const run = await readRun(user, opened.run_id);
-  expect(Number(run?.cost_usd)).toBe(computeCostUsd(FORGE_MODEL, inputTokens, 0));
-  return Number(run?.cost_usd);
-}
+const only = (primary: ExtractionProvider): ProviderPair => ({ primary, fallback: null });
+// a provider that must not be called: the preflight stops the run first
+const never = () => fakeProvider("openai", NANO, []);
+// an answer that costs nothing: the call failed without a response
+const rejected = () => fakeProvider("openai", NANO, [new ProviderError("openai", "client", "invalid request", 400)]);
+const valid = (overrides: Parameters<typeof validJson>[0] = {}) =>
+  fakeProvider("openai", NANO, [answer(validJson(overrides), NANO_SNAPSHOT, 1000, 100)]);
 
 // Setup --------------------------------------------------------------------
 
@@ -229,20 +206,21 @@ let userX: TestUser | undefined; // owner of every tenant below
 let userY: TestUser | undefined; // member of tenant P only
 const tenants: string[] = [];
 
-let tenantP: string; // lifecycle tests; Y is a member
-let tenantQ: string; // rate limit
-let tenantC: string; // tenant ceiling
-let tenantG1: string; // global ceiling, with C
-let tenantG2: string;
-let tenantG3: string; // fresh tenant refused by the global ceiling
-let tenantS: string; // a run left running
+let tenantP: string; // queued, running, ended; Y is a member
+let tenantF: string; // failures and the fallback
+let tenantU: string; // an unpriced model
+let tenantV: string; // preflight refusals
+let tenantW: string; // page counts sent with the enqueue
+let tenantQ: string; // the hourly limit
+let tenantD: string; // deletion while a run is in flight
+let tenantR: string; // a replayed fixture
 let docP: DocumentRow;
-let docQ: DocumentRow;
-let docC: DocumentRow;
-let docG1: DocumentRow;
-let docG2: DocumentRow;
-let docG3: DocumentRow;
-let docS: DocumentRow;
+let docF: DocumentRow;
+let docU: DocumentRow;
+let docV: DocumentRow;
+let docW: DocumentRow;
+let docsQ: DocumentRow[];
+let docD: DocumentRow;
 
 const x = () => userX!;
 const y = () => userY!;
@@ -257,31 +235,44 @@ beforeAll(async () => {
     return id;
   };
   tenantP = await make("p");
+  tenantF = await make("f");
+  tenantU = await make("u");
+  tenantV = await make("v");
+  tenantW = await make("w");
   tenantQ = await make("q");
-  tenantC = await make("c");
-  tenantG1 = await make("g1");
-  tenantG2 = await make("g2");
-  tenantG3 = await make("g3");
-  tenantS = await make("s");
+  tenantD = await make("d");
+  tenantR = await make("r");
 
-  const join = await x().client
-    .from("memberships")
-    .insert({ tenant_id: tenantP, user_id: y().id, role: "member" });
+  const join = await x().client.from("memberships").insert({ tenant_id: tenantP, user_id: y().id, role: "member" });
   if (join.error) throw new Error(`adding Y to tenant P failed: ${join.error.message}`);
 
-  [docP, docQ, docC, docG1, docG2, docG3, docS] = await Promise.all([
+  [docP, docF, docU, docV, docW, docD] = await Promise.all([
     uploadDocument(x(), tenantP, "p.pdf"),
-    uploadDocument(x(), tenantQ, "q.pdf"),
-    uploadDocument(x(), tenantC, "c.pdf"),
-    uploadDocument(x(), tenantG1, "g1.pdf"),
-    uploadDocument(x(), tenantG2, "g2.pdf"),
-    uploadDocument(x(), tenantG3, "g3.pdf"),
-    uploadDocument(x(), tenantS, "s.pdf"),
+    uploadDocument(x(), tenantF, "f.pdf"),
+    uploadDocument(x(), tenantU, "u.pdf"),
+    uploadDocument(x(), tenantV, "v.pdf"),
+    uploadDocument(x(), tenantW, "w.pdf"),
+    uploadDocument(x(), tenantD, "d.pdf"),
   ]);
+  docsQ = await Promise.all(
+    Array.from({ length: EXTRACTION_LIMITS.hourlyRunLimit + 1 }, (_, i) => uploadDocument(x(), tenantQ, `q${i}.pdf`)),
+  );
+
+  // nothing may be waiting in the queue: the runner would claim it
+  const idle = await runLocalWorker(only(never()));
+  if (idle.kind !== "idle") {
+    throw new Error(`the test project's extraction queue isn't empty (${idle.kind}); wait for its sweep, about 11 minutes`);
+  }
 });
 
 afterAll(async () => {
   const problems: string[] = [];
+  // end any run a failed test left in flight, at no cost, so its tenant
+  // can be deleted
+  for (let pass = 0; pass < 20; pass++) {
+    const result = await runLocalWorker(only(rejected()));
+    if (result.kind !== "delivered") break;
+  }
   if (userX) {
     for (const id of tenants) {
       const { data: files, error: listError } = await userX.client.storage.from(BUCKET).list(id);
@@ -294,7 +285,7 @@ afterAll(async () => {
         if (error) problems.push(`remove files in ${id}: ${error.message}`);
       }
     }
-    // runs and fields cascade with the tenant, taking the forged spend with them
+    // runs and fields cascade with the tenant; the ledger keeps the spend
     for (const id of tenants) {
       const { error } = await userX.client.rpc("delete_tenant", { p_tenant_id: id });
       if (error) problems.push(`delete_tenant ${id}: ${error.message}`);
@@ -320,7 +311,7 @@ describe("configuration", () => {
     expect(data!.max_input_tokens_per_run).toBe(EXTRACTION_LIMITS.maxInputTokensPerRun);
     expect(data!.max_output_tokens_per_run).toBe(EXTRACTION_LIMITS.maxOutputTokensPerRun);
     expect(data!.stale_run_minutes).toBe(EXTRACTION_LIMITS.staleRunMinutes);
-    // what an abandoned run is charged (20260918000003)
+    // what an abandoned run is charged, and a run in flight holds
     expect(data!.max_calls_per_run).toBe(EXTRACTION_LIMITS.maxCallsPerRun);
     expect(data!.max_output_tokens_per_call).toBe(EXTRACTION_LIMITS.maxOutputTokensPerCall);
     expect(data!.max_input_tokens_per_call).toBe(EXTRACTION_LIMITS.maxInputTokensPerCall);
@@ -328,6 +319,8 @@ describe("configuration", () => {
     expect(data!.input_tokens_per_page).toBe(EXTRACTION_LIMITS.inputTokensPerPage);
     expect(data!.max_pages_per_document).toBe(EXTRACTION_LIMITS.maxPagesPerDocument);
     expect(data!.abandoned_run_price_model).toBe(EXTRACTION_LIMITS.abandonedRunPriceModel);
+    // how long a claimed message stays invisible (20260925000002)
+    expect(data!.worker_visibility_seconds).toBe(EXTRACTION_LIMITS.workerVisibilitySeconds);
   });
 
   it("the prices in config.ts match the prices the database charges", async () => {
@@ -349,475 +342,334 @@ describe("configuration", () => {
   });
 });
 
-describe("run lifecycle in the database", () => {
-  let failedRun: string;
-  let clampedRun: string;
+describe("enqueue", () => {
+  let queued: string;
 
-  it("a member cannot open a run; anon cannot either", async () => {
-    const asMember = await open(y(), docP.id);
+  it("a member cannot enqueue; anon cannot either", async () => {
+    const asMember = await enqueue(y(), docP.id);
     expect(asMember.data).toBeNull();
     expect(asMember.error?.code).toBe("42501");
-
-    const anon = await newClient().rpc("open_extraction_run", { p_document_id: docP.id, p_page_count: 1 });
+    const anon = await newClient().rpc("enqueue_extraction_run", { p_document_id: docP.id, p_page_count: 1 });
     expect(anon.error?.code).toBe("42501");
-
     expect((await readDocument(x(), docP.id))?.status).toBe("pending");
   });
 
-  it("opening marks the document processing and refuses a second open", async () => {
-    const opened = await mustOpen(x(), docP.id);
-    expect(opened.run_id).toMatch(/^[0-9a-f-]{36}$/);
-    expect(opened.close_token).toMatch(/^[0-9a-f-]{36}$/);
+  it("an admin's enqueue queues the run with no token and marks the document processing; a second is refused", async () => {
+    const { data, error } = await enqueue(x(), docP.id);
+    expect(error).toBeNull();
+    // the run's id and nothing else: no token reaches the caller
+    expect(data).toMatch(/^[0-9a-f-]{36}$/);
+    queued = data as string;
 
     expect((await readDocument(x(), docP.id))?.status).toBe("processing");
-    const run = await readRun(x(), opened.run_id);
-    expect(run).toMatchObject({ status: "running", document_id: docP.id, cost_usd: null, finished_at: null });
+    const run = await readRun(x(), queued);
+    expect(run).toMatchObject({ status: "queued", document_id: docP.id, page_count: 1, claimed_at: null, finished_at: null, cost_usd: null });
+    expect(run?.queue_msg_id).not.toBeNull();
 
-    const again = await open(x(), docP.id);
+    const again = await enqueue(x(), docP.id);
     expect(again.error?.code).toBe("55000");
-
-    // close with a wrong token, as someone else holding the real token, and
-    // as anon: all refused
-    const wrongToken = await close(x(), opened.run_id, randomUUID(), failedOutcome());
-    expect(wrongToken.error?.code).toBe("42501");
-    const asMember = await close(y(), opened.run_id, opened.close_token, failedOutcome());
-    expect(asMember.error?.code).toBe("42501");
-    const anon = await newClient().rpc("close_extraction_run", toCloseParams(opened.run_id, opened.close_token, failedOutcome()));
-    expect(anon.error?.code).toBe("42501");
-    expect((await readRun(x(), opened.run_id))?.status).toBe("running");
-
-    // the real close: a run that never reached a model records no usage
-    const closed = await close(
-      x(),
-      opened.run_id,
-      opened.close_token,
-      failedOutcome({ error: "first failure", provider: null, model: null, inputTokens: 0, outputTokens: 0, attempts: 0 }),
-    );
-    expect(closed.error).toBeNull();
-    expect((await readDocument(x(), docP.id))?.status).toBe("pending");
-    expect(await readRun(x(), opened.run_id)).toMatchObject({
-      status: "failed",
-      provider: null,
-      model: null,
-      input_tokens: null,
-      cost_usd: null,
-      error: "first failure",
-    });
-
-    const twice = await close(x(), opened.run_id, opened.close_token, failedOutcome());
-    expect(twice.error?.code).toBe("42501");
-    failedRun = opened.run_id;
+    expect(again.error?.message).toMatch(/already running/);
   });
 
-  it("a failed run is recorded with its raw response and leaves the document untouched", async () => {
-    const before = await readDocument(x(), docP.id);
-    expect(before?.status).toBe("pending");
-    expect(await readFields(x(), docP.id)).toEqual([]);
+  it("a member sees the run queued, then running, then ended, with the document's gated fields", async () => {
+    expect((await readRun(y(), queued))?.status).toBe("queued");
 
-    const primary = fakeProvider("anthropic", "claude-haiku-4-5-20251001", [
-      answer("nope"),
-      answer('{"document_type": 1}', "claude-haiku-4-5-20251001", 900, 40),
-    ]);
-    const opened = await mustOpen(x(), docP.id);
-    const outcome = await runExtraction({
-      bytes: pdfBytes("p"),
-      mimeType: "application/pdf",
-      filename: docP.filename,
-      primary,
-      fallback: null,
-    });
-    expect(outcome.status).toBe("failed");
-    const closed = await close(x(), opened.run_id, opened.close_token, outcome);
-    expect(closed.error).toBeNull();
+    // a provider that waits, so the claimed run can be seen while it runs
+    let called!: () => void;
+    const calling = new Promise<void>((resolve) => (called = resolve));
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    const waiting: ExtractionProvider = {
+      name: "openai",
+      model: NANO,
+      async extract() {
+        called();
+        await released;
+        return answer(
+          validJson({
+            title: { value: "Invoice 42", confidence: 0.99 },
+            total_amount: { value: "10.00", confidence: 0.7 },
+            due_date: { value: "2026-10-01", confidence: 0.2 },
+          }),
+          NANO_SNAPSHOT,
+          1000,
+          100,
+        );
+      },
+    };
+    const working = deliver(queued, only(waiting));
+    await calling;
+    const running = await readRun(y(), queued);
+    expect(running).toMatchObject({ status: "running", finished_at: null });
+    expect(running?.claimed_at).not.toBeNull();
+    release();
+    const result = await working;
+    expect(result.recorded?.status).toBe("succeeded");
 
-    const run = await readRun(x(), opened.run_id);
-    expect(run).toMatchObject({
-      status: "failed",
-      provider: "anthropic",
-      model: "claude-haiku-4-5-20251001",
-      attempts: 2,
-      input_tokens: 1900,
-      output_tokens: 140,
-      raw_response: '{"document_type": 1}',
-    });
-    expect(run?.error).toMatch(/failed validation/);
-    // the database priced it from its own table: 1900 in, 140 out at Haiku rates
-    expect(Number(run?.cost_usd)).toBe(0.0026);
-    expect(Number(run?.cost_usd)).toBe(computeCostUsd("claude-haiku-4-5-20251001", 1900, 140));
+    const run = await readRun(y(), queued);
+    expect(run).toMatchObject({ status: "succeeded", provider: "openai", model: NANO_SNAPSHOT, attempts: 1, input_tokens: 1000, output_tokens: 100 });
+    // priced by the snapshot's prefix, gpt-5-nano
+    expect(Number(run?.cost_usd)).toBe(computeCostUsd(NANO, 1000, 100));
     expect(run?.finished_at).not.toBeNull();
 
-    // the document: same status, same filename, still no fields
-    const after = await readDocument(x(), docP.id);
-    expect(after).toEqual(before);
-    expect(await readFields(x(), docP.id)).toEqual([]);
-  });
-
-  it("a close cannot carry fields on failure, a cost, an unknown model, or a mismatched provider", async () => {
-    const opened = await mustOpen(x(), docP.id);
-    const base = toCloseParams(opened.run_id, opened.close_token, failedOutcome());
-
-    const withFields = await x().client.rpc("close_extraction_run", {
-      ...base,
-      p_fields: [{ name: "title", value: "x", confidence: 0.9, band: "high", source_text: null, clarifying_question: null }],
-    });
-    expect(withFields.error?.code).toBe("22023");
-
-    // there is no cost parameter any more
-    const withCost = await x().client.rpc("close_extraction_run", { ...base, p_cost_usd: 0 });
-    expect(withCost.error?.code).toBe("PGRST202");
-
-    const unknownModel = await x().client.rpc("close_extraction_run", { ...base, p_model: "gpt-9-ultra" });
-    expect(unknownModel.error?.code).toBe("22023");
-    expect(unknownModel.error?.message).toMatch(/no price on file/);
-
-    const wrongProvider = await x().client.rpc("close_extraction_run", { ...base, p_provider: "openai" });
-    expect(wrongProvider.error?.code).toBe("22023");
-
-    const tokensNoModel = await x().client.rpc("close_extraction_run", { ...base, p_model: null, p_provider: null });
-    expect(tokensNoModel.error?.code).toBe("22023");
-
-    expect((await readRun(x(), opened.run_id))?.status).toBe("running");
-    expect(await readFields(x(), docP.id)).toEqual([]);
-
-    // absurd token counts are clamped, so the recorded cost is bounded
-    const clamped = await x().client.rpc("close_extraction_run", {
-      ...base,
-      p_input_tokens: 2_000_000_000,
-      p_output_tokens: 2_000_000_000,
-    });
-    expect(clamped.error).toBeNull();
-    const run = await readRun(x(), opened.run_id);
-    expect(run).toMatchObject({
-      status: "failed",
-      input_tokens: EXTRACTION_LIMITS.maxInputTokensPerRun,
-      output_tokens: EXTRACTION_LIMITS.maxOutputTokensPerRun,
-    });
-    expect(Number(run?.cost_usd)).toBe(
-      computeCostUsd("claude-haiku-4-5-20251001", EXTRACTION_LIMITS.maxInputTokensPerRun, EXTRACTION_LIMITS.maxOutputTokensPerRun),
-    );
-    // that one forged run, at the clamp, is worth about 84 cents at Haiku rates
-    expect(Number(run?.cost_usd)).toBe(0.84096);
-    clampedRun = opened.run_id;
-  });
-
-  it("a refused close can be closed again as failed, which releases the document", async () => {
-    // its own tenant, so this run counts toward no other test's hourly limit
-    const tenant = await createTenant(x(), "refused");
-    tenants.push(tenant);
-    const doc = await uploadDocument(x(), tenant, "refused.pdf");
-    const opened = await mustOpen(x(), doc.id);
-    expect((await readDocument(x(), doc.id))?.status).toBe("processing");
-
-    // a success the database refuses to record: no price on file for the model
-    const refusedOutcome = {
-      status: "succeeded",
-      documentStatus: "extracted",
-      fields: [
-        { name: "title", value: "Invoice 7", confidence: 0.95, band: "high", source_text: "Invoice 7", clarifying_question: null },
-      ],
-      provider: "anthropic",
-      model: "claude-unpriced-9",
-      attempts: 1,
-      inputTokens: 1000,
-      outputTokens: 10,
-      latencyMs: 5,
-    } as unknown as RunOutcome;
-    const refused = await close(x(), opened.run_id, opened.close_token, refusedOutcome);
-    expect(refused.error?.code).toBe("22023");
-    expect((await readRun(x(), opened.run_id))?.status).toBe("running");
-
-    // what the Extract action does next: the same usage is refused again
-    // for the same reason, then the same tokens at the dearest price on
-    // file are accepted, never a close without the usage
-    const [withUsage, estimated] = failedCloseAttempts(refusedOutcome, refused.error?.code ?? null);
-    expect((await close(x(), opened.run_id, opened.close_token, withUsage)).error?.code).toBe("22023");
-    expect((await close(x(), opened.run_id, opened.close_token, estimated)).error).toBeNull();
-
-    const run = await readRun(x(), opened.run_id);
-    const dearest = dearestModelFor(1000, 10);
-    expect(run).toMatchObject({ status: "failed", provider: PRICING[dearest].provider, model: dearest, input_tokens: 1000, output_tokens: 10 });
-    expect(Number(run?.cost_usd)).toBe(computeCostUsd(dearest, 1000, 10));
-    expect(Number(run?.cost_usd)).toBeGreaterThan(0);
-    expect(isCostEstimated(run?.error)).toBe(true);
-    expect(classifyRunError(run?.error)).toBe("extraction.result_not_saved");
-    expect((await readDocument(x(), doc.id))?.status).toBe("pending");
-    expect(await readFields(x(), doc.id)).toEqual([]);
-  });
-
-  it("a successful run writes gated fields; a low field sends the document to review", async () => {
-    const primary = fakeProvider("openai", "gpt-5-nano", [
-      answer(
-        validJson({
-          title: { value: "Invoice 42", confidence: 0.99 },
-          total_amount: { value: "10.00", confidence: 0.7 },
-          due_date: { value: "2026-10-01", confidence: 0.2 },
-        }),
-        "gpt-5-nano-2025-08-07",
-        500,
-        80,
-      ),
-    ]);
-    const opened = await mustOpen(x(), docP.id);
-    const outcome = await runExtraction({
-      bytes: pdfBytes("p"),
-      mimeType: "application/pdf",
-      filename: docP.filename,
-      primary,
-      fallback: null,
-    });
-    const closed = await close(x(), opened.run_id, opened.close_token, outcome);
-    expect(closed.error).toBeNull();
-
-    expect((await readDocument(x(), docP.id))?.status).toBe("needs_review");
-    const fields = await readFields(x(), docP.id);
+    expect((await readDocument(y(), docP.id))?.status).toBe("needs_review");
+    const fields = await readFields(y(), docP.id);
     expect(fields).toHaveLength(FIELD_NAMES.length);
     const byName = Object.fromEntries(fields.map((f) => [f.name, f]));
-    expect(byName.title).toMatchObject({ value: "Invoice 42", band: "high", clarifying_question: null, run_id: opened.run_id });
+    expect(byName.title).toMatchObject({ value: "Invoice 42", band: "high", clarifying_question: null, run_id: queued });
     expect(byName.total_amount.band).toBe("medium");
     expect(byName.total_amount.clarifying_question).toMatch(/10\.00/);
     expect(byName.due_date).toMatchObject({ value: "2026-10-01", band: "low" });
-    expect(Number(byName.title.confidence)).toBe(0.99);
-
-    const run = await readRun(x(), opened.run_id);
-    expect(run).toMatchObject({ status: "succeeded", provider: "openai", model: "gpt-5-nano-2025-08-07", attempts: 1 });
-    // priced by the snapshot's prefix, gpt-5-nano
-    expect(Number(run?.cost_usd)).toBe(computeCostUsd("gpt-5-nano", 500, 80));
   });
 
-  it("a later successful run replaces the fields and can mark the document extracted", async () => {
-    const primary = fakeProvider("anthropic", "claude-haiku-4-5-20251001", [
-      answer(validJson({ title: { value: "Invoice 43", confidence: 0.95 } })),
-    ]);
-    const opened = await mustOpen(x(), docP.id);
-    const outcome = await runExtraction({
-      bytes: pdfBytes("p"),
-      mimeType: "application/pdf",
-      filename: docP.filename,
-      primary,
-      fallback: null,
-    });
-    const closed = await close(x(), opened.run_id, opened.close_token, outcome);
-    expect(closed.error).toBeNull();
-
+  it("a later run replaces the fields and can mark the document extracted", async () => {
+    const second = await mustEnqueue(x(), docP.id);
+    await deliver(second, only(valid({ title: { value: "Invoice 43", confidence: 0.95 } })));
     expect((await readDocument(x(), docP.id))?.status).toBe("extracted");
     const fields = await readFields(x(), docP.id);
     expect(fields).toHaveLength(FIELD_NAMES.length);
-    expect(fields.every((f) => f.run_id === opened.run_id)).toBe(true);
+    expect(fields.every((f) => f.run_id === second)).toBe(true);
     expect(fields.find((f) => f.name === "title")).toMatchObject({ value: "Invoice 43", band: "high" });
-    expect(fields.find((f) => f.name === "due_date")).toMatchObject({ value: null, band: "high" });
-
-    // every run so far is still there
-    const runs = await x().client.from("extraction_runs").select("id").eq("tenant_id", tenantP);
-    expect(runs.data?.map((r) => r.id)).toContain(failedRun);
-    expect(runs.data?.map((r) => r.id)).toContain(clampedRun);
-    expect(runs.data).toHaveLength(5);
   });
 
-  it("a fresh running run is not reaped by the next open", async () => {
-    // The reaper only fails runs older than stale_run_minutes; a run opened
-    // seconds ago just blocks the next open. Reaping itself is tested in
-    // supabase/tests/extraction_stale_runs.sql, where started_at can be set.
-    const opened = await mustOpen(x(), docS.id);
-    const again = await open(x(), docS.id);
-    expect(again.error?.code).toBe("55000");
-    expect(again.error?.message).toMatch(/already running/);
-    expect((await readRun(x(), opened.run_id))?.status).toBe("running");
-    expect((await readDocument(x(), docS.id))?.status).toBe("processing");
-    const closed = await close(
-      x(),
-      opened.run_id,
-      opened.close_token,
-      failedOutcome({ provider: null, model: null, inputTokens: 0, outputTokens: 0, attempts: 0 }),
-    );
-    expect(closed.error).toBeNull();
-    expect((await readDocument(x(), docS.id))?.status).toBe("pending");
+  it("a second runner pass after a finish does nothing, and an empty queue is idle", async () => {
+    const provider = never();
+    expect((await runLocalWorker(only(provider))).kind).toBe("idle");
+    expect((await runLocalWorker(only(provider))).kind).toBe("idle");
+    expect(provider.requests).toHaveLength(0);
   });
 
-  it("the page count sent with the open is stored on the run, clamped, for the reaper's estimate", async () => {
-    // Used only if the run is abandoned (supabase/tests/extraction_stale_runs.sql
-    // tests the charge). Trusted like the token counts at close, and clamped.
-    const noCall = failedOutcome({ provider: null, model: null, inputTokens: 0, outputTokens: 0, attempts: 0 });
+  it("the page count sent with the enqueue is stored on the run, clamped", async () => {
     for (const [sent, stored] of [
       [250, EXTRACTION_LIMITS.maxPagesPerDocument],
       [0, 1],
       [null, null],
     ] as const) {
-      const { data, error } = await x().client.rpc("open_extraction_run", { p_document_id: docS.id, p_page_count: sent });
-      expect(error).toBeNull();
-      const opened = (data as Opened[])[0];
-      const run = await x().client.from("extraction_runs").select("page_count").eq("id", opened.run_id).single();
-      expect(run.data?.page_count, `sent ${sent}`).toBe(stored);
-      expect((await close(x(), opened.run_id, opened.close_token, noCall)).error).toBeNull();
+      const id = await mustEnqueue(x(), docW.id, sent);
+      expect((await readRun(x(), id))?.page_count, `sent ${sent}`).toBe(stored);
+      // ended at no cost: a count other than the file's never reaches a
+      // model, and the one-page count that matches gets a refused call
+      await deliver(id, only(rejected()));
+      expect((await readRun(x(), id))?.status).toBe("failed");
     }
-  });
-
-  it("an open without a page count is refused: the one-argument form is gone (20260919000002)", async () => {
-    const { data, error } = await x().client.rpc("open_extraction_run", { p_document_id: docS.id });
-    expect(data).toBeNull();
-    expect(error?.code).toBe("PGRST202");
-    expect((await readDocument(x(), docS.id))?.status).toBe("pending");
-  });
-
-  it("nobody can write runs or fields directly", async () => {
-    const insertRun = await x().client
-      .from("extraction_runs")
-      .insert({ tenant_id: tenantP, document_id: docP.id, previous_document_status: "pending" });
-    expect(insertRun.error?.code).toBe("42501");
-
-    const updateRun = await x().client.from("extraction_runs").update({ cost_usd: 0 }).eq("tenant_id", tenantP);
-    expect(updateRun.error?.code).toBe("42501");
-
-    const deleteRun = await x().client.from("extraction_runs").delete().eq("tenant_id", tenantP);
-    expect(deleteRun.error?.code).toBe("42501");
-
-    const deleteFields = await x().client.from("extracted_fields").delete().eq("document_id", docP.id);
-    expect(deleteFields.error?.code).toBe("42501");
-
-    // (PostgREST refuses an unfiltered update before the database sees it)
-    const updateLimits = await x().client
-      .from("extraction_limits")
-      .update({ hourly_run_limit: 1000 })
-      .eq("singleton", true);
-    expect(updateLimits.error?.code).toBe("42501");
-
-    const updatePrices = await x().client
-      .from("extraction_model_prices")
-      .update({ input_usd_per_million: 0 })
-      .eq("model", "gpt-5-nano");
-    expect(updatePrices.error?.code).toBe("42501");
-
-    expect(await readFields(x(), docP.id)).toHaveLength(FIELD_NAMES.length);
+    expect((await readDocument(x(), docW.id))?.status).toBe("pending");
   });
 });
 
-describe("limits", () => {
-  it("the tenant monthly spend ceiling blocks a call", async () => {
-    // one run that cost exactly the ceiling
-    await forgeRun(x(), docC.id, EXTRACTION_LIMITS.tenantMonthlyCeilingUsd);
-    expect((await readDocument(x(), docC.id))?.status).toBe("pending");
-
-    const refused = await open(x(), docC.id);
-    expect(refused.data).toBeNull();
-    expect(refused.error?.code).toBe("53400");
-    expect(refused.error?.message).toMatch(/this organization has reached its monthly extraction spend ceiling/);
-
-    // nothing was opened: no new run, document untouched
-    const runs = await x().client.from("extraction_runs").select("id").eq("tenant_id", tenantC);
-    expect(runs.data).toHaveLength(1);
-    expect((await readDocument(x(), docC.id))?.status).toBe("pending");
+describe("the worker's own functions", () => {
+  it("no signed-in user, and not anon, can claim or finish a run", async () => {
+    const finishParams = toFinishParams(randomUUID(), randomUUID(), {
+      status: "failed",
+      error: "forged",
+      rawResponse: null,
+      provider: null,
+      model: null,
+      attempts: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      latencyMs: 1,
+    } as RunOutcome, false);
+    for (const [label, client] of [
+      ["an owner", x().client],
+      ["a member", y().client],
+      ["anon", newClient()],
+    ] as const) {
+      const claim = await client.rpc("claim_extraction_run");
+      expect(claim.error?.code, label).toBe("42501");
+      const finish = await client.rpc("finish_extraction_run", finishParams);
+      expect(finish.error?.code, label).toBe("42501");
+    }
   });
 
-  it("a run served by a model with no price is charged an estimate, and the ceiling then blocks the next call", async () => {
-    // its own tenant, just under its ceiling
-    const tenant = await createTenant(x(), "unpriced");
-    tenants.push(tenant);
-    const doc = await uploadDocument(x(), tenant, "unpriced.pdf");
-    await forgeRun(x(), doc.id, EXTRACTION_LIMITS.tenantMonthlyCeilingUsd - 0.01);
-
-    // a real run whose provider reports a model id nothing prices
-    const opened = await mustOpen(x(), doc.id);
-    const provider = fakeProvider("anthropic", "claude-haiku-4-5-20251001", [
-      answer(validJson({ title: { value: "Invoice 7", confidence: 0.95 } }), "claude-unpriced-9", 20_000, 1_000),
-    ]);
-    const outcome = await runExtraction({ bytes: pdfBytes("unpriced"), mimeType: "application/pdf", filename: "unpriced.pdf", primary: provider, fallback: null });
-    expect(outcome).toMatchObject({ status: "succeeded", model: "claude-unpriced-9", inputTokens: 20_000, outputTokens: 1_000 });
-
-    // the Extract action's close sequence: the outcome, then each planned retry
-    const refused = await close(x(), opened.run_id, opened.close_token, outcome);
-    expect(refused.error?.code).toBe("22023");
-    let closedWith: RunOutcome | null = null;
-    for (const attempt of failedCloseAttempts(outcome, refused.error?.code ?? null)) {
-      if (!(await close(x(), opened.run_id, opened.close_token, attempt)).error) {
-        closedWith = attempt;
-        break;
-      }
+  it("private, pgmq and net aren't reachable over the API, and neither are the queue's helpers", async () => {
+    for (const [schema, table] of [
+      ["private", "extraction_spend"],
+      ["pgmq", "q_extraction"],
+      ["net", "http_request_queue"],
+    ] as const) {
+      const { data, error } = await x().client.schema(schema).from(table).select("*").limit(1);
+      expect(data, schema).toBeNull();
+      expect(error?.code, schema).toBe("PGRST106");
     }
-    expect(closedWith).not.toBeNull();
+    const read = await x().client.schema("pgmq").rpc("read", { queue_name: "extraction", vt: 0, qty: 1 });
+    expect(read.error?.code).toBe("PGRST106");
+    for (const fn of ["sweep_extraction_queue", "wake_extraction_worker", "reap_extraction_run", "check_extraction_limits"]) {
+      const { error } = await x().client.rpc(fn);
+      expect(error?.code, fn).toBe("PGRST202");
+    }
+  });
+});
 
-    expect((await readDocument(x(), doc.id))?.status).toBe("pending");
+describe("runs the worker delivers", () => {
+  it("a provider that fails ends the run and restores the document", async () => {
+    const id = await mustEnqueue(x(), docF.id);
+    const provider = rejected();
+    await deliver(id, only(provider));
+    expect(provider.requests).toHaveLength(1);
+    const run = await readRun(x(), id);
+    expect(run).toMatchObject({ status: "failed", provider: "openai", attempts: 1, input_tokens: 0, output_tokens: 0 });
+    expect(Number(run?.cost_usd)).toBe(0);
+    expect(classifyRunError(run?.error)).toBe("extraction.provider_rejected");
+    expect((await readDocument(x(), docF.id))?.status).toBe("pending");
+    expect(await readFields(x(), docF.id)).toEqual([]);
+  });
 
-    // the next call is refused by the ceiling before anything is opened;
-    // at no cost the tenant would still be 0.01 under it and be let through
-    const next = await open(x(), doc.id);
-    expect(next.error?.code).toBe("53400");
-    expect(next.data).toBeNull();
-    expect(next.error?.message).toMatch(/this organization has reached its monthly extraction spend ceiling/);
-    const runs = await x().client.from("extraction_runs").select("id").eq("tenant_id", tenant);
-    expect(runs.data).toHaveLength(2);
+  it("a timeout falls back once: two calls, recorded as the fallback's", async () => {
+    const id = await mustEnqueue(x(), docF.id);
+    const primary = fakeProvider("anthropic", "claude-sonnet-5", [new ProviderError("anthropic", "transport", "request timed out")]);
+    const fallback = valid();
+    await deliver(id, { primary, fallback });
+    expect(primary.requests).toHaveLength(1);
+    expect(fallback.requests).toHaveLength(1);
+    const run = await readRun(x(), id);
+    expect(run).toMatchObject({ status: "succeeded", provider: "openai", model: NANO_SNAPSHOT, attempts: 2 });
+    expect(Number(run?.cost_usd)).toBe(computeCostUsd(NANO, 1000, 100));
+    expect((await readDocument(x(), docF.id))?.status).toBe("extracted");
+  });
 
-    // because the tokens were paid for, the run carries a cost, marked estimated
-    const run = await readRun(x(), opened.run_id);
-    const expected = computeCostUsd(dearestModelFor(20_000, 1_000), 20_000, 1_000);
-    expect(expected).toBeGreaterThan(0.01);
-    expect(run).toMatchObject({ status: "failed", input_tokens: 20_000, output_tokens: 1_000 });
-    expect(Number(run?.cost_usd)).toBe(expected);
+  it("a model with no price is finished at the dearest price on file, marked estimated", async () => {
+    const id = await mustEnqueue(x(), docU.id);
+    const provider = fakeProvider("anthropic", "claude-sonnet-5", [answer(validJson(), "claude-unpriced-9", 100, 10)]);
+    const result = await deliver(id, only(provider));
+    expect(provider.requests).toHaveLength(1);
+    // the success, then the same usage as a failure, both refused; then the
+    // estimate, accepted
+    expect(result.finishCalls).toBe(3);
+    const dearest = dearestModelFor(100, 10);
+    const run = await readRun(x(), id);
+    expect(run).toMatchObject({ status: "failed", provider: PRICING[dearest].provider, model: dearest, input_tokens: 100, output_tokens: 10 });
+    expect(Number(run?.cost_usd)).toBe(computeCostUsd(dearest, 100, 10));
     expect(isCostEstimated(run?.error)).toBe(true);
+    expect(classifyRunError(run?.error)).toBe("extraction.result_not_saved");
+    expect((await readDocument(x(), docU.id))?.status).toBe("pending");
+    expect(await readFields(x(), docU.id)).toEqual([]);
   });
 
-  it("the hourly rate limit blocks a call", async () => {
-    for (let i = 0; i < EXTRACTION_LIMITS.hourlyRunLimit; i++) {
-      await forgeRun(x(), docQ.id, 0);
+  it("a forged page count never reaches a model: failed at 0 USD with no call", async () => {
+    const id = await mustEnqueue(x(), docV.id, 3);
+    const provider = never();
+    await deliver(id, only(provider));
+    expect(provider.requests).toHaveLength(0);
+    const run = await readRun(x(), id);
+    expect(run).toMatchObject({ status: "failed", provider: null, model: null, attempts: 0 });
+    expect(Number(run?.cost_usd)).toBe(0);
+    expect(classifyRunError(run?.error)).toBe("extraction.page_count_mismatch");
+    expect((await readDocument(x(), docV.id))?.status).toBe("pending");
+  });
+
+  it("bytes that aren't what their type says never reach a model: failed at 0 USD with no call", async () => {
+    const fake = await uploadDocument(x(), tenantV, "not-a-pdf.pdf", new TextEncoder().encode("plain text, not a PDF at all"));
+    const id = await mustEnqueue(x(), fake.id, 1);
+    const provider = never();
+    await deliver(id, only(provider));
+    expect(provider.requests).toHaveLength(0);
+    const run = await readRun(x(), id);
+    expect(run).toMatchObject({ status: "failed", model: null, attempts: 0 });
+    expect(Number(run?.cost_usd)).toBe(0);
+    expect(classifyRunError(run?.error)).toBe("extraction.file_type_mismatch");
+  });
+
+  it("replays a recorded fixture end to end: invoice-usd.pdf with its OpenAI answers", async () => {
+    const fixture = FIXTURES.find((f) => f.id === "invoice-usd");
+    if (!fixture) throw new Error("no invoice-usd fixture");
+    const bytes = committedPdf(fixture);
+    const pages = await countPages(bytes, "application/pdf");
+    const doc = await uploadDocument(x(), tenantR, "invoice-usd.pdf", bytes);
+    const id = await mustEnqueue(x(), doc.id, pages);
+
+    const recording = loadRecording(fixture, "openai");
+    const replay = replayProvider(recording);
+    const result = await deliver(id, only(replay));
+    replay.assertComplete();
+    expect(result.recorded?.status).toBe("succeeded");
+
+    const run = await readRun(x(), id);
+    expect(run?.status).toBe("succeeded");
+    expect(run?.attempts).toBe(recording.calls.length);
+    expect(Number(run?.cost_usd)).toBe(computeCostUsd(run!.model!, run!.input_tokens!, run!.output_tokens!));
+    const fields = await readFields(x(), doc.id);
+    expect(fields).toHaveLength(FIELD_NAMES.length);
+    // what the replay produced is what the database holds
+    if (result.outcome.status !== "succeeded") throw new Error("the replay did not succeed");
+    for (const field of result.outcome.fields) {
+      expect(fields.find((f) => f.name === field.name), field.name).toMatchObject({ value: field.value, band: field.band });
     }
-    const refused = await open(x(), docQ.id);
+  });
+});
+
+describe("limits and deletion", () => {
+  it("the hourly limit refuses the sixth enqueue, with five one-page runs in flight under the ceiling", async () => {
+    const limit = EXTRACTION_LIMITS.hourlyRunLimit;
+    const ids: string[] = [];
+    for (const doc of docsQ.slice(0, limit)) ids.push(await mustEnqueue(x(), doc.id));
+    const refused = await enqueue(x(), docsQ[limit].id);
     expect(refused.data).toBeNull();
     expect(refused.error?.code).toBe("54000");
-    expect(refused.error?.message).toMatch(new RegExp(`${EXTRACTION_LIMITS.hourlyRunLimit} extraction runs per hour`));
+    expect(refused.error?.message).toMatch(new RegExp(`${limit} extraction runs per hour`));
+    expect((await readDocument(x(), docsQ[limit].id))?.status).toBe("pending");
 
-    const runs = await x().client.from("extraction_runs").select("id").eq("tenant_id", tenantQ);
-    expect(runs.data).toHaveLength(EXTRACTION_LIMITS.hourlyRunLimit);
-    expect((await readDocument(x(), docQ.id))?.status).toBe("pending");
+    // end them at no cost, oldest first as the queue hands them out
+    for (const id of ids) await deliver(id, only(rejected()));
+    const runs = await x().client.from("extraction_runs").select("status").eq("tenant_id", tenantQ);
+    expect(runs.data?.map((r) => r.status)).toEqual(Array(limit).fill("failed"));
   });
 
-  it("the global monthly spend ceiling blocks a call for a tenant that has spent nothing", async () => {
-    // The earlier tests have spent some of the month's global allowance in
-    // this run's tenants; two more tenants spend what is left, each at most
-    // a tenant ceiling. (Spend in tenants this user can't see isn't counted
-    // here, as before: the test project is expected to hold no other runs.)
-    const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString();
-    const spent = await x().client.from("extraction_runs").select("cost_usd").in("tenant_id", tenants).gte("started_at", monthStart);
-    expect(spent.error).toBeNull();
-    let remaining =
-      EXTRACTION_LIMITS.globalMonthlyCeilingUsd - (spent.data ?? []).reduce((sum, run) => sum + Number(run.cost_usd ?? 0), 0);
-    for (const doc of [docG1, docG2]) {
-      if (remaining <= 0) break;
-      // a millionth over, so rounding in this sum can't leave the database's just short
-      remaining -= await forgeTokens(x(), doc.id, Math.min(remaining + 1e-6, EXTRACTION_LIMITS.tenantMonthlyCeilingUsd));
-    }
-    expect(remaining).toBeLessThanOrEqual(0);
+  it("delete_tenant is refused while a run is queued, and goes through once it has ended", async () => {
+    const id = await mustEnqueue(x(), docD.id);
+    const refused = await x().client.rpc("delete_tenant", { p_tenant_id: tenantD });
+    expect(refused.error?.code).toBe("55000");
+    expect(refused.error?.message).toMatch(/an extraction is in progress/);
 
-    const refused = await open(x(), docG3.id);
-    expect(refused.data).toBeNull();
-    expect(refused.error?.code).toBe("53400");
-    expect(refused.error?.message).toMatch(/across all organizations/);
-
-    const runs = await x().client.from("extraction_runs").select("id").eq("tenant_id", tenantG3);
-    expect(runs.data).toEqual([]);
-    expect((await readDocument(x(), docG3.id))?.status).toBe("pending");
+    await deliver(id, only(rejected()));
+    const removed = await x().client.storage.from(BUCKET).remove([docD.storage_path]);
+    expect(removed.error).toBeNull();
+    const deleted = await x().client.rpc("delete_tenant", { p_tenant_id: tenantD });
+    expect(deleted.error).toBeNull();
+    tenants.splice(tenants.indexOf(tenantD), 1);
   });
 });
 
-describe("reading runs and fields", () => {
-  it("a member of the tenant sees its runs and fields", async () => {
-    const runs = await y().client.from("extraction_runs").select("id, status").eq("tenant_id", tenantP);
-    expect(runs.error).toBeNull();
-    expect(runs.data).toHaveLength(5);
-    expect(await readFields(y(), docP.id)).toHaveLength(FIELD_NAMES.length);
+describe("guards", () => {
+  it("the worker refuses the app's project under test, before any request", async () => {
+    const requests = vi.fn(async () => new Response("{}", { status: 500 }));
+    vi.stubGlobal("fetch", requests);
+    try {
+      const provider = never();
+      const result = await runWorkerPointedAt(`https://${APP_PROJECT_REF}.supabase.co`, only(provider));
+      expect(result.kind).toBe("not_configured");
+      expect(requests).not.toHaveBeenCalled();
+      expect(provider.requests).toHaveLength(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
-  it("cross-tenant reads of runs and fields return nothing", async () => {
-    // Y is not a member of Q, which has runs, or of C
-    const runs = await y().client.from("extraction_runs").select("id").eq("tenant_id", tenantQ);
-    expect(runs.error).toBeNull();
-    expect(runs.data).toEqual([]);
+  it("a member reads only their tenant's runs and fields; other tenants' come back empty", async () => {
+    const own = await y().client.from("extraction_runs").select("tenant_id");
+    expect(own.error).toBeNull();
+    expect(own.data!.length).toBeGreaterThan(0);
+    expect(new Set(own.data!.map((r) => r.tenant_id))).toEqual(new Set([tenantP]));
+    for (const tenant of [tenantF, tenantQ, tenantR]) {
+      const runs = await y().client.from("extraction_runs").select("id").eq("tenant_id", tenant);
+      expect(runs.data).toEqual([]);
+    }
     const fields = await y().client.from("extracted_fields").select("name").neq("document_id", docP.id);
-    expect(fields.error).toBeNull();
     expect(fields.data).toEqual([]);
-    const unfiltered = await y().client.from("extraction_runs").select("tenant_id");
-    expect(new Set(unfiltered.data?.map((r) => r.tenant_id))).toEqual(new Set([tenantP]));
+  });
 
-    // control: the owner sees Q's runs
-    const own = await x().client.from("extraction_runs").select("id").eq("tenant_id", tenantQ);
-    expect(own.data).toHaveLength(EXTRACTION_LIMITS.hourlyRunLimit);
+  it("nobody can write runs or fields directly, or change the limits or prices", async () => {
+    const insertRun = await x().client.from("extraction_runs").insert({ tenant_id: tenantP, document_id: docP.id, previous_document_status: "pending" });
+    expect(insertRun.error?.code).toBe("42501");
+    const updateRun = await x().client.from("extraction_runs").update({ cost_usd: 0 }).eq("tenant_id", tenantP);
+    expect(updateRun.error?.code).toBe("42501");
+    const deleteRun = await x().client.from("extraction_runs").delete().eq("tenant_id", tenantP);
+    expect(deleteRun.error?.code).toBe("42501");
+    const deleteFields = await x().client.from("extracted_fields").delete().eq("document_id", docP.id);
+    expect(deleteFields.error?.code).toBe("42501");
+    const updateLimits = await x().client.from("extraction_limits").update({ hourly_run_limit: 1000 }).eq("singleton", true);
+    expect(updateLimits.error?.code).toBe("42501");
+    const updatePrices = await x().client.from("extraction_model_prices").update({ input_usd_per_million: 0 }).eq("model", NANO);
+    expect(updatePrices.error?.code).toBe("42501");
   });
 
   it("anon is refused everywhere", async () => {
@@ -827,9 +679,17 @@ describe("reading runs and fields", () => {
       expect(data, table).toBeNull();
       expect(error?.code, table).toBe("42501");
     }
-    const opened = await anon.rpc("open_extraction_run", { p_document_id: docP.id, p_page_count: 1 });
-    expect(opened.error?.code).toBe("42501");
-    const closed = await anon.rpc("close_extraction_run", toCloseParams(randomUUID(), randomUUID(), failedOutcome()));
-    expect(closed.error?.code).toBe("42501");
+  });
+});
+
+describe("spend", () => {
+  it("every run the suite made has ended, and together they cost under 0.01 USD", async () => {
+    const { data, error } = await x().client.from("extraction_runs").select("status, cost_usd").in("tenant_id", tenants);
+    expect(error).toBeNull();
+    expect(data!.length).toBeGreaterThan(10);
+    expect(data!.filter((run) => run.status === "queued" || run.status === "running")).toEqual([]);
+    const spent = data!.reduce((sum, run) => sum + Number(run.cost_usd ?? 0), 0);
+    expect(spent).toBeGreaterThan(0);
+    expect(spent).toBeLessThan(SUITE_BUDGET_USD);
   });
 });

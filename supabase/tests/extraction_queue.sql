@@ -368,6 +368,63 @@ begin
   perform private.reap_extraction_run(v_small, 'test');
 end $t$;
 
+-- 6b. What a finish accepts ---------------------------------------------------
+
+do $t$
+declare
+  v_run_id uuid;
+  v_claim  record;
+  v_limits public.extraction_limits := (select l from public.extraction_limits l);
+  v_run    public.extraction_runs;
+begin
+  -- reuses organization 8's second document, ended above
+  v_run_id := public.enqueue_extraction_run('e3e3e3e3-0000-4000-8000-00000000008b', 1);
+  select * into v_claim from public.claim_extraction_run();
+  if v_claim.run_id is distinct from v_run_id then
+    raise exception 'expected to claim %, got %', v_run_id, v_claim.run_id;
+  end if;
+  begin
+    perform public.finish_extraction_run(v_run_id, v_claim.claim_token, 'failed', 'openai', 'gpt-5-nano',
+      10, 1, 5, 1, false, 'x', null,
+      '[{"name":"title","value":"x","confidence":0.9,"band":"high","source_text":null,"clarifying_question":null}]'::jsonb);
+    raise exception 'a failed finish with fields was accepted';
+  exception when sqlstate '22023' then null;
+  end;
+  begin
+    perform public.finish_extraction_run(v_run_id, v_claim.claim_token, 'failed', 'openai', 'gpt-9-ultra',
+      10, 1, 5, 1, false, 'x', null, null);
+    raise exception 'a finish with an unpriced model was accepted';
+  exception when sqlstate '22023' then null;
+  end;
+  begin
+    perform public.finish_extraction_run(v_run_id, v_claim.claim_token, 'failed', 'anthropic', 'gpt-5-nano',
+      10, 1, 5, 1, false, 'x', null, null);
+    raise exception 'a finish naming the wrong provider was accepted';
+  exception when sqlstate '22023' then null;
+  end;
+  begin
+    perform public.finish_extraction_run(v_run_id, gen_random_uuid(), 'failed', null, null,
+      0, 0, 5, 0, false, 'x', null, null);
+    raise exception 'a finish with a wrong claim token was accepted';
+  exception when sqlstate '42501' then null;
+  end;
+  if (select status from public.extraction_runs where id = v_run_id) <> 'running' then
+    raise exception 'a refused finish changed the run';
+  end if;
+  insert into checks (step, result) values ('a finish is refused with fields on a failure, an unpriced model, the wrong provider or the wrong token', 'ok');
+
+  -- absurd token counts are clamped, so one run's cost is bounded
+  perform public.finish_extraction_run(v_run_id, v_claim.claim_token, 'failed', 'openai', 'gpt-5-nano',
+    2000000000, 2000000000, 5, 1, false, 'forged', null, null);
+  select r.* into v_run from public.extraction_runs r where r.id = v_run_id;
+  if v_run.input_tokens <> v_limits.max_input_tokens_per_run or v_run.output_tokens <> v_limits.max_output_tokens_per_run
+     or v_run.cost_usd <> (select c.cost_usd from private.extraction_charge('gpt-5-nano', 'openai', 2000000000, 2000000000) c)
+     or (select cost_usd from private.extraction_spend where run_id = v_run_id) <> v_run.cost_usd then
+    raise exception 'a finish must clamp its token counts: % / % / %', v_run.input_tokens, v_run.output_tokens, v_run.cost_usd;
+  end if;
+  insert into checks (step, result) values ('a finish clamps absurd token counts, in the run and the ledger', v_run.cost_usd::text || ' USD');
+end $t$;
+
 -- 7. Ceilings from the ledger ------------------------------------------------
 
 do $t$

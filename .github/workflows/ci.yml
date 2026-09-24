@@ -7,9 +7,9 @@
 # they need the SUPABASE_TEST_* repository secrets and the SUPABASE_APP_URL
 # repository variable and run only when started by hand (Actions → CI → Run
 # workflow → "Also run the Supabase suites"). They are serialized across the
-# whole repository because two concurrent runs would see each other's forged
-# spend in the global ceiling test, and they are never cancelled mid-run,
-# because cleanup runs in afterAll. See README, "Tests".
+# whole repository because the local worker runner claims whatever is next
+# in the test project's extraction queue, and they are never cancelled
+# mid-run, because cleanup runs in afterAll. See README, "Tests".
 
 name: CI
 
@@ -86,10 +86,11 @@ jobs:
         env:
           SUPABASE_TEST_URL: ${{ secrets.SUPABASE_TEST_URL }}
           SUPABASE_TEST_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_TEST_PUBLISHABLE_KEY }}
+          SUPABASE_TEST_SECRET_KEY: ${{ secrets.SUPABASE_TEST_SECRET_KEY }}
           SUPABASE_APP_URL: ${{ vars.SUPABASE_APP_URL }}
         run: |
-          if [ -z "$SUPABASE_TEST_URL" ] || [ -z "$SUPABASE_TEST_PUBLISHABLE_KEY" ] || [ -z "$SUPABASE_APP_URL" ]; then
-            echo "::error::Set the SUPABASE_TEST_URL and SUPABASE_TEST_PUBLISHABLE_KEY repository secrets and the SUPABASE_APP_URL repository variable (see README, Tests)."
+          if [ -z "$SUPABASE_TEST_URL" ] || [ -z "$SUPABASE_TEST_PUBLISHABLE_KEY" ] || [ -z "$SUPABASE_TEST_SECRET_KEY" ] || [ -z "$SUPABASE_APP_URL" ]; then
+            echo "::error::Set the SUPABASE_TEST_URL, SUPABASE_TEST_PUBLISHABLE_KEY and SUPABASE_TEST_SECRET_KEY repository secrets and the SUPABASE_APP_URL repository variable (see README, Tests)."
             exit 1
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -104,6 +105,8 @@ jobs:
         env:
           SUPABASE_TEST_URL: ${{ secrets.SUPABASE_TEST_URL }}
           SUPABASE_TEST_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_TEST_PUBLISHABLE_KEY }}
+          # the test project's secret key, for the local worker runner only
+          SUPABASE_TEST_SECRET_KEY: ${{ secrets.SUPABASE_TEST_SECRET_KEY }}
           SUPABASE_TEST_EMAIL: ${{ secrets.SUPABASE_TEST_EMAIL }}
           SUPABASE_TEST_EMAIL_DOMAIN: ${{ secrets.SUPABASE_TEST_EMAIL_DOMAIN }}
           SUPABASE_APP_URL: ${{ vars.SUPABASE_APP_URL }}

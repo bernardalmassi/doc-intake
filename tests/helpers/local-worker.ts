@@ -17,8 +17,28 @@
 
 import type { ProviderPair } from "@/lib/extraction/delivery";
 import { processOneDelivery, type WorkerResult } from "@/lib/extraction/worker";
+import { SUPABASE_TEST_URL } from "./supabase-target";
 
 export function runLocalWorker(providers: ProviderPair): Promise<WorkerResult> {
   if (process.env.NODE_ENV !== "test") throw new Error("the local runner runs only under Vitest");
+  // the checked test project, and nothing else
+  if (process.env.NEXT_PUBLIC_SUPABASE_URL !== SUPABASE_TEST_URL) {
+    throw new Error("the local runner's Supabase URL is not the checked test project's");
+  }
   return processOneDelivery({ providers: () => providers });
+}
+
+// For the guard test only: the worker itself, pointed at `url` without the
+// runner's own check, to prove that worker-target.ts refuses the app's
+// project before any request. The caller stubs fetch, so nothing could
+// leave even if the guard failed.
+export async function runWorkerPointedAt(url: string, providers: ProviderPair): Promise<WorkerResult> {
+  if (process.env.NODE_ENV !== "test") throw new Error("the local runner runs only under Vitest");
+  const saved = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  process.env.NEXT_PUBLIC_SUPABASE_URL = url;
+  try {
+    return await processOneDelivery({ providers: () => providers });
+  } finally {
+    process.env.NEXT_PUBLIC_SUPABASE_URL = saved;
+  }
 }

@@ -106,18 +106,18 @@ const FUNCTION_OPERATIONS: Record<string, DatabaseOperation[]> = {
   refuse_document_delete_while_file_exists: ["delete_document"],
   complete_document_upload: ["complete_document_upload"],
   enqueue_extraction_run: ["enqueue_extraction_run"],
-  finish_extraction_run: ["finish_extraction_run"],
+  finish_extraction_run: ["record_run"],
   // The pre-queue RPCs, live until a later migration drops them. The app
   // no longer calls them (tests/unit/worker-boundary.test.ts); their errors
   // read as their queue counterparts' would.
   open_extraction_run: ["enqueue_extraction_run"],
-  close_extraction_run: ["finish_extraction_run"],
+  close_extraction_run: ["record_run"],
   // helpers, surfacing through the RPCs that call them
   check_extraction_limits: ["enqueue_extraction_run"],
-  extraction_charge: ["finish_extraction_run"],
+  extraction_charge: ["record_run"],
   // the ledger's append-only trigger: only the definer functions that end a
   // run write the ledger, and they only insert
-  refuse_spend_change: ["finish_extraction_run"],
+  refuse_spend_change: ["record_run"],
 };
 
 // The reviewed code for every raise. A new or reworded raise fails the test
@@ -229,7 +229,7 @@ const DATABASE_CASES: DbCase[] = [
   ["malformed id on enqueue", pgError("22P02", 'invalid input syntax for type uuid: "x"'), "enqueue_extraction_run", "extraction.not_allowed"],
   ["a 53400 on enqueue in words no migration raises", pgError("53400", SECRET), "enqueue_extraction_run", "unknown"],
   ["a 55000 in words no migration raises", pgError("55000", SECRET), "enqueue_extraction_run", "unknown"],
-  ["a lost connection on the worker's finish", { code: "", message: "TypeError: fetch failed" }, "finish_extraction_run", "extraction.record_failed"],
+  ["a lost connection on the worker's finish", { code: "", message: "TypeError: fetch failed" }, "record_run", "extraction.record_failed"],
   // anywhere
   ["no response", { code: "", message: "TypeError: fetch failed", details: "Caused by: ...", hint: "" } as PostgrestError, "select", "network.unavailable"],
   ["aborted", { code: "", message: "AbortError: This operation was aborted", details: "", hint: "Request was aborted (timeout or manual cancellation)" } as PostgrestError, "insert_document", "network.unavailable"],
