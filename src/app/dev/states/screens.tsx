@@ -405,6 +405,18 @@ export const SCREENS: Screen[] = [
   },
 
   // Upload
+  {
+    id: "org-upload-idle",
+    group: "Upload",
+    title: "Upload: nothing chosen yet",
+    render: () => <OrgPage ids={[READY_ID]} />,
+  },
+  {
+    id: "org-upload-drag-over",
+    group: "Upload",
+    title: "Upload: a file dragged over the line (the plan dispatches dragenter with a file on [data-upload])",
+    render: () => <OrgPage ids={[READY_ID]} />,
+  },
   ...UPLOAD_STATES.map(([id, title, state, role]) => ({
     id,
     group: "Upload",

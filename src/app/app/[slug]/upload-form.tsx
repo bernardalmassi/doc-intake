@@ -164,6 +164,23 @@ export function UploadForm({
 
   const showPicker = state.kind === "idle" || state.kind === "rejected";
 
+  // The line's first column says where the upload stands, in the label
+  // face, as the register's state column does for a document. None of
+  // these words is a document state's word.
+  const phase = dragging
+    ? "Drop it here"
+    : state.kind === "idle"
+      ? state.uploaded
+        ? "Uploaded"
+        : "No file chosen"
+      : state.kind === "rejected"
+        ? "Not accepted"
+        : state.kind === "chosen"
+          ? "Chosen"
+          : state.kind === "uploading"
+            ? `Uploading · ${state.step} of ${UPLOAD_STEPS.length}`
+            : "Not uploaded";
+
   return (
     <div>
       <input
@@ -199,85 +216,106 @@ export function UploadForm({
           setDragging(false);
           pick(event.dataTransfer.files);
         }}
-        // A ruled line of the register, like every other: the drop area is
-        // the whole line, and a file dragged over it draws a 2px ink frame.
-        className={`border-y border-ink py-4 ${dragging ? "outline-2 -outline-offset-2 outline-ink" : ""}`}
+        // A ruled line in the register's columns: where the upload stands,
+        // the file and what happened to it, the buttons at the right. The
+        // drop area is the whole line; a file dragged over it draws a 2px
+        // ink frame.
+        data-upload={state.kind}
+        className={`grid grid-cols-1 gap-y-2 border-y border-ink py-4 md:grid-cols-[11rem_minmax(0,1fr)_auto] md:gap-x-4 ${
+          dragging ? "outline-2 -outline-offset-2 outline-ink" : ""
+        }`}
       >
-        {showPicker ? (
-          <div>
-            <div className="min-w-0">
-              <p className="flex flex-wrap items-center gap-x-2 gap-y-2">
-                <span className="pointer-coarse:hidden">{dragging ? "Drop it here." : "Drag a file here, or"}</span>
-                {/* Described by the limits only. The last result is announced
-                    by the regions below as it happens; focus often lands here
-                    at that same moment, and a description holding the result
-                    would read it out a second time. */}
+        <p className="label md:pt-1">{phase}</p>
+
+        <div className="min-w-0">
+          {/* Two regions, always rendered so what appears in them is
+              announced, and side by side rather than nested so nothing is
+              announced twice: polite for the steps and the result, alert
+              for a rejected file. (A failed upload is announced inside the
+              file's own lines.) */}
+          <div aria-live="polite">
+            {state.kind === "idle" && state.uploaded && (
+              <p className="min-w-0 [overflow-wrap:anywhere]">
+                <span className="sr-only">Uploaded </span>
+                {state.uploaded}, now in the list above.
+              </p>
+            )}
+            {state.kind === "uploading" && <span className="sr-only">{UPLOAD_STEPS[state.step - 1]}…</span>}
+          </div>
+
+          {showPicker ? (
+            <>
+              {/* No dragging on a touch screen: there, the limits alone. */}
+              <p className={`pointer-coarse:hidden ${state.kind === "idle" && state.uploaded ? "mt-1 text-small" : ""}`}>
+                {dragging
+                  ? "Let go to choose it. One file at a time."
+                  : state.kind === "idle" && !state.uploaded
+                    ? "Drag a file here, or choose one."
+                    : "Drag another file here, or choose one."}
+              </p>
+              <p id={hintId} className={`mt-1 ${hintClass}`}>
+                {UPLOAD_LIMIT_TEXT}.
+              </p>
+            </>
+          ) : (
+            <ChosenFile state={state} canManage={canManage} />
+          )}
+
+          <div role="alert">
+            {state.kind === "rejected" && (
+              <p className={`mt-3 min-w-0 [overflow-wrap:anywhere] ${errorClass} ${errorInkRuleClass}`}>
+                {describeRejection(state.reason, state.file)}
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-2 flex flex-wrap items-start gap-2 md:mt-0 md:justify-end">
+          {showPicker ? (
+            // Described by the limits only. The last result is announced by
+            // the regions as it happens; focus often lands here at that same
+            // moment, and a description holding the result would read it
+            // out a second time.
+            <button
+              ref={chooseButton}
+              type="button"
+              onClick={() => input.current?.click()}
+              aria-describedby={hintId}
+              className={secondaryButtonClass}
+            >
+              {state.kind === "idle" && !state.uploaded ? "Choose a file" : "Choose another file"}
+            </button>
+          ) : (
+            <>
+              {state.kind === "failed" && !userFacingError(state.failure.code).retryable ? (
+                // Sending the same file again can't work: offer another one.
                 <button
-                  ref={chooseButton}
+                  ref={primaryButton}
                   type="button"
                   onClick={() => input.current?.click()}
-                  aria-describedby={hintId}
                   className={secondaryButtonClass}
                 >
-                  Choose a file
+                  Choose another file
                 </button>
-              </p>
-              <p id={hintId} className={`mt-2 ${hintClass}`}>
-                {UPLOAD_LIMIT_TEXT}
-              </p>
-            </div>
-          </div>
-        ) : (
-          <ChosenFile state={state} canManage={canManage} />
-        )}
-
-        {!showPicker && (
-          <div className="mt-4 flex flex-wrap gap-2">
-            {state.kind === "failed" && !userFacingError(state.failure.code).retryable ? (
-              // Sending the same file again can't work: offer another one.
-              <button
-                ref={primaryButton}
-                type="button"
-                onClick={() => input.current?.click()}
-                className={secondaryButtonClass}
-              >
-                Choose another file
-              </button>
-            ) : (
-              <button
-                ref={primaryButton}
-                type="button"
-                onClick={start}
-                disabled={uploading}
-                className={`${buttonClass} min-w-28`}
-              >
-                {uploading ? "Uploading…" : state.kind === "failed" ? "Try again" : "Upload"}
-              </button>
-            )}
-            <button type="button" onClick={clear} disabled={uploading} className={ghostButtonClass}>
-              Clear
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Two regions, always rendered so what appears in them is announced,
-          and side by side rather than nested so nothing is announced twice:
-          polite for the steps and the result, alert for a rejected file.
-          (A failed upload is announced inside the file card.) min-h keeps
-          the list below from jumping when a line appears. */}
-      <div className="mt-2 min-h-5 text-small">
-        <div aria-live="polite">
-          {state.kind === "idle" && state.uploaded && (
-            <p className="min-w-0 [overflow-wrap:anywhere]">Uploaded {state.uploaded}.</p>
-          )}
-          {state.kind === "uploading" && <span className="sr-only">{UPLOAD_STEPS[state.step - 1]}…</span>}
-        </div>
-        <div role="alert">
-          {state.kind === "rejected" && (
-            <p className={`min-w-0 [overflow-wrap:anywhere] ${errorClass} ${errorInkRuleClass}`}>
-              {describeRejection(state.reason, state.file)}
-            </p>
+              ) : (
+                <button
+                  ref={primaryButton}
+                  type="button"
+                  onClick={start}
+                  disabled={uploading}
+                  className={`${buttonClass} min-w-28`}
+                >
+                  {uploading ? "Uploading…" : state.kind === "failed" ? "Try again" : "Upload"}
+                </button>
+              )}
+              {/* Nothing to clear while the file is on its way: the upload
+                  can't be stopped halfway. */}
+              {!uploading && (
+                <button type="button" onClick={clear} className={ghostButtonClass}>
+                  Clear
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -285,8 +323,8 @@ export function UploadForm({
   );
 }
 
-// The file card: what was chosen, then the steps while it uploads, or why
-// it stopped.
+// The chosen file: its name and what it is, then the steps while it
+// uploads, or where it stopped and why.
 function ChosenFile({
   state,
   canManage,
@@ -299,36 +337,29 @@ function ChosenFile({
 
   return (
     <>
-      <div>
-        <div className="min-w-0">
-          <p className="[overflow-wrap:anywhere]">{file.name}</p>
-          <p className={`${hintClass} tabular-nums`}>
-            {kind ? `${kind} · ` : ""}
-            {formatBytes(file.size)}
-          </p>
-        </div>
-      </div>
+      <p className="[overflow-wrap:anywhere]">{file.name}</p>
+      <p className={`${hintClass} tabular-nums`}>
+        {kind ? `${kind} · ` : ""}
+        {formatBytes(file.size)}
+      </p>
 
       {state.kind === "uploading" && <UploadSteps current={state.step} />}
 
-      {/* Rendered while the card is (chosen, uploading, failed), so it is
+      {/* Rendered while the file is (chosen, uploading, failed), so it is
           in the page before a failure is written into it. */}
       <div role="alert">
         {state.kind === "failed" && (
-          <p className={`mt-4 min-w-0 ${errorClass} ${errorInkRuleClass}`}>
-            The upload didn&apos;t finish. {userFacingError(state.failure.code).message}
+          <p className={`mt-3 min-w-0 ${errorClass} ${errorInkRuleClass}`}>
+            Stopped at step {state.failure.step} of {UPLOAD_STEPS.length},{" "}
+            {UPLOAD_STEPS[state.failure.step - 1].toLowerCase()}. {userFacingError(state.failure.code).message}
           </p>
         )}
       </div>
-      {state.kind === "failed" && (
-        <>
-          {state.failure.rowCreated && (
-            <p className={`mt-1 ${hintClass}`}>
-              An unfinished entry for this file is now in the list above.{" "}
-              {canManage ? "You can delete it there." : "An admin can delete it."}
-            </p>
-          )}
-        </>
+      {state.kind === "failed" && state.failure.rowCreated && (
+        <p className={`mt-2 ${hintClass}`}>
+          It left an unfinished entry in the list above.{" "}
+          {canManage ? "You can delete it there." : "An admin can delete it."}
+        </p>
       )}
     </>
   );
@@ -336,7 +367,7 @@ function ChosenFile({
 
 function UploadSteps({ current }: { current: UploadStep }) {
   return (
-    <ol aria-label="Upload progress" className="mt-4 space-y-1.5 text-small">
+    <ol aria-label="Upload progress" className="mt-3 space-y-1 text-small">
       {/* The state glyphs, meaning what they mean everywhere: full for a
           step done, half for the one under way, empty for one to come. */}
       {UPLOAD_STEPS.map((label, index) => {
