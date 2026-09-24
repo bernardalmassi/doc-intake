@@ -201,10 +201,70 @@ export const SCREENS: Screen[] = [
     render: signIn({ error: "network.unavailable" }),
   },
   {
+    id: "sign-in-error-email-invalid",
+    group: "Sign in",
+    title: "The server refused the address (an error on the email field)",
+    render: signIn({ error: "auth.email_invalid" }),
+  },
+  {
+    id: "sign-in-error-required",
+    group: "Sign in",
+    title: "The server found a field empty (the browser's check was skipped)",
+    render: signIn({ error: "auth.credentials_required" }),
+  },
+  {
+    id: "sign-in-error-service",
+    group: "Sign in",
+    title: "The auth service answered that it is unavailable",
+    render: signIn({ error: "service.unavailable" }),
+  },
+  {
+    id: "sign-in-error-disabled",
+    group: "Sign in",
+    title: "Email sign-in turned off",
+    render: signIn({ error: "auth.sign_in_disabled" }),
+  },
+  {
+    id: "sign-in-error-suspended",
+    group: "Sign in",
+    title: "The account is suspended",
+    render: signIn({ error: "auth.account_suspended" }),
+  },
+  {
+    id: "sign-in-error-unknown",
+    group: "Sign in",
+    title: "Anything nobody anticipated",
+    render: signIn({ error: "unknown" }),
+  },
+  {
     id: "sign-in-confirm-link",
     group: "Sign in",
     title: "Arrived from a confirmation link that didn't work",
     render: signIn({}, false, "auth.confirmation_link_invalid"),
+  },
+  {
+    id: "sign-in-confirm-link-rate-limited",
+    group: "Sign in",
+    title: "Confirmation link refused: too many attempts",
+    render: signIn({}, false, "auth.rate_limited"),
+  },
+  {
+    id: "sign-in-confirm-link-network",
+    group: "Sign in",
+    title: "Confirmation link: the server couldn't reach Supabase",
+    render: signIn({}, false, "network.unavailable"),
+  },
+  {
+    id: "sign-in-confirm-link-service",
+    group: "Sign in",
+    title: "Confirmation link: the auth service is unavailable",
+    render: signIn({}, false, "service.unavailable"),
+  },
+  {
+    id: "sign-in-confirm-link-and-error",
+    group: "Sign in",
+    title: "The confirmation notice, then a wrong password on the form below it",
+    render: signIn({ error: "auth.invalid_credentials" }, false, "auth.confirmation_link_invalid"),
   },
 
   // Sign up

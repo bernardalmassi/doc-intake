@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { MAIN_ID, SiteHeader } from "@/app/components/site-header";
-import { linkClass, pageClass, pageTitleClass, textTargetClass } from "@/app/ui";
+import { formRowClass, formWidthClass, linkClass, pageClass, pageTitleClass, textTargetClass } from "@/app/ui";
 import type { ErrorCode } from "@/lib/errors";
 import { ConfirmLinkNotice } from "./confirm-link-notice";
 
@@ -8,22 +8,28 @@ import { ConfirmLinkNotice } from "./confirm-link-notice";
 // code /auth/confirm put in the address (already checked by isErrorCode)
 // and the form. Split from page.tsx so /dev/states can render it without a
 // session check.
+//
+// The title hangs from the left edge, as on the organization page; the
+// form is a ruled register under it, and the way to the other form is its
+// last row, closed by a rule. The right of the page stays empty.
 export function SignInView({ confirmError, form }: { confirmError: ErrorCode | null; form: React.ReactNode }) {
   return (
     <>
       <SiteHeader />
       <main id={MAIN_ID} className={pageClass}>
-        <div className="max-w-sm">
-          <h1 className={pageTitleClass}>Sign in</h1>
-          {confirmError && <ConfirmLinkNotice code={confirmError} />}
-          {form}
-          <p className="mt-8 text-ink">
-            No account yet?{" "}
+        <h1 className={pageTitleClass}>Sign in</h1>
+        {confirmError && <ConfirmLinkNotice code={confirmError} />}
+        {form}
+        <p className={`${formRowClass} ${formWidthClass} border-b`}>
+          <span className="label md:pt-1.5">
+            No account yet<span className="sr-only">?</span>
+          </span>
+          <span>
             <Link href="/sign-up" className={`${linkClass} ${textTargetClass} inline-block`}>
               Create an account
             </Link>
-          </p>
-        </div>
+          </span>
+        </p>
       </main>
     </>
   );

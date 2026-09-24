@@ -129,6 +129,20 @@ export const reviewBadgeClass = `${badgeBase} border-signal bg-signal text-on-si
 
 // ---- public pages
 
+// The sign-in and sign-up forms as a ruled register, the organization
+// page's line: a 1px ink rule over each row, the label in an 11rem column
+// (the register's state column) and the field or words in the next. The
+// last row of the page closes it with a rule under it too. On a phone the
+// label sits over the field. The label's top padding sets its line level
+// with the text in a 40px field (the field's own 4px margin plus 12px).
+export const formRowClass =
+  "grid grid-cols-1 gap-y-2 border-t border-ink py-4 md:grid-cols-[11rem_minmax(0,1fr)] md:gap-x-4";
+
+export const formRowLabelClass = "label block text-ink md:pt-4";
+
+// The register's width: the label column, the gap and a 24rem field.
+export const formWidthClass = "max-w-[36rem]";
+
 // The primary button of a form that submits through a Server Action. While
 // the form is pending, set aria-disabled="true" and ignore the submit,
 // rather than setting disabled: in Chromium a focused button that becomes
