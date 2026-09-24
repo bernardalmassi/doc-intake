@@ -7,9 +7,11 @@ import { ThemeToggle } from "./theme-toggle";
 export const MAIN_ID = "main";
 
 // On every page. Same max width and gutters as the page content, and the
-// landing's header: 64px tall, no rule under it. The
-// right-hand slot holds whatever the page needs there (the signed-in
-// account on /app pages); the theme toggle is always last.
+// landing's header: 64px tall, no rule under it, 1rem between the slot and
+// the theme toggle (the landing's column gap). The wordmark is a link to
+// the landing, which sends a signed-in visitor on to /app. The right-hand
+// slot holds whatever the page needs there (the signed-in account on /app
+// pages); the theme toggle is always last.
 //
 // The skip link is the first thing Tab reaches on every page. It sits above
 // the top edge until it has focus, then covers the wordmark. A plain <a>,
@@ -28,7 +30,7 @@ export function SiteHeader({ children }: { children?: React.ReactNode }) {
         <Link href="/" className="wordmark shrink-0 text-ink">
           doc-intake
         </Link>
-        <div className="flex min-w-0 items-center gap-3">
+        <div className="flex min-w-0 items-center gap-4">
           {children}
           <ThemeToggle />
         </div>
