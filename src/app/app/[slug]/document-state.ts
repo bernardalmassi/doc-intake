@@ -13,6 +13,7 @@
 //   failed        no usable result: the latest extraction failed, it
 //                 stalled, or the upload never finished
 
+import type { ErrorCode } from "@/lib/errors";
 import type { DocumentEntry } from "./types";
 
 export const DOCUMENT_STATES = ["ready", "queued", "running", "done", "needs-review", "failed"] as const;
@@ -57,4 +58,25 @@ export function documentState({ document, runs, staleRun }: Pick<DocumentEntry, 
 // otherwise the mapping.
 export function stateOf(entry: StatedEntry): DocumentState {
   return entry.state ?? documentState(entry);
+}
+
+// What a failed line offers, from what its failure says to do:
+//   extract   retrying can work (the catalog calls it retryable), or it
+//             stalled, or nothing says why
+//   delete    there is nothing to extract: the upload never finished, or
+//             the file isn't what its type says ("Upload it again")
+//   download  the service can't or won't read it ("Review it yourself")
+// A failure that is the server's (not configured) is retried too, once
+// it is set up.
+export type FailedExit = "extract" | "delete" | "download";
+
+const REVIEW_YOURSELF = new Set<ErrorCode>(["extraction.provider_rejected", "extraction.refused", "extraction.truncated"]);
+
+export function failedExit({ document, runs, staleRun }: Pick<DocumentEntry, "document" | "runs" | "staleRun">): FailedExit {
+  if (document.status === "uploading") return "delete";
+  if (staleRun) return "extract";
+  const code = runs[0]?.status === "failed" ? runs[0].error_code : null;
+  if (code === "extraction.file_type_mismatch") return "delete";
+  if (code !== null && REVIEW_YOURSELF.has(code)) return "download";
+  return "extract";
 }

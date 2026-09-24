@@ -33,7 +33,9 @@ type Props = {
   extract: { mode: ExtractMode; primary: boolean } | null;
 };
 
-type Notice = (Explained & { tone: "progress" | "done" | "error" }) | null;
+// quiet: said to screen readers only, because the button beside it
+// already says it (Deleting…).
+type Notice = (Explained & { tone: "progress" | "done" | "error"; quiet?: boolean }) | null;
 
 // The buttons never move. Labels that swap keep one width (min-w-28 fits
 // Extract, Extract again and Extracting…; min-w-24 fits Delete, Yes, delete
@@ -136,7 +138,7 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
     if (extracting) notice = { tone: "progress", text: "Extracting. This can take up to a minute." };
     else if (result) notice = { tone: result.ok ? "done" : "error", text: result.text };
   } else if (last === "delete") {
-    if (deleting) notice = { tone: "progress", text: "Deleting…" };
+    if (deleting) notice = { tone: "progress", text: "Deleting…", quiet: true };
     else if (deleteState.error) notice = { tone: "error", text: userFacingError(deleteState.error).message };
   } else if (last === "download" && downloadError) {
     notice = { tone: "error", text: userFacingError(downloadError).message };
@@ -168,12 +170,14 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
               className={`${extract.primary ? buttonClass : secondaryButtonClass} min-w-28`}
             >
               {extractLabel}
+              <FileName filename={filename} />
             </button>
           </form>
         )}
         {canDownload && (
           <button type="button" data-action="download" onClick={download} className={secondaryButtonClass}>
             Download
+            <FileName filename={filename} />
           </button>
         )}
         {canDelete && (
@@ -194,6 +198,7 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
               className={`${confirming ? armedDangerButtonClass : dangerButtonClass} min-w-24`}
             >
               {deleting ? "Deleting…" : confirming ? "Yes, delete" : "Delete"}
+              <FileName filename={filename} />
             </button>
           </form>
         )}
@@ -244,6 +249,19 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
 // way.
 function NoticeLine({ notice }: { notice: NonNullable<Notice> }) {
   return (
-    <p className={`mt-2 min-w-0 ${errorClass} ${notice.tone === "error" ? errorInkRuleClass : ""}`}>{notice.text}</p>
+    <p
+      className={
+        notice.quiet ? "sr-only" : `mt-2 min-w-0 ${errorClass} ${notice.tone === "error" ? errorInkRuleClass : ""}`
+      }
+    >
+      {notice.text}
+    </p>
   );
+}
+
+// The file a button acts on, for a screen reader's list of buttons, where
+// "Extract again" twice and "Download" three times can't be told apart.
+// Hidden from sight: on the page the button sits in its document's line.
+function FileName({ filename }: { filename: string }) {
+  return <span className="sr-only normal-case"> {filename}</span>;
 }

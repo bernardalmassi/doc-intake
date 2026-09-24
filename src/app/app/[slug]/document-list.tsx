@@ -2,7 +2,7 @@ import { errorInkRuleClass } from "@/app/ui";
 import { EXTRACTION_LIMITS } from "@/lib/extraction/config";
 import { userFacingError } from "@/lib/errors";
 import { DocumentActions, type ExtractMode } from "./document-actions";
-import { DOCUMENT_STATES, type DocumentState, type StatedEntry, stateOf } from "./document-state";
+import { DOCUMENT_STATES, type DocumentState, failedExit, type StatedEntry, stateOf } from "./document-state";
 import { ExtractionPanel } from "./extraction-panel";
 import { fieldSummary } from "./fields";
 import { fileKind, formatBytes, formatClock, formatUtc } from "./format";
@@ -131,25 +131,34 @@ function DocumentLine({
 
   const actions = { id: document.id, slug, filename: document.filename, storagePath: document.storage_path };
 
-  // The closed line's one exit: Extract for ready, one retry for failed
-  // (or Delete, for an upload that never arrived). Needs review and done
-  // open onto their fields, which is the line itself. Queued and running
-  // offer nothing. Never the signal fill: on this page signal marks what
-  // needs a person, not an action.
+  // The closed line's one exit: Extract for ready; for failed, what the
+  // failure's own sentence tells the reader to do (failedExit). Needs
+  // review and done open onto their fields, which is the line itself.
+  // Queued and running offer nothing. Never the signal fill: on this page
+  // signal marks what needs a person, not an action.
+  const failed = state === "failed" ? failedExit(entry) : null;
   let exit: React.ReactNode = null;
   if (canManage && state === "ready" && hasFile) {
     exit = (
       <DocumentActions {...actions} canDownload={false} canDelete={false} extract={{ mode: again, primary: false }} />
     );
-  } else if (canManage && state === "failed") {
-    exit = hasFile ? (
+  } else if (canManage && failed === "extract") {
+    exit = (
       <DocumentActions {...actions} canDownload={false} canDelete={false} extract={{ mode: "again", primary: false }} />
-    ) : (
-      <DocumentActions {...actions} canDownload={false} canDelete extract={null} />
     );
+  } else if (canManage && failed === "delete") {
+    exit = <DocumentActions {...actions} canDownload={false} canDelete extract={null} />;
+  } else if (failed === "download") {
+    // "Review it yourself instead": the file is the way on, for any member.
+    exit = <DocumentActions {...actions} canDownload canDelete={false} extract={null} />;
   }
 
-  const deleteOnLine = canManage && state === "failed" && !hasFile;
+  // What the exit already offers isn't offered again in the File row, and
+  // Extract again stays in the runs row when the exit is something else,
+  // so a failure that says retrying won't help never leaves a dead end.
+  const deleteOnLine = canManage && failed === "delete";
+  const downloadOnLine = failed === "download";
+  const extractInRuns = canManage && hasFile && (hasFields || (failed !== null && failed !== "extract"));
   const latest = runs[0];
 
   return (
@@ -191,7 +200,7 @@ function DocumentLine({
           <RunsToggle
             summary={runHistoryMeta(runs)}
             action={
-              canManage && hasFields ? (
+              extractInRuns ? (
                 <DocumentActions
                   {...actions}
                   canDownload={false}
@@ -212,7 +221,12 @@ function DocumentLine({
           </p>
         )}
 
-        <FileRow entry={entry} actions={actions} canDownload={hasFile} canDelete={canManage && !deleteOnLine} />
+        <FileRow
+          entry={entry}
+          actions={actions}
+          canDownload={hasFile && !downloadOnLine}
+          canDelete={canManage && !deleteOnLine}
+        />
       </LedgerLine>
     </article>
   );
@@ -302,7 +316,7 @@ function Detail({ entry, state, canManage }: { entry: DocumentEntry; state: Docu
 }
 
 // Why a document has no usable result, in the catalog's words or the
-// page's own, and who can do something about it.
+// page's own, and, for a member, who can do something about it.
 function failureReason(entry: DocumentEntry, canManage: boolean): string {
   const { document, runs, staleRun } = entry;
   if (document.status === "uploading") {
@@ -315,9 +329,12 @@ function failureReason(entry: DocumentEntry, canManage: boolean): string {
       canManage ? " Extract again to restart it." : " An admin can restart it."
     }`;
   }
+  const exit = failedExit(entry);
+  const forMember =
+    canManage || exit === "download" ? "" : exit === "delete" ? " Only an admin can delete it." : " Only an admin can extract it again.";
   const latest = runs[0];
   if (latest?.status === "failed" && latest.error_code) {
-    return `${userFacingError(latest.error_code).message}${canManage ? "" : " Only an admin can run extraction."}`;
+    return `${userFacingError(latest.error_code).message}${forMember}`;
   }
-  return `Extraction failed.${canManage ? "" : " An admin can try again."}`;
+  return `Extraction failed.${forMember}`;
 }

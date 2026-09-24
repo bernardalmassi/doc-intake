@@ -10,6 +10,7 @@ import type { StatedEntry } from "@/app/app/[slug]/document-state";
 import { buildEntries } from "@/app/app/[slug]/entries";
 import type { DocumentRow, FieldRow, Organization as OrgRow, RunRow } from "@/app/app/[slug]/types";
 import type { Organization } from "@/app/app/organizations";
+import type { ErrorCode } from "@/lib/errors";
 
 // Documents and finished runs are dated around 24 Sep 2026. Runs still
 // running are dated from the time of the request (entriesFor), so their
@@ -199,6 +200,57 @@ const runs: RunRow[] = [
     started_at: at("2026-09-21T10:01:02Z"),
   }),
 ];
+
+// Every way a run can end in failure, one document each, for the
+// org-failures screens: what each line says and which exit it offers.
+// Invented files; a run that failed before any model call has no model or
+// tokens.
+const FAILURES: [code: ErrorCode, filename: string, calledModel: boolean][] = [
+  ["extraction.not_configured", "supplier-statement-aug.pdf", false],
+  ["extraction.download_failed", "hire-agreement-scaffold.pdf", false],
+  ["extraction.file_type_mismatch", "scan_0012.pdf", false],
+  ["extraction.provider_timeout", "quote-joinery-q-5531.pdf", true],
+  ["extraction.provider_unavailable", "remittance-advice-0918.png", true],
+  ["extraction.all_providers_failed", "insurance-schedule-2026.pdf", true],
+  ["extraction.provider_rejected", "signed-contract-locked.pdf", true],
+  ["extraction.refused", "letter-from-solicitor.pdf", true],
+  ["extraction.truncated", "tender-pack-volume-2.pdf", true],
+  ["extraction.answer_incomplete", "utility-bill-electric-q3.pdf", true],
+  ["extraction.invalid_answer", "receipt-fuel-0922.jpg", true],
+  ["extraction.abandoned", "delivery-docket-7710.pdf", true],
+  ["extraction.result_not_saved", "credit-application-form.pdf", true],
+  ["extraction.record_failed", "timesheet-week-38.pdf", true],
+  ["unknown", "purchase-order-po-22-0433.pdf", true],
+];
+
+export const FAILURE_IDS = FAILURES.map((_, index) => `doc-failure-${index + 1}`);
+
+FAILURES.forEach(([code, filename, calledModel], index) => {
+  const id = FAILURE_IDS[index];
+  const minute = String(10 + index).padStart(2, "0");
+  const mime = filename.endsWith(".png") ? "image/png" : filename.endsWith(".jpg") ? "image/jpeg" : "application/pdf";
+  documents[id] = doc(id, filename, "pending", 180_000 + index * 37_000, mime, at(`2026-09-20T08:${minute}:00Z`));
+  runs.push(
+    run({
+      id: `run-failure-${index + 1}`,
+      document_id: id,
+      status: "failed",
+      ...(calledModel
+        ? {
+            provider: "anthropic",
+            model: "claude-sonnet-5",
+            attempts: 1,
+            input_tokens: 6_210 + index * 311,
+            output_tokens: code === "extraction.provider_timeout" ? 0 : 640 + index * 17,
+            cost_usd: (0.0186 + index * 0.0011).toFixed(8),
+            latency_ms: code === "extraction.provider_timeout" ? 60_000 : 9_400 + index * 530,
+          }
+        : { latency_ms: 380 + index * 20 }),
+      error_code: code,
+      started_at: at(`2026-09-20T08:${minute}:30Z`),
+    }),
+  );
+});
 
 // ---------------------------------------------------------------- fields
 

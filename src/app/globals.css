@@ -287,6 +287,11 @@
     .ledger-file > [data-actions] > [data-part="notice"] {
       grid-area: notice;
     }
+
+    /* The runs row's message lines up with every other line's words. */
+    .ledger-runs-row > [data-actions] > [data-part="notice"] {
+      padding-left: 12rem;
+    }
   }
 
   /* The one motion: what a line opens onto arrives, 4px from above to its

@@ -3,7 +3,8 @@
 // status adds one line to it and one case here, and every card follows.
 
 import { describe, expect, it } from "vitest";
-import { DOCUMENT_STATES, documentState, stateOf } from "@/app/app/[slug]/document-state";
+import { DOCUMENT_STATES, documentState, failedExit, stateOf } from "@/app/app/[slug]/document-state";
+import type { ErrorCode } from "@/lib/errors";
 import type { DocumentEntry, RunRow } from "@/app/app/[slug]/types";
 
 function run(status: string): RunRow {
@@ -108,5 +109,31 @@ describe("stateOf", () => {
 
   it("falls back to the mapping", () => {
     expect(stateOf(entry("needs_review", ["succeeded"]))).toBe("needs-review");
+  });
+});
+
+describe("failedExit", () => {
+  function failedWith(code: ErrorCode): DocumentEntry {
+    const failed = entry("pending", ["failed"]);
+    return { ...failed, runs: [{ ...failed.runs[0], error_code: code }] };
+  }
+
+  it("retries what the catalog says can be retried, and a stalled run", () => {
+    expect(failedExit(failedWith("extraction.invalid_answer"))).toBe("extract");
+    expect(failedExit(failedWith("extraction.provider_timeout"))).toBe("extract");
+    expect(failedExit(failedWith("extraction.not_configured"))).toBe("extract");
+    expect(failedExit(entry("processing", ["running"], true))).toBe("extract");
+    expect(failedExit(entry("failed"))).toBe("extract");
+  });
+
+  it("offers Delete when there is nothing to extract", () => {
+    expect(failedExit(entry("uploading"))).toBe("delete");
+    expect(failedExit(failedWith("extraction.file_type_mismatch"))).toBe("delete");
+  });
+
+  it("offers the file when the catalog says to review it yourself", () => {
+    expect(failedExit(failedWith("extraction.refused"))).toBe("download");
+    expect(failedExit(failedWith("extraction.truncated"))).toBe("download");
+    expect(failedExit(failedWith("extraction.provider_rejected"))).toBe("download");
   });
 });

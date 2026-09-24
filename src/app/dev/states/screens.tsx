@@ -23,6 +23,7 @@ import {
   EMAIL,
   entriesFor,
   FAILED_ID,
+  FAILURE_IDS,
   NEEDS_REVIEW_ID,
   organization,
   organizations,
@@ -353,6 +354,18 @@ export const SCREENS: Screen[] = [
   { id: "org-doc-running", group: "Document", title: "Running, 40 seconds in", render: () => <OrgPage ids={[RUNNING_ID]} /> },
   { id: "org-doc-stale", group: "Document", title: "Running for 25 minutes: stalled", render: () => <OrgPage ids={[STALE_ID]} /> },
   { id: "org-doc-unfinished", group: "Document", title: "An upload that never finished", render: () => <OrgPage ids={[UNFINISHED_ID]} /> },
+  {
+    id: "org-failures",
+    group: "Document",
+    title: "Owner, one failed document per way a run can fail, each with the exit its sentence calls for",
+    render: () => <OrgPage ids={FAILURE_IDS} />,
+  },
+  {
+    id: "org-failures-member",
+    group: "Document",
+    title: "Member, the same failed documents",
+    render: () => <OrgPage role="member" ids={FAILURE_IDS} />,
+  },
 
   // Document actions: states reached by a click ([data-action=...])
   {
@@ -380,6 +393,30 @@ export const SCREENS: Screen[] = [
     render: () => <OrgPage ids={[READY_ID]} extract={{ error: "extraction.rate_limited" }} />,
   },
   {
+    id: "org-extract-refused-global",
+    group: "Document actions",
+    title: "Click Extract: the overall monthly budget is used, for everyone",
+    render: () => <OrgPage ids={[READY_ID]} extract={{ error: "extraction.global_budget_reached" }} />,
+  },
+  {
+    id: "org-extract-already-running",
+    group: "Document actions",
+    title: "Click Extract: another extraction of it is already running",
+    render: () => <OrgPage ids={[READY_ID]} extract={{ error: "extraction.already_running" }} />,
+  },
+  {
+    id: "org-extract-again-running",
+    group: "Document actions",
+    title: "Click Extract again on the failed document ([data-action=extract]): the action never answers",
+    render: () => <OrgPage ids={[FAILED_ID]} extract="hang" />,
+  },
+  {
+    id: "org-extract-again-finished",
+    group: "Document actions",
+    title: "Click Extract again in the done document's runs row (open the line, then the second [data-action=extract]): finished",
+    render: () => <OrgPage ids={[DONE_ID]} />,
+  },
+  {
     id: "org-extract-network",
     group: "Document actions",
     title: "Click Extract: the request never came back",
@@ -396,6 +433,18 @@ export const SCREENS: Screen[] = [
     group: "Document actions",
     title: "Click Delete, wait 600 ms, click again: the file couldn't be removed",
     render: () => <OrgPage ids={[READY_ID]} remove={{ error: "document.file_still_present" }} />,
+  },
+  {
+    id: "org-deleting",
+    group: "Document actions",
+    title: "Click Delete, wait 600 ms, click again: the action never answers",
+    render: () => <OrgPage ids={[READY_ID]} remove="hang" />,
+  },
+  {
+    id: "org-delete-confirm-open",
+    group: "Document actions",
+    title: "The needs-review document open; click its File row's Delete once: armed",
+    render: () => <OrgPage ids={[NEEDS_REVIEW_ID]} />,
   },
   {
     id: "org-download-error",
