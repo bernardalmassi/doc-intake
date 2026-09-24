@@ -72,10 +72,10 @@ function EmptyDocuments({ canManage }: { canManage: boolean }) {
   ];
 
   return (
-    <div className="mt-4 rounded-lg border border-dashed border-line-strong p-5 sm:p-8">
-      <DocumentsIcon className="text-muted" />
+    <div className="mt-4 border border-dashed border-ink p-5 sm:p-8">
+      <DocumentsIcon className="text-ink" />
       <h3 className="mt-3 font-semibold">No documents yet</h3>
-      <p className="mt-1 max-w-prose text-muted">
+      <p className="mt-1 max-w-prose text-ink">
         Documents uploaded to this organization appear here, for every member to see.
       </p>
       <ol className="mt-5 max-w-prose space-y-3">
@@ -83,7 +83,7 @@ function EmptyDocuments({ canManage }: { canManage: boolean }) {
           <li key={index} className="flex gap-3">
             <span
               aria-hidden="true"
-              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-line-strong text-sm tabular-nums text-muted"
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center border border-ink text-small tabular-nums text-ink"
             >
               {index + 1}
             </span>
@@ -115,13 +115,13 @@ function DocumentItem({ entry, slug, canManage }: { entry: DocumentEntry; slug: 
   }
 
   return (
-    // Needs review is the one state in the accent: the border and the
+    // Needs review is the one state in signal: the border and the
     // badge, plus the badge's icon and words and its place at the top of
     // the list, so it never rests on color alone.
     <article
       aria-labelledby={`document-${document.id}`}
       data-doc-status={document.status}
-      className={`rounded-lg border bg-surface p-4 sm:p-5 ${review ? "border-accent" : "border-line"}`}
+      className={` border bg-paper p-4 sm:p-5 ${review ? "border-signal" : "border-ink"}`}
     >
       <div className="flex items-start justify-between gap-3">
         <h3 id={`document-${document.id}`} className="min-w-0 font-medium [overflow-wrap:anywhere]">
@@ -147,13 +147,13 @@ function DocumentItem({ entry, slug, canManage }: { entry: DocumentEntry; slug: 
       {fields.length > 0 && (
         // Open from the start when the document needs review: the fields
         // to check are the reason to be here.
-        <details open={review} className="group mt-4 border-t border-line pt-3">
+        <details open={review} className="group mt-4 border-t border-ink pt-3">
           <Summary reveals="fields">Extracted fields</Summary>
           <ExtractionPanel fields={fields} />
         </details>
       )}
       {runs.length > 0 && (
-        <details className="group mt-4 border-t border-line pt-3">
+        <details className="group mt-4 border-t border-ink pt-3">
           <Summary reveals="runs" meta={runHistoryMeta(runs)}>
             Run history
           </Summary>
@@ -179,11 +179,11 @@ function Summary({
   return (
     <summary
       data-open={reveals}
-      className={`flex w-fit cursor-pointer list-none flex-wrap items-center gap-x-1.5 text-sm font-medium [&::-webkit-details-marker]:hidden ${textTargetClass}`}
+      className={`flex w-fit cursor-pointer list-none flex-wrap items-center gap-x-1.5 text-small font-medium [&::-webkit-details-marker]:hidden ${textTargetClass}`}
     >
-      <ChevronRightIcon className="text-muted group-open:rotate-90" />
+      <ChevronRightIcon className="text-ink group-open:rotate-90" />
       <span className="mr-1.5">{children}</span>
-      {meta && <span className="font-normal text-muted tabular-nums">{meta}</span>}
+      {meta && <span className="font-normal text-ink tabular-nums">{meta}</span>}
     </summary>
   );
 }
@@ -237,10 +237,10 @@ function StatusLine({ entry, canManage }: { entry: DocumentEntry; canManage: boo
     case "processing":
       if (staleRun) {
         return (
-          <p className="mt-3 max-w-prose text-sm">
+          <p className="mt-3 max-w-prose text-small">
             This extraction has been running for more than {EXTRACTION_LIMITS.staleRunMinutes} minutes and has
             probably stopped.{" "}
-            <span className="text-muted">
+            <span className="text-ink">
               {canManage ? "Extract again to restart it." : "An admin can restart it."}
             </span>
           </p>
@@ -278,32 +278,37 @@ function StatusLine({ entry, canManage }: { entry: DocumentEntry; canManage: boo
 
 // The status line of an extracted document, computed from its fields:
 // "9 of 10 fields found. 2 need checking: Due date and Total amount."
-// The fields to check are in the accent, as they are what review means.
+// The fields to check are filled in signal, as they are what review means.
 function FieldsLine({ entry }: { entry: DocumentEntry }) {
   if (entry.fields.length === 0) return null;
   const summary = fieldSummary(entry.fields);
   return (
-    <p className="mt-3 max-w-prose text-sm">
+    <p className="mt-3 max-w-prose text-small">
       {summary.found}
-      {summary.check && <span className="font-medium text-accent"> {summary.check}</span>}
-      {summary.note && <span className="text-muted"> {summary.note}</span>}
+      {summary.check && (
+        <>
+          {" "}
+          <span className="bg-signal px-1 font-medium text-on-signal [box-decoration-break:clone]">{summary.check}</span>
+        </>
+      )}
+      {summary.note && <span className="text-ink"> {summary.note}</span>}
     </p>
   );
 }
 
-// A failed run: what failed and why in danger text (the catalog's sentence
+// A failed run: what failed and why, marked by a signal glyph (the catalog's sentence
 // for the run's error code, which says what to do next), then anything the
 // reader needs besides.
 function FailedRun({ lead, code, next }: { lead: string; code: ErrorCode | null; next: string | null }) {
   return (
-    <p className="mt-3 flex max-w-prose items-start gap-1.5 text-sm">
-      <AlertIcon className="mt-0.5 text-danger" />
+    <p className="mt-3 flex max-w-prose items-start gap-1.5 text-small">
+      <AlertIcon className="mt-0.5 text-signal" />
       <span className="min-w-0">
         <span className={errorClass}>
           {lead}
           {code !== null && ` ${userFacingError(code).message}`}
         </span>
-        {next && <span className="text-muted"> {next}</span>}
+        {next && <span className="text-ink"> {next}</span>}
       </span>
     </p>
   );
@@ -314,10 +319,10 @@ function FailedRun({ lead, code, next }: { lead: string; code: ErrorCode | null;
 // nothing sweeps these yet, so say what happened and who can tidy it up.
 function UnfinishedUpload({ canManage }: { canManage: boolean }) {
   return (
-    <p className="mt-3 max-w-prose text-sm">
+    <p className="mt-3 max-w-prose text-small">
       This upload never finished, so there is no file to download or extract. To add the document, upload it
       again.{" "}
-      <span className="text-muted">
+      <span className="text-ink">
         {canManage ? "You can delete this entry." : "An admin can delete this entry."}
       </span>
     </p>

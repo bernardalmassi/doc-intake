@@ -1,4 +1,4 @@
-import { errorClass } from "@/app/ui";
+import { errorClass, errorRuleClass } from "@/app/ui";
 import { type ErrorCode, userFacingError } from "@/lib/errors";
 
 // Shown on /sign-in?error=<code>, where /auth/confirm sends a visitor whose
@@ -11,7 +11,7 @@ import { type ErrorCode, userFacingError } from "@/lib/errors";
 // after the heading.
 export function ConfirmLinkNotice({ code }: { code: ErrorCode }) {
   return (
-    <div className="mt-6 max-w-sm rounded-md border border-danger px-3 py-2 text-sm">
+    <div className={`mt-6 max-w-sm text-small ${errorRuleClass}`}>
       <p className={`font-medium ${errorClass}`}>That confirmation link didn’t work.</p>
       <p className="mt-1">{userFacingError(code).message}</p>
     </div>

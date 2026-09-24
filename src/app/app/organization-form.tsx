@@ -168,7 +168,7 @@ export function OrganizationForm({
         {/* The prefix shows the address as it will appear. Screen readers
             get it from the hint instead. */}
         <div className="flex max-w-sm items-end gap-1.5">
-          <span aria-hidden="true" className="flex h-9 shrink-0 items-center text-muted">
+          <span aria-hidden="true" className="flex h-9 shrink-0 items-center text-ink">
             /app/
           </span>
           <input
@@ -234,7 +234,7 @@ export function OrganizationForm({
       <p aria-live="polite" className="sr-only">
         {pending ? "Creating the organization…" : ""}
       </p>
-      <div role="alert" className="text-sm">
+      <div role="alert" className="text-small">
         {/* Written by the effect above, never by React. */}
         <span ref={echoRef} className="sr-only" />
         {formError && <p className={`mt-3 ${errorClass}`}>{formError}</p>}

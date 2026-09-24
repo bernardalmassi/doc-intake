@@ -17,7 +17,7 @@ export function SignInView({ confirmError, form }: { confirmError: ErrorCode | n
           <h1 className={pageTitleClass}>Sign in</h1>
           {confirmError && <ConfirmLinkNotice code={confirmError} />}
           {form}
-          <p className="mt-8 text-muted">
+          <p className="mt-8 text-ink">
             No account yet?{" "}
             <Link href="/sign-up" className={`${linkClass} ${textTargetClass} inline-block`}>
               Create an account

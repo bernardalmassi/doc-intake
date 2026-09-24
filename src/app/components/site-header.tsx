@@ -16,15 +16,15 @@ export const MAIN_ID = "main";
 // before hydration.
 export function SiteHeader({ children }: { children?: React.ReactNode }) {
   return (
-    <header className="border-b border-line">
+    <header className="border-b border-ink">
       <div className={`${containerClass} relative flex h-14 items-center justify-between gap-4`}>
         <a
           href={`#${MAIN_ID}`}
-          className={`${secondaryButtonClass} absolute top-2.5 left-4 z-10 -translate-y-16 bg-canvas focus:translate-y-0 sm:left-6`}
+          className={`${secondaryButtonClass} absolute top-2.5 left-4 z-10 -translate-y-16 bg-paper focus:translate-y-0 sm:left-6`}
         >
           Skip to content
         </a>
-        <Link href="/" className="shrink-0 text-base font-semibold tracking-tight text-fg">
+        <Link href="/" className="wordmark shrink-0 text-ink">
           doc-intake
         </Link>
         <div className="flex min-w-0 items-center gap-3">
@@ -53,7 +53,7 @@ export function AccountControlsView({
 }) {
   return (
     <>
-      <p className="min-w-0 truncate text-sm text-muted">
+      <p className="min-w-0 truncate text-small text-ink">
         <span className="hidden sm:inline">Signed in as </span>
         {email}
       </p>

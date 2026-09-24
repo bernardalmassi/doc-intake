@@ -12,7 +12,7 @@ export function SignUpView({ form }: { form: React.ReactNode }) {
         <div className="max-w-sm">
           <h1 className={pageTitleClass}>Create an account</h1>
           {form}
-          <p className="mt-8 text-muted">
+          <p className="mt-8 text-ink">
             Already have an account?{" "}
             <Link href="/sign-in" className={`${linkClass} ${textTargetClass} inline-block`}>
               Sign in

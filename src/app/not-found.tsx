@@ -16,7 +16,7 @@ export default function NotFound() {
       <SiteHeader />
       <main id={MAIN_ID} className={pageClass}>
         <h1 className={pageTitleClass}>Page not found</h1>
-        <p className="mt-2 max-w-prose text-muted">
+        <p className="mt-2 max-w-prose text-ink">
           This page doesn&apos;t exist, or you don&apos;t have access to it.
         </p>
         <p className="mt-6">

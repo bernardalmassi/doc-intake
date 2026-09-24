@@ -1,12 +1,20 @@
 import type { Metadata } from "next";
-import { Geist } from "next/font/google";
+import { Archivo, Geist } from "next/font/google";
 import { InlineScript } from "./components/inline-script";
 import { themeScript } from "./components/theme";
 import { SITE_NAME, SITE_SUMMARY } from "./site";
 import "./globals.css";
 
-// One family for everything, numbers included (with tabular-nums where
-// they line up in columns).
+// Archivo for page titles, labels and the wordmark, with the landing
+// page's exact config, so /app, the auth pages and the landing share one
+// display face (DESIGN.md).
+const archivo = Archivo({
+  variable: "--font-archivo",
+  subsets: ["latin"],
+  axes: ["wdth"],
+});
+
+// Geist for everything read: values, sentences, inputs.
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
@@ -31,12 +39,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       data-theme="dark"
       suppressHydrationWarning
-      className={`${geistSans.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${archivo.variable} h-full antialiased`}
     >
       <head>
         <InlineScript html={themeScript} />
       </head>
-      <body className="flex min-h-full flex-col bg-canvas text-base text-fg">{children}</body>
+      <body className="flex min-h-full flex-col bg-paper text-body text-ink">{children}</body>
     </html>
   );
 }

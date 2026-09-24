@@ -30,7 +30,7 @@ export function OrganizationsView({
   return (
     <>
       <h1 className={pageTitleClass}>Organizations</h1>
-      <p className="mt-2 text-muted">Open an organization to upload and review its documents.</p>
+      <p className="mt-2 text-ink">Open an organization to upload and review its documents.</p>
 
       <ul className="mt-6 max-w-2xl space-y-2">
         {sorted.map((organization) => (
@@ -64,7 +64,7 @@ function NoOrganizations({ createForm }: { createForm: React.ReactNode }) {
   return (
     <>
       <h1 className={pageTitleClass}>Create an organization</h1>
-      <p className="mt-3 max-w-2xl text-muted">
+      <p className="mt-3 max-w-2xl text-ink">
         An organization is a shared workspace. Its documents, the details extracted from them and
         its monthly extraction budget are visible only to its members. Whoever creates an
         organization becomes its owner.
@@ -80,17 +80,17 @@ function OrganizationLink({ organization }: { organization: Organization }) {
   return (
     <Link
       href={`/app/${organization.slug}`}
-      className="group flex items-center gap-4 rounded-lg border border-line bg-surface px-4 py-3 hover:border-line-strong"
+      className="group flex items-center gap-4 border border-ink bg-paper px-4 py-3 hover:border-ink"
     >
       <span className="min-w-0 flex-1">
-        <span className="block font-medium wrap-anywhere underline decoration-line-strong underline-offset-4 group-hover:decoration-fg">
+        <span className="block font-medium wrap-anywhere underline decoration-ink underline-offset-4 group-hover:decoration-ink">
           {organization.name}
         </span>
-        <span className="mt-0.5 block text-sm text-muted wrap-anywhere">
+        <span className="mt-0.5 block text-small text-ink wrap-anywhere">
           /app/{organization.slug}
         </span>
       </span>
-      <span className="shrink-0 text-sm text-muted">
+      <span className="shrink-0 text-small text-ink">
         <span className="sr-only">Your role: </span>
         {roleLabels[organization.role]}
       </span>
@@ -111,7 +111,7 @@ function ChevronRightIcon() {
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
-      className="shrink-0 text-muted group-hover:text-fg"
+      className="shrink-0 text-ink group-hover:text-ink"
     >
       <path d="M6 3.5L10.5 8L6 12.5" />
     </svg>

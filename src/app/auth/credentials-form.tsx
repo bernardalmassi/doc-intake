@@ -2,7 +2,7 @@
 
 import { unstable_rethrow } from "next/navigation";
 import { useActionState, useEffect, useId, useMemo, useRef, useState } from "react";
-import { errorClass, inputClass, labelClass, submitButtonClass } from "@/app/ui";
+import { errorClass, errorRuleClass, inputClass, labelClass, submitButtonClass } from "@/app/ui";
 import { MIN_PASSWORD_LENGTH } from "@/lib/password";
 import type { FormState } from "@/app/form-state";
 import { classifyThrown } from "@/lib/errors";
@@ -235,7 +235,7 @@ export function CredentialsFormView({ mode, state, pending, formAction }: ViewPr
         {/* Written by focusField, never by React. */}
         <span ref={echoRef} className="sr-only" />
         {problems.form && (
-          <p className={`mt-5 max-w-sm rounded-md border border-danger px-3 py-2 ${errorClass}`}>
+          <p className={`mt-5 max-w-sm ${errorRuleClass} ${errorClass}`}>
             {problems.form}
           </p>
         )}

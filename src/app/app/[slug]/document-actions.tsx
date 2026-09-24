@@ -37,7 +37,7 @@ type Notice = (Explained & { tone: "progress" | "done" | "error" }) | null;
 
 // The buttons never move. Labels that swap keep one width (min-w-28 fits
 // Extract, Extract again and Extracting…; min-w-24 fits Delete, Yes, delete
-// and Deleting…, measured in Geist at text-sm), and
+// and Deleting…, measured in Geist at text-small), and
 // every message (progress, result, error, the delete confirmation) appears
 // beside the buttons from sm up and below them on a phone, never before
 // them.
@@ -199,7 +199,7 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
 
       {/* basis-64: the message sits beside the buttons when there is room,
           below them when not, whatever it says. */}
-      <div className="flex min-w-0 flex-1 basis-64 items-center text-sm sm:min-h-9">
+      <div className="flex min-w-0 flex-1 basis-64 items-center text-small sm:min-h-9">
         <div className="min-w-0 flex-1">
           {/* Two regions, always rendered so what appears in them is
               announced, and side by side rather than nested so nothing is
@@ -241,13 +241,13 @@ function NoticeLine({ notice }: { notice: NonNullable<Notice> }) {
   if (notice.tone === "error") {
     return (
       <p className={`flex items-start gap-1.5 ${errorClass}`}>
-        <AlertIcon className="mt-0.5" />
+        <AlertIcon className="mt-0.5 text-signal" />
         <span className="min-w-0">{notice.text}</span>
       </p>
     );
   }
   return (
-    <p className={`flex items-start gap-1.5 ${notice.tone === "progress" ? "text-muted" : "text-fg"}`}>
+    <p className={`flex items-start gap-1.5 ${notice.tone === "progress" ? "text-ink" : "text-ink"}`}>
       {notice.tone === "progress" ? <SpinnerIcon className="mt-0.5" /> : <CheckIcon className="mt-0.5" />}
       <span className="min-w-0">{notice.text}</span>
     </p>

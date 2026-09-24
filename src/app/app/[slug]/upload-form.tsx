@@ -199,17 +199,17 @@ export function UploadForm({
           setDragging(false);
           pick(event.dataTransfer.files);
         }}
-        className={`rounded-lg border p-4 sm:p-5 ${
+        className={` border p-4 sm:p-5 ${
           dragging
-            ? "border-solid border-fg bg-surface"
+            ? "border-solid border-ink bg-paper"
             : showPicker
-              ? `border-dashed bg-transparent ${state.kind === "rejected" ? "border-danger" : "border-line-strong"}`
-              : "border-solid border-line bg-surface"
+              ? `border-dashed bg-transparent ${state.kind === "rejected" ? "border-ink" : "border-ink"}`
+              : "border-solid border-ink bg-paper"
         }`}
       >
         {showPicker ? (
           <div className="flex items-center gap-4">
-            <span className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-full border border-line text-muted sm:flex">
+            <span className="hidden h-10 w-10 shrink-0 items-center justify-center border border-ink text-ink sm:flex">
               <UploadIcon />
             </span>
             <div className="min-w-0">
@@ -273,7 +273,7 @@ export function UploadForm({
           polite for the steps and the result, alert for a rejected file.
           (A failed upload is announced inside the file card.) min-h keeps
           the list below from jumping when a line appears. */}
-      <div className="mt-2 min-h-5 text-sm">
+      <div className="mt-2 min-h-5 text-small">
         <div aria-live="polite">
           {state.kind === "idle" && state.uploaded && (
             <p className="flex items-start gap-1.5">
@@ -286,7 +286,7 @@ export function UploadForm({
         <div role="alert">
           {state.kind === "rejected" && (
             <p className={`flex items-start gap-1.5 ${errorClass}`}>
-              <AlertIcon className="mt-0.5" />
+              <AlertIcon className="mt-0.5 text-signal" />
               <span className="min-w-0 [overflow-wrap:anywhere]">{describeRejection(state.reason, state.file)}</span>
             </p>
           )}
@@ -311,7 +311,7 @@ function ChosenFile({
   return (
     <>
       <div className="flex items-start gap-3">
-        <FileIcon className="mt-0.5 text-muted" />
+        <FileIcon className="mt-0.5 text-ink" />
         <div className="min-w-0">
           <p className="font-medium [overflow-wrap:anywhere]">{file.name}</p>
           <p className={`${hintClass} tabular-nums`}>
@@ -328,7 +328,7 @@ function ChosenFile({
       <div role="alert">
         {state.kind === "failed" && (
           <p className={`mt-4 flex items-start gap-1.5 ${errorClass}`}>
-            <AlertIcon className="mt-0.5" />
+            <AlertIcon className="mt-0.5 text-signal" />
             <span className="min-w-0">
               The upload didn&apos;t finish. {userFacingError(state.failure.code).message}
             </span>
@@ -351,12 +351,12 @@ function ChosenFile({
 
 function UploadSteps({ current }: { current: UploadStep }) {
   return (
-    <ol aria-label="Upload progress" className="mt-4 space-y-1.5 text-sm">
+    <ol aria-label="Upload progress" className="mt-4 space-y-1.5 text-small">
       {UPLOAD_STEPS.map((label, index) => {
         const step = index + 1;
         const status = step < current ? "done" : step === current ? "current" : "waiting";
         return (
-          <li key={label} className={`flex items-center gap-2 ${status === "waiting" ? "text-muted" : "text-fg"}`}>
+          <li key={label} className={`flex items-center gap-2 ${status === "waiting" ? "text-ink" : "text-ink"}`}>
             {status === "done" ? <CheckIcon /> : status === "current" ? <SpinnerIcon /> : <DotIcon />}
             <span>
               {label}

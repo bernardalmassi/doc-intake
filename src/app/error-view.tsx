@@ -21,7 +21,7 @@ export function ErrorView({
         <h1 ref={headingRef} tabIndex={-1} className={pageTitleClass}>
           Something went wrong
         </h1>
-        <p className="mt-2 max-w-prose text-muted">
+        <p className="mt-2 max-w-prose text-ink">
           This page couldn&apos;t load. It&apos;s usually a brief problem reaching the database, so
           trying again often works.
         </p>

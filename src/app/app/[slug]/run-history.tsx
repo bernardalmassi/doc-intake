@@ -63,9 +63,9 @@ export function runHistoryMeta(runs: RunRow[]): string {
 // hidden there but stays in the accessibility tree). The explicit table
 // roles keep it a table for screen readers there too: some browsers stop
 // exposing table semantics once CSS changes a table's display.
-const th = "whitespace-nowrap py-2 pr-4 align-bottom font-medium text-muted last:pr-0";
+const th = "whitespace-nowrap py-2 pr-4 align-bottom font-medium text-ink last:pr-0";
 const td =
-  "py-2 pr-4 align-top last:pr-0 max-md:block max-md:p-0 max-md:before:block max-md:before:text-muted max-md:before:content-[attr(data-label)]";
+  "py-2 pr-4 align-top last:pr-0 max-md:block max-md:p-0 max-md:before:block max-md:before:text-ink max-md:before:content-[attr(data-label)]";
 const num = "tabular-nums md:text-right";
 
 // Every run for one document, newest first: when it started (UTC, rendered
@@ -78,7 +78,7 @@ export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filen
 
   return (
     <div className="mt-3">
-      <table role="table" className="w-full text-left text-sm max-md:block">
+      <table role="table" className="w-full text-left text-small max-md:block">
         <caption className="sr-only">Extraction runs for {filename}, newest first</caption>
         <thead role="rowgroup" className="max-md:sr-only">
           <tr role="row">
@@ -110,7 +110,7 @@ export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filen
             const stalled = index === 0 && staleRun && run.status === "running";
             return (
               <Fragment key={run.id}>
-                <tr role="row" className="border-t border-line max-md:grid max-md:grid-cols-2 max-md:gap-x-4 max-md:gap-y-2 max-md:py-3">
+                <tr role="row" className="border-t border-ink max-md:grid max-md:grid-cols-2 max-md:gap-x-4 max-md:gap-y-2 max-md:py-3">
                   <td role="cell" data-label="Started (UTC)" className={`${td} whitespace-nowrap tabular-nums max-md:col-span-2`}>
                     <time dateTime={run.started_at}>{formatUtc(run.started_at, { zone: false })}</time>
                   </td>
@@ -118,18 +118,18 @@ export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filen
                     <span className={badgeClass}>
                       {stalled ? "Stalled" : (RUN_STATUS_LABELS[run.status] ?? run.status)}
                     </span>
-                    <span className="mt-1 block text-muted tabular-nums">{describeAttempts(run, stalled)}</span>
+                    <span className="mt-1 block text-ink tabular-nums">{describeAttempts(run, stalled)}</span>
                   </td>
                   <td role="cell" data-label="Model" className={td}>
                     {run.cost_estimated && run.model ? (
                       <>
                         Not on the price list
-                        <span className="block text-muted [overflow-wrap:anywhere]">charged at {run.model} rates</span>
+                        <span className="block text-ink [overflow-wrap:anywhere]">charged at {run.model} rates</span>
                       </>
                     ) : run.provider ? (
                       <>
                         {PROVIDER_LABELS[run.provider] ?? run.provider}
-                        <span className="block text-muted [overflow-wrap:anywhere]">{run.model}</span>
+                        <span className="block text-ink [overflow-wrap:anywhere]">{run.model}</span>
                       </>
                     ) : (
                       <Missing label={run.status === "running" ? "Not known yet" : "No model answered"} />
@@ -153,7 +153,7 @@ export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filen
                   <tr role="row" className="max-md:block">
                     <td role="cell" colSpan={7} className="pb-3 max-md:block">
                       <p className={`flex items-start gap-1.5 ${errorClass}`}>
-                        <AlertIcon className="mt-0.5" />
+                        <AlertIcon className="mt-0.5 text-signal" />
                         <span className="min-w-0">{userFacingError(run.error_code).message}</span>
                       </p>
                     </td>
@@ -165,16 +165,16 @@ export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filen
         </tbody>
         {runs.length > 1 && (
           <tfoot role="rowgroup" className="max-md:block">
-            <tr role="row" className="border-t border-line-strong max-md:flex max-md:items-baseline max-md:justify-between max-md:gap-4 max-md:py-3">
+            <tr role="row" className="border-t border-ink max-md:flex max-md:items-baseline max-md:justify-between max-md:gap-4 max-md:py-3">
               <th scope="row" role="rowheader" colSpan={5} className="py-2 pr-4 font-medium max-md:p-0">
                 Total for {runs.length} runs
                 {estimated > 0 && (
-                  <span className="block font-normal text-muted">
+                  <span className="block font-normal text-ink">
                     Includes {estimated} estimated {estimated === 1 ? "cost" : "costs"}.
                   </span>
                 )}
                 {unknown > 0 && (
-                  <span className="block font-normal text-muted">
+                  <span className="block font-normal text-ink">
                     Leaves out {unknown} {unknown === 1 ? "run" : "runs"} whose cost isn&apos;t known.
                   </span>
                 )}
@@ -209,11 +209,11 @@ function Cost({ run }: { run: RunRow }) {
           <span className="sr-only">About </span>
           {formatUsd(Number(run.cost_usd))}
         </span>
-        <span className="block text-muted">Estimated</span>
+        <span className="block text-ink">Estimated</span>
       </>
     );
   }
-  if (state === "unknown") return <span className="text-muted">Not known</span>;
+  if (state === "unknown") return <span className="text-ink">Not known</span>;
   return <Missing label="Nothing spent" />;
 }
 
@@ -223,7 +223,7 @@ function Cost({ run }: { run: RunRow }) {
 // both read as not known, not as 0 or a dash.
 function Tokens({ run, count }: { run: RunRow; count: number | null }) {
   if (run.error_code === "extraction.abandoned" || (run.model === null && run.attempts > 0 && run.status !== "running")) {
-    return <span className="text-muted">Not known</span>;
+    return <span className="text-ink">Not known</span>;
   }
   return count !== null ? formatCount(count) : <Missing label="None recorded" />;
 }
@@ -232,7 +232,7 @@ function Tokens({ run, count }: { run: RunRow; count: number | null }) {
 function Missing({ label }: { label: string }) {
   return (
     <>
-      <span aria-hidden="true" className="text-muted">
+      <span aria-hidden="true" className="text-ink">
         —
       </span>
       <span className="sr-only">{label}</span>

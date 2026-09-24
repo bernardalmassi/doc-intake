@@ -95,7 +95,7 @@ export function DotIcon({ className }: IconProps) {
 export function SpinnerIcon({ className }: IconProps) {
   return (
     <Icon className={`motion-safe:animate-spin ${className ?? ""}`}>
-      <circle cx="8" cy="8" r="5.5" className="stroke-line-strong" />
+      <circle cx="8" cy="8" r="5.5" className="stroke-ink" />
       <path d="M8 2.5a5.5 5.5 0 0 1 5.5 5.5" />
     </Icon>
   );

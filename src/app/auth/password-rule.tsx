@@ -43,14 +43,14 @@ export function usePasswordLength() {
 export function PasswordRule({ id, length }: { id: string; length: PasswordLength }) {
   const met = length.chars >= MIN_PASSWORD_LENGTH;
   return (
-    <p id={id} className="mt-1 flex items-center gap-1.5 text-sm">
+    <p id={id} className="mt-1 flex items-center gap-1.5 text-small">
       {met ? <CheckIcon /> : <CircleIcon />}
-      <span className={met ? "text-fg" : "text-muted"}>
+      <span className={met ? "text-ink" : "text-ink"}>
         At least {MIN_PASSWORD_LENGTH} characters
         {met && <span className="sr-only">, done</span>}
       </span>
       {length.chars > 0 && !met && (
-        <span className="text-muted tabular-nums">
+        <span className="text-ink tabular-nums">
           <span aria-hidden="true">·</span>
           <span className="sr-only">,</span> {length.chars} of {MIN_PASSWORD_LENGTH}
         </span>
@@ -69,7 +69,7 @@ function CircleIcon() {
       stroke="currentColor"
       strokeWidth="1.5"
       aria-hidden="true"
-      className="shrink-0 text-muted"
+      className="shrink-0 text-ink"
     >
       <circle cx="8" cy="8" r="5.25" />
     </svg>
@@ -88,7 +88,7 @@ function CheckIcon() {
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
-      className="shrink-0 text-fg"
+      className="shrink-0 text-ink"
     >
       <circle cx="8" cy="8" r="5.25" />
       <path d="M5.75 8.1l1.6 1.6 2.9-3.2" />

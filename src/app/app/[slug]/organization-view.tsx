@@ -2,7 +2,7 @@ import Link from "next/link";
 import { linkClass, pageTitleClass, sectionTitleClass, textTargetClass } from "@/app/ui";
 import { DocumentList } from "./document-list";
 import { ChevronRightIcon } from "./icons";
-import { canManage, DOCUMENTS_HEADING_ID, ROLE_LABELS, roleAbilities } from "./messages";
+import { canManage, DOCUMENTS_HEADING_ID, roleAbilities } from "./messages";
 import type { DocumentEntry, Organization, Role } from "./types";
 import { UploadForm, type UploadState } from "./upload-form";
 
@@ -26,7 +26,7 @@ export function OrganizationView({
   return (
     <>
       <nav aria-label="Breadcrumb">
-        <ol className="flex flex-wrap items-center gap-x-1.5 text-sm text-muted">
+        <ol className="flex flex-wrap items-center gap-x-1.5 text-small text-ink">
           <li>
             <Link href="/app" className={`${linkClass} ${textTargetClass} inline-block`}>
               Organizations
@@ -42,9 +42,7 @@ export function OrganizationView({
       </nav>
 
       <h1 className={`mt-3 ${pageTitleClass} [overflow-wrap:anywhere]`}>{organization.name}</h1>
-      <p className="mt-2 max-w-prose text-muted">
-        Your role: <span className="font-medium text-fg">{ROLE_LABELS[role]}</span>. {roleAbilities(role)}
-      </p>
+      <p className="mt-2 max-w-prose text-ink">{roleAbilities(role)}</p>
 
       <section aria-labelledby="upload-heading" className="mt-8">
         <h2 id="upload-heading" className={sectionTitleClass}>

@@ -24,7 +24,7 @@ export function CheckEmail({
         ref={headingRef}
         id={titleId}
         tabIndex={-1}
-        className="flex items-center gap-2 text-lg font-semibold"
+        className="label flex items-center gap-2"
       >
         <CheckIcon />
         Check your email
