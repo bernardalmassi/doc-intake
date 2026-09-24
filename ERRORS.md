@@ -11,7 +11,7 @@ Every failure a user can hit, the code `src/lib/errors.ts` gives it, and the mes
 - Where the database deliberately gives one answer for two cases (a document that doesn't exist and one you can't see; a slug that doesn't exist and an organization you aren't in), the message covers both, so the UI can't be used to probe either.
 - Classification goes by code (SQLSTATE, Auth code, Storage code, ProviderError kind) and by what was attempted. Message text is read in four places, each to sharpen a code, never to pick one from free text:
   - Database errors: only where one SQLSTATE covers two outcomes, as the exact phrase a migration raises. The test proves each phrase is still raised by the function's live definition.
-  - Stored run errors and ProviderError messages: prefixes and shapes this repo writes itself (`run.ts`, the provider modules, the Extract action), each checked against its source. The part of a run error that can quote the model's answer is never searched.
+  - Stored run errors and ProviderError messages: prefixes and shapes this repo writes itself (`run.ts`, the provider modules, the worker's preflight in `delivery.ts`, and `reap_extraction_run`), each checked against its source. The part of a run error that can quote the model's answer is never searched.
   - Supabase Auth `validation_failed`: GoTrue's wording for an over-long password or a malformed email. Nothing in this repo can confirm that wording, so a mismatch only falls back to `input.invalid`.
   - Thrown errors: the exact messages browsers and Node give a fetch that failed on the network. A bug whose message merely contains "fetch" stays `unknown`.
 - Retry is "yes" when repeating the same action unchanged can succeed, possibly after the wait the message names. Every "yes" message says "try again" and no "no" message does.
@@ -21,7 +21,7 @@ Every failure a user can hit, the code `src/lib/errors.ts` gives it, and the mes
 - A PostgREST query or RPC result: `classifyDatabaseError(error, operation)`, where `operation` is the RPC or table write that failed.
 - `supabase.auth.*`: `classifyAuthError(error, method)`.
 - `supabase.storage.*`: `classifyStorageError(error, method)`.
-- `extraction_runs.error`, or the Extract action's `outcome.error`: `classifyRunError(text)`.
+- `extraction_runs.error`, or a delivery's `outcome.error` in the worker: `classifyRunError(text)`.
 - An exception thrown around a Server Action call: `classifyThrown(error)`.
 - Before submitting a form: `checkCredentials`, `checkTenantInput`, `checkFilename`, `checkUploadFile`.
 - An update or delete that RLS filters to zero rows returns no error at all; the call site picks the code ("zero rows" below).
@@ -104,7 +104,7 @@ Every failure a user can hit, the code `src/lib/errors.ts` gives it, and the mes
 | Download of an upload that never finished | the document's status | `upload.incomplete` | no | This upload never finished, so there is no file to open. Upload the file again; an admin can remove this entry. |
 | Delete by a non-admin (Storage removes nothing and reports success; the row delete matches zero rows) | zero rows; 42501; Storage 403 on `remove` | `document.delete_not_allowed` | no | Only an admin can delete documents. |
 | Row delete refused because the file is still there (it landed after the remove) | 55000 from the `documents_keep_row_while_file_exists` trigger | `document.file_still_present` | yes | The document's file couldn't be removed, so the document was kept. Please try again. |
-| A PDF with more than 100 pages, refused at upload (in the browser) and again before a run is opened (the Extract action) | `checkPageCount` on the count from `src/lib/extraction/page-count.ts` | `document.too_many_pages` | no | Documents can have at most 100 pages. Split this one into parts of 100 pages or fewer and upload them separately. |
+| A PDF with more than 100 pages, refused at upload (in the browser) and again before a run is enqueued (the Extract action) | `checkPageCount` on the count from `src/lib/extraction/page-count.ts` | `document.too_many_pages` | no | Documents can have at most 100 pages. Split this one into parts of 100 pages or fewer and upload them separately. |
 | A PDF whose pages can't be counted, refused the same two ways | `checkPageCount` on a null count | `document.pages_unreadable` | no | We couldn't count this PDF's pages, so it can't be extracted. Save it again as a standard PDF (for example with Print to PDF) and upload that. |
 
 ## Extraction: starting a run
@@ -120,15 +120,15 @@ Every failure a user can hit, the code `src/lib/errors.ts` gives it, and the mes
 
 ## Extraction: how a run can fail
 
-These come from the text stored in `extraction_runs.error` (and returned as the Extract action's `outcome.error`).
+These come from the text stored in `extraction_runs.error`, written by the queue's worker (`src/lib/extraction/delivery.ts`, the orchestrator in `run.ts`) or by `reap_extraction_run` in the database (`20260925000002`). The Extract action only enqueues, so it returns none of them; the organization page shows them as the run polls to its end.
 
-A stored error may start with "cost estimated at the dearest price on file (SQLSTATE; served by model id): ". `failedCloseAttempts` in `run.ts` writes it when the run was charged at the dearest price on file because the database couldn't price the model that served it. It isn't a failure of its own: `classifyRunError` skips it and classifies what follows, and `isCostEstimated` reports it.
+A stored error may start with "cost estimated at the dearest price on file (SQLSTATE; served by model id): ". `failedCloseAttempts` in `run.ts` writes it when the run was charged at the dearest price on file because the database couldn't price the model that served it. It may also start with "cost estimated at claude-sonnet-5 prices (abandoned; …): ", which `reap_extraction_run` writes for a run abandoned at its page-count estimate. Neither is a failure of its own: `classifyRunError` skips it and classifies what follows, and `isCostEstimated` reports it.
 
 | Failure | Detected by | Code | Retry | Message |
 |---|---|---|---|---|
 | No key for the primary provider, or `EXTRACTION_PROVIDER` set to something else | starts "extraction is not configured" or "EXTRACTION_PROVIDER must be" | `extraction.not_configured` | no | Extraction isn't set up on this server. Ask whoever runs this service to configure it. |
 | The provider rejects our key or model id | ProviderError `client` with 401, 403 or 404 | `extraction.not_configured` | no | Extraction isn't set up on this server. Ask whoever runs this service to configure it. |
-| The file couldn't be downloaded with the user's session | starts "could not download the file" | `extraction.download_failed` | yes | The file couldn't be read for extraction. Please try again. |
+| The worker couldn't download the file | starts "could not download the file" | `extraction.download_failed` | yes | The file couldn't be read for extraction. Please try again. |
 | The bytes aren't the declared type (magic-byte check) | starts "file content (" | `extraction.file_type_mismatch` | no | This file's contents don't match its file type, so it wasn't sent for extraction. Upload it again as a genuine PDF, PNG or JPEG file. |
 | The worker's recount found the pages uncountable | starts "pages unreadable: " (the worker's preflight, `src/lib/extraction/delivery.ts`) | `document.pages_unreadable` | no | We couldn't count this PDF's pages, so it can't be extracted. Save it again as a standard PDF (for example with Print to PDF) and upload that. |
 | The worker's recount found more than 100 pages | starts "too many pages: " (the same preflight) | `document.too_many_pages` | no | Documents can have at most 100 pages. Split this one into parts of 100 pages or fewer and upload them separately. |
@@ -145,8 +145,8 @@ A stored error may start with "cost estimated at the dearest price on file (SQLS
 | A run that may have called a model and never finished: claimed and past its visibility timeout, delivered a second time, or running past the stale limit | starts "abandoned: " (`reap_extraction_run`, called by the enqueue's reaper, the claim and the queue's sweep) | `extraction.abandoned` | yes | This extraction stopped before it finished and was cancelled. Please try again. |
 | A run no worker claimed within the stale limit, cancelled at no cost | starts "expired: " (`reap_extraction_run`) | `extraction.expired` | yes | This extraction didn't start within 10 minutes, so it was cancelled at no cost. Please try again. |
 | An SDK error with no HTTP status (a bug, or a response without usage) | ProviderError `client` without a status, other than the row above | `unknown` | yes | Something went wrong. Please try again. |
-| The service refused to record a successful run, so the Extract action closed it as failed instead and the document went back to how it was | starts "the result could not be recorded" | `extraction.result_not_saved` | yes | The extraction ran, but its result couldn't be saved. Please try again. |
-| Neither the outcome nor the failed close tried after it could be recorded, so the document stays `processing` until the reaper frees it | any error from `close_extraction_run` on the first close and on each retry, including a lost connection | `extraction.record_failed` | yes | The extraction ran, but its result couldn't be saved. You can try again in about 10 minutes. |
+| The service refused to record a successful run, so the worker finished it as failed instead and the document went back to how it was | starts "the result could not be recorded" | `extraction.result_not_saved` | yes | The extraction ran, but its result couldn't be saved. Please try again. |
+| Neither the outcome nor the failed finish tried after it could be recorded, so the document stays `processing` until the queue's sweep ends the run at its estimate | any error from `finish_extraction_run` on the first finish and on each retry, including a lost connection (logged by the worker; no user action waits on it) | `extraction.record_failed` | yes | The extraction ran, but its result couldn't be saved. You can try again in about 10 minutes. |
 
 ## Anywhere
 
