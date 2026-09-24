@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { OpeningHint } from "@/app/components/pending";
 import { linkClass, pageTitleClass } from "@/app/ui";
 import { DocumentList } from "./document-list";
 import { canManage, DOCUMENTS_HEADING_ID, roleAbilities } from "./messages";
@@ -39,6 +40,7 @@ export function OrganizationView({
                 taken back by negative margins. */}
             <Link href="/app" className={`${linkClass} -my-1 inline-block py-1`}>
               Organizations
+              <OpeningHint href="/app" />
             </Link>
             <span aria-hidden="true">/</span>
           </li>

@@ -8,6 +8,7 @@ import type { Role } from "@/app/app/[slug]/types";
 import { OrganizationView } from "@/app/app/[slug]/organization-view";
 import type { UploadState } from "@/app/app/[slug]/upload-form";
 import { type Organization, OrganizationsView } from "@/app/app/organizations";
+import { PreviewPending } from "@/app/components/pending";
 import { MAIN_ID, SiteHeader } from "@/app/components/site-header";
 import type { FormState } from "@/app/form-state";
 import NotFound from "@/app/not-found";
@@ -410,6 +411,16 @@ export const SCREENS: Screen[] = [
     title: "Four organizations, one with the longest name and address",
     render: () => <OrgsPage list={[...organizations, longOrganization]} />,
   },
+  {
+    id: "orgs-opening",
+    group: "Organizations",
+    title: "Four organizations, the longest one clicked: its page hasn't arrived yet",
+    render: () => (
+      <PreviewPending target={`/app/${longOrganization.slug}`}>
+        <OrgsPage list={[...organizations, longOrganization]} />
+      </PreviewPending>
+    ),
+  },
   ...CREATE_STATES.map(([id, title, form]) => ({
     id,
     group: "Create organization",
@@ -452,6 +463,26 @@ export const SCREENS: Screen[] = [
     group: "Organization page",
     title: "Member, the same six documents",
     render: () => <OrgPage role="member" ids={SIX_STATE_IDS} />,
+  },
+  {
+    id: "org-leaving",
+    group: "Organization page",
+    title: "The breadcrumb's Organizations clicked: the list hasn't arrived yet",
+    render: () => (
+      <PreviewPending target="/app">
+        <OrgPage ids={SIX_STATE_IDS} />
+      </PreviewPending>
+    ),
+  },
+  {
+    id: "signing-out",
+    group: "Header",
+    title: "Sign out clicked: the action hasn't answered yet",
+    render: () => (
+      <PreviewPending target="sign-out">
+        <OrgPage ids={SIX_STATE_IDS} />
+      </PreviewPending>
+    ),
   },
   { id: "org-empty", group: "Organization page", title: "Owner, no documents yet", render: () => <OrgPage ids={[]} /> },
   { id: "org-empty-member", group: "Organization page", title: "Member, no documents yet", render: () => <OrgPage role="member" ids={[]} /> },

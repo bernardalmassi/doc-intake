@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { OpeningHint } from "@/app/components/pending";
 import { linkClass, pageTitleClass } from "@/app/ui";
 import { ChevronRightIcon } from "./[slug]/icons";
 import { roleAbilities } from "./[slug]/messages";
@@ -110,7 +111,8 @@ export function OrganizationsView({
 
 // One organization's line. The name is the link, underlined like every
 // link, and its ::after covers the line, so the whole line is the target;
-// the chevron says so without being a second control.
+// the chevron says so without being a second control. From the click until
+// the organization page arrives, "Opening…" follows the name.
 function OrganizationLine({ organization }: { organization: Organization }) {
   return (
     <div className="relative border-b border-ink py-4">
@@ -121,6 +123,7 @@ function OrganizationLine({ organization }: { organization: Organization }) {
             className={`${linkClass} [overflow-wrap:anywhere] after:absolute after:inset-0 after:content-['']`}
           >
             {organization.name}
+            <OpeningHint href={`/app/${organization.slug}`} />
           </Link>
         </h3>
         <span aria-hidden="true" className="flex h-7 items-center">

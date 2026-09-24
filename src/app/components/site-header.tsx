@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { signOut } from "@/app/auth/actions";
 import { containerClass, secondaryButtonClass } from "@/app/ui";
+import { SignOutButton } from "./pending";
 import { ThemeToggle } from "./theme-toggle";
 
 // The id of every page's <main>, which the skip link jumps to.
@@ -62,9 +63,7 @@ export function AccountControlsView({
         Signed in as {email}
       </p>
       <form action={signOutAction} className="shrink-0">
-        <button type="submit" className={secondaryButtonClass}>
-          Sign out
-        </button>
+        <SignOutButton />
       </form>
     </>
   );
