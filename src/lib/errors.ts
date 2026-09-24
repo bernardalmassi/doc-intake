@@ -21,7 +21,7 @@
 // Classification goes by code first (SQLSTATE, Auth code, Storage code,
 // ProviderError kind), then by what was being attempted, because the same
 // SQLSTATE means different things in different calls (55000 is "files
-// remain" in delete_tenant and "already running" in open_extraction_run).
+// remain" in delete_tenant and "already running" in enqueue_extraction_run).
 // Message text is read in these places only, each a refinement of a code
 // that would otherwise be less specific, never a way to choose one freely:
 //
@@ -171,6 +171,12 @@ const CATALOG = {
     message: "This organization still has documents with files. Delete them first, then delete the organization.",
     retryable: false,
   },
+  // every run in flight has a deadline the queue's sweep enforces: the
+  // stale limit, plus a minute for the sweep's next tick
+  "tenant.delete_extraction_running": {
+    message: `An extraction is still running in this organization. Try again when it finishes; one that is stuck is ended within ${STALE_MINUTES + 1} minutes.`,
+    retryable: true,
+  },
   "account.delete_owns_organization": {
     message:
       "You still own an organization. Delete it, or make another member an owner and have them remove you, before deleting your account.",
@@ -270,14 +276,18 @@ const CATALOG = {
     message: `An extraction is already running for this document. Try again when it finishes; one that is stuck is released after ${STALE_MINUTES} minutes.`,
     retryable: true,
   },
+  // The ceilings count every run in flight at its estimate
+  // (check_extraction_limits, 20260925000002), so one can be reached while
+  // an extraction is running and clear again when it finishes.
   "extraction.tenant_budget_reached": {
-    message: "Your organization has used this month's extraction budget. Extraction resumes at the start of next month (UTC).",
-    retryable: false,
+    message:
+      "Your organization has reached this month's extraction budget, counting extractions in progress. Try again when those finish; if none are running, extraction resumes next month (UTC).",
+    retryable: true,
   },
   "extraction.global_budget_reached": {
     message:
-      "Extraction is paused for everyone because this month's overall budget has been used. It resumes at the start of next month (UTC).",
-    retryable: false,
+      "Extraction is paused for everyone: this month's overall budget is reached, counting extractions in progress. Try again when those finish; if none are running, it resumes next month (UTC).",
+    retryable: true,
   },
   "extraction.rate_limited": {
     message: `Your organization has reached its limit of ${EXTRACTION_LIMITS.hourlyRunLimit} extractions per hour. Try again later.`,
@@ -335,6 +345,10 @@ const CATALOG = {
     message: "This extraction stopped before it finished and was cancelled. Please try again.",
     retryable: true,
   },
+  "extraction.expired": {
+    message: `This extraction didn't start within ${STALE_MINUTES} minutes, so it was cancelled at no cost. Please try again.`,
+    retryable: true,
+  },
   "extraction.result_not_saved": {
     message: "The extraction ran, but its result couldn't be saved. Please try again.",
     retryable: true,
@@ -373,12 +387,15 @@ export function userFacingError(code: ErrorCode): UserFacingError {
 export const DATABASE_PHRASES = {
   // create_tenant raises it without an errcode (P0001); the others as 42501
   authenticationRequired: "authentication required",
-  // open_extraction_run, 55000
+  // enqueue_extraction_run and open_extraction_run, 55000
   documentHasNoFile: "the document has no file yet",
   extractionAlreadyRunning: "an extraction is already running for this document",
-  // open_extraction_run, 53400
+  // check_extraction_limits (called by both), 53400
   tenantCeilingReached: "this organization has reached its monthly extraction spend ceiling",
   globalCeilingReached: "the monthly extraction spend ceiling across all organizations has been reached",
+  // delete_tenant, 55000
+  tenantExtractionInProgress: "an extraction is in progress for this tenant",
+  tenantFilesRemain: "remove the tenant's files from storage before deleting it",
   // complete_document_upload, 55000
   notWaitingForUpload: "document is not waiting for an upload",
   noFileUploaded: "no file has been uploaded for this document",
@@ -396,7 +413,8 @@ export const CHECK_CONSTRAINTS = {
 // downloadFailed and typeMismatch start errors written by the Extract Server
 // Action; the next five are the orchestrator's (src/lib/extraction/run.ts);
 // notConfigured, providerNotSelected and modelNotSelected come from selectProviders; abandoned
-// from open_extraction_run's stale-run reaper; and resultNotRecorded from
+// and expired from reap_extraction_run (20260925000002), which the reapers
+// and the queue's sweep call; and resultNotRecorded from
 // failedCloseAttempts in run.ts, for a run whose close was refused. The test checks
 // each against its source, and drives the real orchestrator with fake
 // providers to classify what it actually stores.
@@ -414,7 +432,12 @@ export const RUN_ERROR_MARKERS = {
   notConfigured: "extraction is not configured",
   providerNotSelected: `${PROVIDER_ENV_VAR} must be`,
   modelNotSelected: `${ANTHROPIC_MODEL_ENV_VAR} must be`,
-  abandoned: "abandoned: still running after",
+  // a run ended while it may have called a model, charged the estimate:
+  // "abandoned: still running after 10 minutes; ...", "abandoned: claimed
+  // but not finished within 300 seconds", ...
+  abandoned: "abandoned: ",
+  // a run ended before any delivery claimed it, at no cost
+  expired: "expired: ",
   // failedCloseAttempts (run.ts), when close_extraction_run refused a
   // successful run and the Extract action closed it as failed instead
   resultNotRecorded: "the result could not be recorded",
@@ -422,8 +445,9 @@ export const RUN_ERROR_MARKERS = {
   // failedCloseAttempts (run.ts) when the close with the run's own model was
   // refused too, "<this> the dearest price on file (<SQLSTATE>; served by
   // <model id>): <the run's error>"; and by the stale-run reaper
-  // (20260918000003), "<this> <model> prices (abandoned; ...): abandoned:
-  // ...". Not a failure of its own; what follows it decides the code.
+  // (20260918000003, and reap_extraction_run since 20260925000002),
+  // "<this> <model> prices (abandoned; ...): abandoned: ...". Not a failure
+  // of its own; what follows it decides the code.
   costEstimated: "cost estimated at",
 } as const;
 
@@ -505,8 +529,10 @@ export type DatabaseOperation =
   | "update_document"
   | "delete_document"
   | "complete_document_upload"
+  | "enqueue_extraction_run"
   | "open_extraction_run"
   | "close_extraction_run"
+  | "finish_extraction_run"
   | "select";
 
 // A PostgrestError, or the plain { code, message, details, hint } object
@@ -547,10 +573,11 @@ export function classifyDatabaseError(
 
 function databaseCode(error: DatabaseErrorLike | null | undefined, operation: DatabaseOperation): ErrorCode {
   if (!isRecord(error)) return "unknown";
-  // Whatever stopped the close (lost connection, expired session, a price
-  // missing for the model), the outcome for the user is the same: the run
-  // stays open until the reaper releases the document.
-  if (operation === "close_extraction_run") return "extraction.record_failed";
+  // Whatever stopped the close or the worker's finish (lost connection,
+  // expired session, a price missing for the model), the outcome for the
+  // user is the same: the run stays open until the reaper or the sweep
+  // releases the document.
+  if (operation === "close_extraction_run" || operation === "finish_extraction_run") return "extraction.record_failed";
 
   const code = stringField(error, "code");
   const message = stringField(error, "message") ?? "";
@@ -594,7 +621,10 @@ function byOperation(operation: DatabaseOperation, code: string, message: string
 
     case "delete_tenant":
       if (code === "42501") return "tenant.delete_not_owner";
-      if (code === "55000") return "tenant.delete_has_files";
+      if (code === "55000") {
+        if (message.startsWith(DATABASE_PHRASES.tenantExtractionInProgress)) return "tenant.delete_extraction_running";
+        if (message.startsWith(DATABASE_PHRASES.tenantFilesRemain)) return "tenant.delete_has_files";
+      }
       if (code === "22P02") return "tenant.not_found";
       return undefined;
 
@@ -652,6 +682,7 @@ function byOperation(operation: DatabaseOperation, code: string, message: string
       }
       return undefined;
 
+    case "enqueue_extraction_run":
     case "open_extraction_run":
       // missing and not-admin are one 42501 on purpose
       if (code === "42501" || code === "22P02") return "extraction.not_allowed";
@@ -667,6 +698,7 @@ function byOperation(operation: DatabaseOperation, code: string, message: string
       return undefined;
 
     case "close_extraction_run":
+    case "finish_extraction_run":
     case "select":
       return undefined;
   }
@@ -966,7 +998,7 @@ export function classifyRunError(error: string | null | undefined): ErrorCode {
 }
 
 // "cost estimated at the dearest price on file (22023; served by x): ..." or
-// "cost estimated at claude-haiku-4-5-20251001 prices (abandoned; ...): ..."
+// "cost estimated at claude-sonnet-5 prices (abandoned; ...): ..."
 const COST_ESTIMATED = new RegExp(`^${escapeRegExp(RUN_ERROR_MARKERS.costEstimated)} [^()\\n]{1,120} \\([^()]*\\): `);
 
 // Whether a run's cost is an estimate: failedCloseAttempts charged it at the
@@ -984,6 +1016,7 @@ function runCode(error: string | null | undefined): ErrorCode {
   if (estimated) return runCode(error.slice(estimated[0].length));
 
   if (error.startsWith(RUN_ERROR_MARKERS.abandoned)) return "extraction.abandoned";
+  if (error.startsWith(RUN_ERROR_MARKERS.expired)) return "extraction.expired";
   if (error.startsWith(RUN_ERROR_MARKERS.downloadFailed)) return "extraction.download_failed";
   if (error.startsWith(RUN_ERROR_MARKERS.resultNotRecorded)) return "extraction.result_not_saved";
   if (error.startsWith(RUN_ERROR_MARKERS.typeMismatch)) return "extraction.file_type_mismatch";

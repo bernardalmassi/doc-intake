@@ -105,8 +105,16 @@ const FUNCTION_OPERATIONS: Record<string, DatabaseOperation[]> = {
   enforce_tenant_has_owner: ["update_membership", "delete_membership"],
   refuse_document_delete_while_file_exists: ["delete_document"],
   complete_document_upload: ["complete_document_upload"],
+  enqueue_extraction_run: ["enqueue_extraction_run"],
   open_extraction_run: ["open_extraction_run"],
   close_extraction_run: ["close_extraction_run"],
+  finish_extraction_run: ["finish_extraction_run"],
+  // helpers, surfacing through the RPCs that call them
+  check_extraction_limits: ["enqueue_extraction_run", "open_extraction_run"],
+  extraction_charge: ["close_extraction_run", "finish_extraction_run"],
+  // the ledger's append-only trigger: only the definer functions that end a
+  // run write the ledger, and they only insert
+  refuse_spend_change: ["close_extraction_run", "finish_extraction_run"],
 };
 
 // The reviewed code for every raise. A new or reworded raise fails the test
@@ -114,6 +122,7 @@ const FUNCTION_OPERATIONS: Record<string, DatabaseOperation[]> = {
 const RAISE_CODES: Record<string, ErrorCode> = {
   "create_tenant: authentication required": "auth.not_signed_in",
   "delete_tenant: only an owner can delete a tenant": "tenant.delete_not_owner",
+  "delete_tenant: an extraction is in progress for this tenant": "tenant.delete_extraction_running",
   "delete_tenant: remove the tenant's files from storage before deleting it": "tenant.delete_has_files",
   "delete_own_account: authentication required": "auth.not_signed_in",
   "delete_own_account: delete your tenants or transfer ownership first": "account.delete_owns_organization",
@@ -129,11 +138,15 @@ const RAISE_CODES: Record<string, ErrorCode> = {
   "open_extraction_run: document not found or you are not an admin of its organization": "extraction.not_allowed",
   "open_extraction_run: the document has no file yet": "extraction.no_file",
   "open_extraction_run: an extraction is already running for this document": "extraction.already_running",
-  "open_extraction_run: this organization has reached its monthly extraction spend ceiling (% USD)":
+  "enqueue_extraction_run: authentication required": "auth.not_signed_in",
+  "enqueue_extraction_run: document not found or you are not an admin of its organization": "extraction.not_allowed",
+  "enqueue_extraction_run: the document has no file yet": "extraction.no_file",
+  "enqueue_extraction_run: an extraction is already running for this document": "extraction.already_running",
+  "check_extraction_limits: this organization has reached its monthly extraction spend ceiling (% USD), counting extractions in progress":
     "extraction.tenant_budget_reached",
-  "open_extraction_run: the monthly extraction spend ceiling across all organizations has been reached (% USD)":
+  "check_extraction_limits: the monthly extraction spend ceiling across all organizations has been reached (% USD), counting extractions in progress":
     "extraction.global_budget_reached",
-  "open_extraction_run: this organization has reached its limit of % extraction runs per hour":
+  "check_extraction_limits: this organization has reached its limit of % extraction runs per hour":
     "extraction.rate_limited",
   // A failed close leaves the run open whatever the reason, and that is
   // what the user needs to know.
@@ -146,10 +159,22 @@ const RAISE_CODES: Record<string, ErrorCode> = {
   "close_extraction_run: a failed run needs an error": "extraction.record_failed",
   "close_extraction_run: a successful run must name its model": "extraction.record_failed",
   "close_extraction_run: token counts without a model": "extraction.record_failed",
-  "close_extraction_run: no price on file for model %": "extraction.record_failed",
-  "close_extraction_run: model % belongs to provider %": "extraction.record_failed",
   "close_extraction_run: fields must be a JSON array": "extraction.record_failed",
   "close_extraction_run: malformed field: %": "extraction.record_failed",
+  // The worker's finish: whatever refused it, the run stays running until
+  // the sweep, and the worker only logs the code.
+  "finish_extraction_run: status must be succeeded or failed": "extraction.record_failed",
+  "finish_extraction_run: run not found or claim token invalid": "extraction.record_failed",
+  "finish_extraction_run: run is not running": "extraction.record_failed",
+  "finish_extraction_run: a failed run cannot carry fields": "extraction.record_failed",
+  "finish_extraction_run: a failed run needs an error": "extraction.record_failed",
+  "finish_extraction_run: a successful run must name its model": "extraction.record_failed",
+  "finish_extraction_run: token counts without a model": "extraction.record_failed",
+  "finish_extraction_run: fields must be a JSON array": "extraction.record_failed",
+  "finish_extraction_run: malformed field: %": "extraction.record_failed",
+  "extraction_charge: no price on file for model %": "extraction.record_failed",
+  "extraction_charge: model % belongs to provider %": "extraction.record_failed",
+  "refuse_spend_change: extraction spend is append-only": "extraction.record_failed",
 };
 
 // Postgres substitutes each % with an argument
@@ -177,6 +202,7 @@ const DATABASE_CASES: DbCase[] = [
   ["anonymous create_tenant", pgError("42501", "permission denied for function create_tenant"), "create_tenant", "auth.not_signed_in"],
   ["tenant update by a non-admin", pgError("42501", "permission denied for table tenants"), "update_tenant", "tenant.update_not_allowed"],
   ["malformed tenant id", pgError("22P02", 'invalid input syntax for type uuid: "acme"'), "delete_tenant", "tenant.not_found"],
+  ["a 55000 on delete in words no migration raises", pgError("55000", SECRET), "delete_tenant", "unknown"],
   // memberships
   ["non-admin adds a member", pgError("42501", 'new row violates row-level security policy for table "memberships"'), "insert_membership", "membership.not_allowed"],
   ["already a member", pgError("23505", 'duplicate key value violates unique constraint "memberships_tenant_id_user_id_key"'), "insert_membership", "membership.already_member"],
@@ -197,10 +223,14 @@ const DATABASE_CASES: DbCase[] = [
   ["anonymous completion", pgError("42501", "permission denied for function complete_document_upload"), "complete_document_upload", "upload.not_allowed"],
   // extraction
   ["anonymous open", pgError("42501", "permission denied for function open_extraction_run"), "open_extraction_run", "extraction.not_allowed"],
+  ["anonymous enqueue", pgError("42501", "permission denied for function enqueue_extraction_run"), "enqueue_extraction_run", "extraction.not_allowed"],
+  ["malformed id on enqueue", pgError("22P02", 'invalid input syntax for type uuid: "x"'), "enqueue_extraction_run", "extraction.not_allowed"],
+  ["a 53400 on enqueue in words no migration raises", pgError("53400", SECRET), "enqueue_extraction_run", "unknown"],
   ["malformed id on open", pgError("22P02", 'invalid input syntax for type uuid: "x"'), "open_extraction_run", "extraction.not_allowed"],
   ["a 53400 in words no migration raises", pgError("53400", SECRET), "open_extraction_run", "unknown"],
   ["a 55000 in words no migration raises", pgError("55000", SECRET), "open_extraction_run", "unknown"],
   ["a lost connection on close", { code: "", message: "TypeError: fetch failed" }, "close_extraction_run", "extraction.record_failed"],
+  ["a lost connection on the worker's finish", { code: "", message: "TypeError: fetch failed" }, "finish_extraction_run", "extraction.record_failed"],
   // anywhere
   ["no response", { code: "", message: "TypeError: fetch failed", details: "Caused by: ...", hint: "" } as PostgrestError, "select", "network.unavailable"],
   ["aborted", { code: "", message: "AbortError: This operation was aborted", details: "", hint: "Request was aborted (timeout or manual cancellation)" } as PostgrestError, "insert_document", "network.unavailable"],
@@ -379,6 +409,12 @@ const RUN_STRING_CASES: [label: string, error: string | null, ErrorCode][] = [
   ["bad Anthropic model setting", describeError(new Error(`${ANTHROPIC_MODEL_ENV_VAR} must be one of claude-haiku-4-5-20251001, claude-sonnet-5`)), "extraction.not_configured"],
   ["no key, unwrapped", "extraction is not configured: OPENAI_API_KEY is not set", "extraction.not_configured"],
   ["reaped", `abandoned: still running after ${EXTRACTION_LIMITS.staleRunMinutes} minutes; failed by a later open`, "extraction.abandoned"],
+  [
+    "reaped by the queue's sweep, at the estimate",
+    "cost estimated at claude-sonnet-5 prices (abandoned; at most 3 calls of 7500 tokens in and 2048 out, for 1 page): abandoned: claimed but not finished within 300 seconds",
+    "extraction.abandoned",
+  ],
+  ["expired before any claim", `expired: not claimed within ${EXTRACTION_LIMITS.staleRunMinutes} minutes; cancelled at no cost`, "extraction.expired"],
   ["both failed", "anthropic transport: request timed out; fallback openai server 503: Service Unavailable", "extraction.all_providers_failed"],
   ["both failed, fallback refused", "openai server 502: bad gateway; fallback anthropic refusal: the model declined to process this document", "extraction.all_providers_failed"],
   // One provider's error that merely mentions another is one failure.
@@ -632,6 +668,8 @@ describe("the catalog", () => {
     expect(ERROR_CATALOG["extraction.rate_limited"].message).toContain(String(EXTRACTION_LIMITS.hourlyRunLimit));
     expect(ERROR_CATALOG["extraction.already_running"].message).toContain(`${EXTRACTION_LIMITS.staleRunMinutes} minutes`);
     expect(ERROR_CATALOG["extraction.record_failed"].message).toContain(`${EXTRACTION_LIMITS.staleRunMinutes} minutes`);
+    expect(ERROR_CATALOG["extraction.expired"].message).toContain(`${EXTRACTION_LIMITS.staleRunMinutes} minutes`);
+    expect(ERROR_CATALOG["tenant.delete_extraction_running"].message).toContain(`${EXTRACTION_LIMITS.staleRunMinutes + 1} minutes`);
   });
 
   it("can't be changed at runtime", () => {
@@ -733,12 +771,14 @@ describe("the migrations", () => {
   });
 
   it("uses one SQLSTATE for two outcomes only where the module reads the phrase", () => {
-    // If open_extraction_run or complete_document_upload gains a third
-    // message under one of these SQLSTATEs, the phrases above won't cover it.
+    // If one of these functions gains a third message under one of these
+    // SQLSTATEs, the phrases above won't cover it.
     const phrased: Record<string, string[]> = {
-      "open_extraction_run 53400": [DATABASE_PHRASES.tenantCeilingReached, DATABASE_PHRASES.globalCeilingReached],
+      "check_extraction_limits 53400": [DATABASE_PHRASES.tenantCeilingReached, DATABASE_PHRASES.globalCeilingReached],
+      "enqueue_extraction_run 55000": [DATABASE_PHRASES.documentHasNoFile, DATABASE_PHRASES.extractionAlreadyRunning],
       "open_extraction_run 55000": [DATABASE_PHRASES.documentHasNoFile, DATABASE_PHRASES.extractionAlreadyRunning],
       "complete_document_upload 55000": [DATABASE_PHRASES.notWaitingForUpload, DATABASE_PHRASES.noFileUploaded],
+      "delete_tenant 55000": [DATABASE_PHRASES.tenantExtractionInProgress, DATABASE_PHRASES.tenantFilesRemain],
     };
     for (const [key, phrases] of Object.entries(phrased)) {
       const [fn, sqlstate] = key.split(" ");
@@ -759,8 +799,11 @@ describe("the migrations", () => {
     expect(allSql).not.toMatch(/drop constraint (if exists )?tenants_(name|slug)_check/i);
   });
 
-  it("still has the reaper's message, in the live open_extraction_run", () => {
-    expect(parsed.liveBodies.get("open_extraction_run")).toContain(RUN_ERROR_MARKERS.abandoned);
+  it("still has the reaper's messages, in the live reap_extraction_run", () => {
+    const reap = parsed.liveBodies.get("reap_extraction_run") ?? "";
+    expect(reap).toContain(`'cost estimated at %s prices (abandoned; `);
+    expect(reap).toContain(`): ${RUN_ERROR_MARKERS.abandoned}%s'`);
+    expect(reap).toContain(`'${RUN_ERROR_MARKERS.expired}%s'`);
   });
 
   it("enforces the rules the local checks mirror", () => {

@@ -3,7 +3,7 @@
 // "server-only" or read API keys.
 
 // Spend ceilings and the rate limit. The database enforces these in
-// open_extraction_run (see supabase/migrations/20260918000001); the values
+// check_extraction_limits (see supabase/migrations/20260925000002); the values
 // here mirror public.extraction_limits so the app and tests can reason
 // about them, and tests/extraction.test.ts fails if the two drift apart.
 export const EXTRACTION_LIMITS = {
@@ -14,8 +14,13 @@ export const EXTRACTION_LIMITS = {
   // most 200k in and MAX_OUTPUT_TOKENS out), so a forged run's cost is bounded
   maxInputTokensPerRun: 800_000,
   maxOutputTokensPerRun: 8_192,
-  // a run still 'running' after this long is failed by the next open
+  // a run still queued or running after this long (a claimed run: after
+  // its claim) is ended by the queue's sweep or the next enqueue
   staleRunMinutes: 10,
+  // how long a claimed queue message stays invisible: longer than the
+  // worker route's maxDuration, no longer than staleRunMinutes
+  // (20260925000002)
+  workerVisibilitySeconds: 300,
   // What an abandoned run is charged (abandonedRunCostUsd below, migration
   // 20260918000003): the calls and output cap the orchestrator enforces,
   // an input bound from the document's page count, at the price of the
