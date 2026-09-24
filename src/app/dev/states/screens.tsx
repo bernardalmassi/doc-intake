@@ -182,6 +182,49 @@ const UPLOAD_STATES: [id: string, title: string, state: UploadState, role?: Role
   ],
 ];
 
+// ----------------------------------------------------- create organization
+
+type CreateForm = { pending?: boolean; error?: ErrorCode; defaultName?: string; defaultAddress?: string };
+
+// Every state of the create form, on the page a first organization is
+// created from. Each error createTenant can return: the three about a field,
+// and every form-level one classifyDatabaseError gives create_tenant.
+const CREATE_STATES: [id: string, title: string, form: CreateForm][] = [
+  ["org-create-suggestion", "A name typed: the address is made from it", { defaultName: "Bramhall Interiors" }],
+  [
+    "org-create-address-typed",
+    "An address typed in: it no longer follows the name",
+    { defaultName: "Bramhall Interiors", defaultAddress: "bramhall" },
+  ],
+  ["org-create-pending", "Submitting", { pending: true, defaultName: "Bramhall Interiors" }],
+  ["org-create-error-name", "Name missing", { error: "tenant.name_required" }],
+  [
+    "org-create-error-slug-taken",
+    "Web address taken",
+    { error: "tenant.slug_taken", defaultName: "Bramhall Interiors", defaultAddress: "bramhall" },
+  ],
+  [
+    "org-create-error-slug-invalid",
+    "Web address invalid (typed)",
+    { error: "tenant.slug_invalid", defaultName: "Bramhall", defaultAddress: "BI" },
+  ],
+  [
+    "org-create-error-slug-derived-invalid",
+    "Web address invalid: a name that makes too short an address",
+    { error: "tenant.slug_invalid", defaultName: "Ω" },
+  ],
+  [
+    "org-create-error-network",
+    "The server couldn't be reached (a form-level error)",
+    { error: "network.unavailable", defaultName: "Bramhall Interiors" },
+  ],
+  ["org-create-error-service", "The service is down", { error: "service.unavailable", defaultName: "Bramhall Interiors" }],
+  ["org-create-error-signed-out", "Not signed in", { error: "auth.not_signed_in", defaultName: "Bramhall Interiors" }],
+  ["org-create-error-session", "The session expired", { error: "auth.session_expired", defaultName: "Bramhall Interiors" }],
+  ["org-create-error-input", "A value the database refused", { error: "input.invalid", defaultName: "Bramhall Interiors" }],
+  ["org-create-error-unknown", "Anything unanticipated", { error: "unknown", defaultName: "Bramhall Interiors" }],
+];
+
 // ---------------------------------------------------------------- screens
 
 export const SCREENS: Screen[] = [
@@ -367,43 +410,21 @@ export const SCREENS: Screen[] = [
     title: "Four organizations, one with the longest name and address",
     render: () => <OrgsPage list={[...organizations, longOrganization]} />,
   },
+  ...CREATE_STATES.map(([id, title, form]) => ({
+    id,
+    group: "Create organization",
+    title,
+    render: () => <OrgsPage list={[]} form={<FixtureOrganizationForm {...form} />} />,
+  })),
   {
-    id: "org-create-pending",
-    group: "Organizations",
-    title: "Create organization, submitting",
-    render: () => <OrgsPage list={[]} form={<FixtureOrganizationForm pending defaultName="Bramhall Interiors" />} />,
-  },
-  {
-    id: "org-create-error-name",
-    group: "Organizations",
-    title: "Create organization: name missing",
-    render: () => <OrgsPage list={[]} form={<FixtureOrganizationForm error="tenant.name_required" />} />,
-  },
-  {
-    id: "org-create-error-slug-taken",
-    group: "Organizations",
-    title: "Create organization: web address taken",
+    id: "org-create-error-slug-taken-several",
+    group: "Create organization",
+    title: "Web address taken, with organizations listed (the plan clicks the summary to open the form)",
     render: () => (
       <OrgsPage
-        list={[]}
-        form={<FixtureOrganizationForm error="tenant.slug_taken" defaultName="Bramhall Interiors" defaultAddress="bramhall" />}
+        list={organizations}
+        form={<FixtureOrganizationForm error="tenant.slug_taken" defaultName="Bramhall Interiors" defaultAddress="bramhall-interiors" />}
       />
-    ),
-  },
-  {
-    id: "org-create-error-slug-invalid",
-    group: "Organizations",
-    title: "Create organization: web address invalid",
-    render: () => (
-      <OrgsPage list={[]} form={<FixtureOrganizationForm error="tenant.slug_invalid" defaultName="Bramhall" defaultAddress="BI" />} />
-    ),
-  },
-  {
-    id: "org-create-error-network",
-    group: "Organizations",
-    title: "Create organization: the server couldn't be reached (a form-level error)",
-    render: () => (
-      <OrgsPage list={[]} form={<FixtureOrganizationForm error="network.unavailable" defaultName="Bramhall Interiors" />} />
     ),
   },
 

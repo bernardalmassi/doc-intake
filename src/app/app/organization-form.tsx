@@ -1,7 +1,15 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { buttonClass, errorClass, hintClass, inputClass, labelClass } from "@/app/ui";
+import {
+  errorClass,
+  errorInkRuleClass,
+  formRowClass,
+  formRowLabelClass,
+  hintClass,
+  inputClass,
+  submitButtonClass,
+} from "@/app/ui";
 import { type ErrorCode, SLUG_PATTERN, userFacingError } from "@/lib/errors";
 import { SLUG_MAX_LENGTH, slugify } from "@/lib/slug";
 
@@ -9,6 +17,9 @@ import { SLUG_MAX_LENGTH, slugify } from "@/lib/slug";
 // src/lib/errors.ts. Native validation enforces it before submit with the
 // same words the server's answer would use; the server checks it again.
 const ADDRESS_RULE = "3 to 48 characters: lowercase letters, numbers and hyphens.";
+// Said while the address follows the name (createTenant derives it the same
+// way, and adds -2, -3 … if it's taken).
+const FOLLOWING_RULE = "Made from the name until you type here.";
 const ADDRESS_INVALID = userFacingError("tenant.slug_invalid").message;
 const NAME_MISSING = userFacingError("tenant.name_required").message;
 
@@ -101,9 +112,9 @@ export function OrganizationForm({
   // its error is part of its description, so a screen reader reads it out.
   // Focus that is already in the field (Enter pressed there) can't move to
   // it, and nothing would be read, so the error goes to the alert region
-  // instead. Otherwise, disabling the submit button while pending dropped
-  // focus if it was on the button, so put it back there, ready for another
-  // try.
+  // instead. Otherwise, if focus was lost while pending (the button is only
+  // aria-disabled now, so it shouldn't be), put it back on the button,
+  // ready for another try.
   const wasPending = useRef(pending);
   useEffect(() => {
     // An echoed error goes when its field is edited and the error hides.
@@ -125,140 +136,140 @@ export function OrganizationForm({
     wasPending.current = pending;
   }, [pending, nameError, addressError]);
 
+  // Until the address is typed in, it is made from the name.
+  const following = !addressEdited;
+
   return (
+    // The sign-in form's ruled register: one row per field, the label in
+    // the left column, then the button's row. Whoever places the form closes
+    // it with a rule (it may be the last thing in a fold). An error stands
+    // under what it is about against a 2px ink rule; signal is kept for the
+    // one primary action.
     <form
       action={action}
-      onSubmit={() => {
+      onSubmit={(event) => {
+        // The button stays focusable while pending (aria-disabled), so a
+        // second click or Enter lands here and is dropped.
+        if (pending) {
+          event.preventDefault();
+          return;
+        }
         setChanged({ name: false, address: false });
         // Emptied first, so the same error after the next submit is a
         // change, and is read again.
         if (echoRef.current) echoRef.current.textContent = "";
       }}
     >
-      <div>
-        <label htmlFor={ids.name} className={labelClass}>
-          Organization name
+      <div className={formRowClass}>
+        <label htmlFor={ids.name} className={formRowLabelClass}>
+          Name
         </label>
-        <input
-          ref={nameRef}
-          id={ids.name}
-          name="name"
-          autoComplete="organization"
-          required
-          value={name}
-          onChange={(event) => {
-            setName(event.target.value);
-            setChanged((prev) => ({ name: true, address: prev.address || !addressEdited }));
-          }}
-          aria-invalid={nameError ? true : undefined}
-          aria-describedby={nameError ? ids.nameError : undefined}
-          className={inputClass}
-        />
-        {nameError && (
-          <p id={ids.nameError} className={`mt-1 ${errorClass}`}>
-            {nameError}
-          </p>
-        )}
+        <div className="min-w-0">
+          <input
+            ref={nameRef}
+            id={ids.name}
+            name="name"
+            autoComplete="organization"
+            required
+            value={name}
+            onChange={(event) => {
+              setName(event.target.value);
+              setChanged((prev) => ({ name: true, address: prev.address || !addressEdited }));
+            }}
+            aria-invalid={nameError ? true : undefined}
+            aria-describedby={nameError ? ids.nameError : undefined}
+            className={inputClass}
+          />
+          {nameError && (
+            <p id={ids.nameError} className={`mt-3 ${errorClass} ${errorInkRuleClass}`}>
+              {nameError}
+            </p>
+          )}
+        </div>
       </div>
 
-      <div className="mt-4">
-        <label htmlFor={ids.address} className={labelClass}>
+      <div className={formRowClass}>
+        <label htmlFor={ids.address} className={formRowLabelClass}>
           Web address
         </label>
-        {/* The prefix shows the address as it will appear. Screen readers
-            get it from the hint instead. */}
-        <div className="flex max-w-sm items-end gap-1.5">
-          <span aria-hidden="true" className="flex h-9 shrink-0 items-center text-ink">
-            /app/
-          </span>
-          <input
-            ref={addressRef}
-            id={ids.address}
-            // Submitted only once typed in. While it follows the name the
-            // server derives the same address and, if it's taken, adds
-            // -2, -3 … instead of refusing it.
-            name={addressEdited ? "slug" : undefined}
-            maxLength={SLUG_MAX_LENGTH}
-            pattern="[a-z0-9\-]{3,48}"
-            autoComplete="off"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            value={address}
-            onChange={(event) => {
-              setAddressEdited(true);
-              setTypedAddress(event.target.value);
-              setChanged((prev) => ({ ...prev, address: true }));
-            }}
-            aria-invalid={addressError ? true : undefined}
-            aria-describedby={
-              addressError ? `${ids.addressError} ${ids.addressHint}` : ids.addressHint
-            }
-            className={`${inputClass} min-w-0`}
-          />
-        </div>
-        <p id={ids.addressHint} className={`mt-1 ${hintClass}`}>
-          <span className="sr-only">Your organization will be at /app/ followed by this. </span>
-          {ADDRESS_RULE}
-        </p>
-        {addressError && (
-          <p id={ids.addressError} className={`mt-1 ${errorClass}`}>
-            {addressError}
+        <div className="min-w-0">
+          {/* The prefix shows the address as it will appear. Screen readers
+              get it from the hint instead. */}
+          <div className="flex max-w-sm items-start gap-2">
+            <span aria-hidden="true" className="mt-1 flex h-10 shrink-0 items-center">
+              /app/
+            </span>
+            <input
+              ref={addressRef}
+              id={ids.address}
+              // Submitted only once typed in. While it follows the name the
+              // server derives the same address and, if it's taken, adds
+              // -2, -3 … instead of refusing it.
+              name={addressEdited ? "slug" : undefined}
+              maxLength={SLUG_MAX_LENGTH}
+              pattern="[a-z0-9\-]{3,48}"
+              autoComplete="off"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              value={address}
+              onChange={(event) => {
+                setAddressEdited(true);
+                setTypedAddress(event.target.value);
+                setChanged((prev) => ({ ...prev, address: true }));
+              }}
+              aria-invalid={addressError ? true : undefined}
+              aria-describedby={
+                addressError ? `${ids.addressError} ${ids.addressHint}` : ids.addressHint
+              }
+              className={`${inputClass} min-w-0`}
+            />
+          </div>
+          <p id={ids.addressHint} className={`mt-2 ${hintClass}`}>
+            <span className="sr-only">Your organization will be at /app/ followed by this. </span>
+            {following && <>{FOLLOWING_RULE} </>}
+            {ADDRESS_RULE}
           </p>
-        )}
-      </div>
-
-      {/* min-w keeps the button the same width when its label swaps. */}
-      <div className="mt-6">
-        <button
-          ref={submitRef}
-          type="submit"
-          disabled={pending}
-          className={`${buttonClass} min-w-37`}
-        >
-          {pending ? (
-            <>
-              <Spinner />
-              Creating…
-            </>
-          ) : (
-            "Create organization"
+          {addressError && (
+            <p id={ids.addressError} className={`mt-3 ${errorClass} ${errorInkRuleClass}`}>
+              {addressError}
+            </p>
           )}
-        </button>
+        </div>
       </div>
 
-      {/* Always rendered, so a change inside them is announced, and side by
-          side rather than nested: polite for progress, alert for an error
-          (the echo of a field error, or one about the whole form). Empty,
-          they take no space. */}
-      <p aria-live="polite" className="sr-only">
-        {pending ? "Creating the organization…" : ""}
-      </p>
-      <div role="alert" className="text-small">
-        {/* Written by the effect above, never by React. */}
-        <span ref={echoRef} className="sr-only" />
-        {formError && <p className={`mt-3 ${errorClass}`}>{formError}</p>}
+      {/* The button's row: nothing in the label column, so the button lines
+          up with the fields above it. */}
+      <div className={formRowClass}>
+        <div aria-hidden="true" className="hidden md:block" />
+        <div className="min-w-0">
+          {/* Always rendered, so a change inside them is announced, and side
+              by side rather than nested: polite for progress, alert for an
+              error (the echo of a field error, or one about the whole
+              form). Empty, they take no space. */}
+          <p aria-live="polite" className="sr-only">
+            {pending ? "Creating the organization…" : ""}
+          </p>
+          <div role="alert">
+            {/* Written by the effect above, never by React. */}
+            <span ref={echoRef} className="sr-only" />
+            {formError && <p className={`mb-4 ${errorClass} ${errorInkRuleClass}`}>{formError}</p>}
+          </div>
+
+          {/* While pending, the landing's dotted border and the words say it
+              is working; nothing turns (DESIGN.md: no looping motion).
+              aria-disabled rather than disabled, so focus stays on it. The
+              min-w keeps the button the same width when its label swaps. */}
+          <button
+            ref={submitRef}
+            type="submit"
+            aria-disabled={pending || undefined}
+            className={`${submitButtonClass} min-w-60`}
+          >
+            {pending ? "Creating…" : "Create organization"}
+          </button>
+        </div>
       </div>
     </form>
-  );
-}
-
-// Static under prefers-reduced-motion; the label still says what's
-// happening.
-function Spinner() {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      width="16"
-      height="16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      aria-hidden="true"
-      className="motion-safe:animate-spin"
-    >
-      <path d="M8 2a6 6 0 1 1-6 6" />
-    </svg>
   );
 }
