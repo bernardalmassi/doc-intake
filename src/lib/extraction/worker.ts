@@ -57,7 +57,7 @@ type ClaimRow = {
 export async function processOneDelivery({ providers }: { providers: () => ProviderPair }): Promise<WorkerResult> {
   let url: string;
   try {
-    // under test, refuses the app's project before any request
+    // refuses every project but this NODE_ENV's one, before any client exists
     url = workerProjectUrl(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.NODE_ENV);
   } catch {
     log.error("worker.not_configured", { error_code: "worker_target_refused" });

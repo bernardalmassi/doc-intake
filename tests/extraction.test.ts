@@ -45,7 +45,8 @@ import { countPages } from "@/lib/extraction/pages";
 import { ProviderError, type ExtractionProvider } from "@/lib/extraction/providers/types";
 import { toFinishParams, type RunOutcome } from "@/lib/extraction/run";
 import { FIELD_NAMES } from "@/lib/extraction/schema";
-import { APP_PROJECT_REF } from "@/lib/extraction/worker-target";
+import { setLogSink } from "@/lib/log";
+import { APP_PROJECT_REF, TEST_PROJECT_REF } from "@/lib/extraction/worker-target";
 import { answer, fakeProvider, validJson } from "./helpers/fake-provider";
 import { runLocalWorker, runWorkerPointedAt } from "./helpers/local-worker";
 import { SUPABASE_TEST_PUBLISHABLE_KEY, SUPABASE_TEST_URL, testEmail } from "./helpers/supabase-target";
@@ -636,18 +637,48 @@ describe("limits and deletion", () => {
 });
 
 describe("guards", () => {
-  it("the worker refuses the app's project under test, before any request", async () => {
+  const APP_URL = `https://${APP_PROJECT_REF}.supabase.co`;
+  const TEST_URL = `https://${TEST_PROJECT_REF}.supabase.co`;
+
+  // The worker run against `target` under `nodeEnv` with fetch stubbed:
+  // what it returned, how many requests it tried, how many provider calls it
+  // made, and the error codes it logged.
+  async function workerAgainst(target: string, nodeEnv: string) {
     const requests = vi.fn(async () => new Response("{}", { status: 500 }));
+    const codes: unknown[] = [];
     vi.stubGlobal("fetch", requests);
+    const restoreSink = setLogSink((line) => codes.push(JSON.parse(line).fields?.error_code));
     try {
       const provider = never();
-      const result = await runWorkerPointedAt(`https://${APP_PROJECT_REF}.supabase.co`, only(provider));
-      expect(result.kind).toBe("not_configured");
-      expect(requests).not.toHaveBeenCalled();
-      expect(provider.requests).toHaveLength(0);
+      const result = await runWorkerPointedAt(target, only(provider), nodeEnv);
+      return { kind: result.kind, requests: requests.mock.calls.length, providerCalls: provider.requests.length, codes };
     } finally {
+      restoreSink();
       vi.unstubAllGlobals();
     }
+  }
+
+  it.each([
+    ["the app's project under test", APP_URL, "test"],
+    ["the test project in production", TEST_URL, "production"],
+    ["a lookalike host", `${TEST_URL}.evil.example`, "test"],
+    ["a lookalike host, in production", `${APP_URL}.evil.example`, "production"],
+    ["http", `http://${TEST_PROJECT_REF}.supabase.co`, "test"],
+    ["a port", `${TEST_URL}:8443`, "test"],
+    ["a path", `${TEST_URL}/rest/v1`, "test"],
+    ["a URL with credentials", `https://user:pass@${TEST_PROJECT_REF}.supabase.co`, "test"],
+    ["development mode, the test project", TEST_URL, "development"],
+    ["development mode, the app's project", APP_URL, "development"],
+  ])("the worker refuses %s before any request", async (_label, target, nodeEnv) => {
+    const run = await workerAgainst(target, nodeEnv);
+    expect(run).toEqual({ kind: "not_configured", requests: 0, providerCalls: 0, codes: ["worker_target_refused"] });
+  });
+
+  it("the same harness sees a request when the URL is right: the stub would catch one", async () => {
+    const run = await workerAgainst(TEST_URL, "test");
+    expect(run.kind).toBe("claim_failed");
+    expect(run.requests).toBeGreaterThan(0);
+    expect(run.providerCalls).toBe(0);
   });
 
   it("a member reads only their tenant's runs and fields; other tenants' come back empty", async () => {

@@ -28,17 +28,21 @@ export function runLocalWorker(providers: ProviderPair): Promise<WorkerResult> {
   return processOneDelivery({ providers: () => providers });
 }
 
-// For the guard test only: the worker itself, pointed at `url` without the
-// runner's own check, to prove that worker-target.ts refuses the app's
-// project before any request. The caller stubs fetch, so nothing could
-// leave even if the guard failed.
-export async function runWorkerPointedAt(url: string, providers: ProviderPair): Promise<WorkerResult> {
+// For the guard tests only: the worker itself, pointed at `url` without the
+// runner's own check, and run under `nodeEnv` if one is given, to prove that
+// worker-target.ts refuses every project but the right one for the NODE_ENV
+// before any request. The caller stubs fetch, so nothing could leave even if
+// the guard failed.
+export async function runWorkerPointedAt(url: string, providers: ProviderPair, nodeEnv?: string): Promise<WorkerResult> {
   if (process.env.NODE_ENV !== "test") throw new Error("the local runner runs only under Vitest");
-  const saved = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  process.env.NEXT_PUBLIC_SUPABASE_URL = url;
+  const env = process.env as Record<string, string | undefined>;
+  const saved = { url: env.NEXT_PUBLIC_SUPABASE_URL, nodeEnv: env.NODE_ENV };
+  env.NEXT_PUBLIC_SUPABASE_URL = url;
+  if (nodeEnv !== undefined) env.NODE_ENV = nodeEnv;
   try {
     return await processOneDelivery({ providers: () => providers });
   } finally {
-    process.env.NEXT_PUBLIC_SUPABASE_URL = saved;
+    env.NEXT_PUBLIC_SUPABASE_URL = saved.url;
+    env.NODE_ENV = saved.nodeEnv;
   }
 }

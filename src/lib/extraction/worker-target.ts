@@ -1,18 +1,33 @@
-// The Supabase project the worker may reach with the secret key it holds.
-// In production that is the app's project, from NEXT_PUBLIC_SUPABASE_URL.
-// Under test (NODE_ENV=test, which Vitest sets), the local runner
-// (tests/helpers/local-worker.ts) points the worker at the test project, and
-// this refuses the app's project before any request is made, so a
-// misconfigured test run can't claim, run or charge a real user's
-// extraction. Pure, so tests/unit/worker-target.test.ts can drive it.
+// The Supabase project the worker may reach with the secret key it holds,
+// decided before any client exists. The key reads every tenant's files and
+// can claim and finish runs, so the URL it is sent to is not trusted from
+// the environment: NEXT_PUBLIC_SUPABASE_URL must be exactly the one project
+// the worker is meant to use for its NODE_ENV.
+//   production  the app's project
+//   test        the test project (Vitest sets NODE_ENV=test, and the local
+//               runner, tests/helpers/local-worker.ts, points it there)
+// Anything else, including development, is refused. So a mistyped or
+// poisoned URL, or a test run pointed at the app, sends the key nowhere.
+// Pure, so tests/unit/worker-target.test.ts can drive it.
 
-// The app's project (CLAUDE.md, "Commands"). Its test counterpart is
-// jqhqvtkhijrrvhfwseaq.
+// Both refs are public (CLAUDE.md, "Commands").
 export const APP_PROJECT_REF = "rimxdhisbmhjhjdvultm";
+export const TEST_PROJECT_REF = "jqhqvtkhijrrvhfwseaq";
 
-// The project URL's origin, or an error naming what is wrong with it,
-// never the URL itself.
+const PROJECT_URLS: Readonly<Record<string, string>> = {
+  production: `https://${APP_PROJECT_REF}.supabase.co`,
+  test: `https://${TEST_PROJECT_REF}.supabase.co`,
+};
+
+// The project's URL, or an error naming what is wrong, never the URL given.
+// The parsed URL must be exactly https://<ref>.supabase.co/: https, that
+// host, no port, no path beyond /, no query or fragment, no username or
+// password.
 export function workerProjectUrl(url: string | undefined, nodeEnv: string | undefined): string {
+  const expected = nodeEnv === "production" || nodeEnv === "test" ? PROJECT_URLS[nodeEnv] : undefined;
+  if (expected === undefined) {
+    throw new Error("the worker runs only under NODE_ENV production (the app's project) or test (the test project)");
+  }
   if (typeof url !== "string" || url.length === 0) throw new Error("the worker has no Supabase URL");
   let parsed: URL;
   try {
@@ -20,14 +35,8 @@ export function workerProjectUrl(url: string | undefined, nodeEnv: string | unde
   } catch {
     throw new Error("the worker's Supabase URL is not a URL");
   }
-  const host = parsed.hostname.toLowerCase();
-  const local = host === "localhost" || host === "127.0.0.1";
-  if (parsed.protocol !== "https:" && !(local && parsed.protocol === "http:")) {
-    throw new Error("the worker's Supabase URL must be https");
+  if (parsed.href !== `${expected}/`) {
+    throw new Error(`under NODE_ENV=${nodeEnv} the worker's Supabase URL must be exactly ${expected}`);
   }
-  const hosted = /^([a-z0-9]+)\.supabase\.(co|in)$/.exec(host);
-  if (nodeEnv === "test" && hosted?.[1] === APP_PROJECT_REF) {
-    throw new Error("refusing to run the worker against the app's project under test; point it at the test project");
-  }
-  return parsed.origin;
+  return expected;
 }
