@@ -32,7 +32,7 @@ const copy = {
   },
   "sign-up": {
     submit: "Create account",
-    pending: "Creating your account…",
+    pending: "Creating account…",
     passwordAutoComplete: "new-password",
     passwordMissing: "Choose a password.",
   },
