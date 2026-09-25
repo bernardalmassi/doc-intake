@@ -218,11 +218,13 @@ export function UploadForm({
         }}
         // A ruled line in the register's columns: where the upload stands,
         // the file and what happened to it, the buttons at the right. The
-        // drop area is the whole line; a file dragged over it draws a 2px
-        // ink frame.
+        // drop area is the whole line; a file dragged over it thickens its
+        // two rules to 2px, as a link's underline does on hover, and takes
+        // the extra pixel from the padding so nothing below moves. No frame:
+        // a box drawn inside the line would touch its words and its button.
         data-upload={state.kind}
-        className={`grid grid-cols-1 gap-y-2 border-y border-ink py-4 md:grid-cols-[11rem_minmax(0,1fr)_auto] md:gap-x-4 ${
-          dragging ? "outline-2 -outline-offset-2 outline-ink" : ""
+        className={`grid grid-cols-1 gap-y-2 border-ink md:grid-cols-[11rem_minmax(0,1fr)_auto] md:gap-x-4 ${
+          dragging ? "border-y-2 py-[15px]" : "border-y py-4"
         }`}
       >
         <p className="label md:pt-1">{phase}</p>
