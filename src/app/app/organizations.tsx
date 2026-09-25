@@ -60,7 +60,7 @@ export function OrganizationsView({
             // organization page, then what an organization is.
             <div className="border-y border-ink py-4">
               <p className="max-w-prose">
-                None yet. An organization is a shared workspace: its documents, what was extracted from them and its
+                No organizations yet. An organization is a shared workspace: its documents, what was extracted from them and its
                 monthly extraction budget are seen only by its members.
               </p>
             </div>

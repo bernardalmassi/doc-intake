@@ -31,7 +31,7 @@ describe("the organizations list", () => {
     expect(text(organizations)).toContain("Your organizations · 3");
     const empty = text([]);
     expect(empty).toContain("Your organizations · 0");
-    expect(empty).toContain("None yet.");
+    expect(empty).toContain("No organizations yet.");
   });
 
   it("tells whoever creates one what they can do in it", () => {
