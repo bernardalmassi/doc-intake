@@ -538,6 +538,7 @@ begin
     ('private.abandoned_estimate(integer)', false, false, false),
     ('private.check_extraction_limits(uuid,uuid)', false, false, false),
     ('private.reap_extraction_run(uuid,text)', false, false, false),
+    ('private.lock_extraction_run(uuid,boolean)', false, false, false),
     ('private.wake_extraction_worker()', false, false, false),
     ('private.sweep_extraction_queue()', false, false, false),
     ('private.refuse_spend_change()', false, false, false),

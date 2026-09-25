@@ -493,7 +493,13 @@ describe("the worker's own functions", () => {
     }
     const read = await x().client.schema("pgmq").rpc("read", { queue_name: "extraction", vt: 0, qty: 1 });
     expect(read.error?.code).toBe("PGRST106");
-    for (const fn of ["sweep_extraction_queue", "wake_extraction_worker", "reap_extraction_run", "check_extraction_limits"]) {
+    for (const fn of [
+      "sweep_extraction_queue",
+      "wake_extraction_worker",
+      "reap_extraction_run",
+      "lock_extraction_run",
+      "check_extraction_limits",
+    ]) {
       const { error } = await x().client.rpc(fn);
       expect(error?.code, fn).toBe("PGRST202");
     }
