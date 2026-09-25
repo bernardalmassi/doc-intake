@@ -78,7 +78,7 @@ and open http://localhost:3000.
 |---|---|---|
 | `npm run test:unit` | the `unit` Vitest project, `tests/unit/`: validation, gating, the orchestrator and the worker's delivery with fake providers, real SDK error handling over a fake `fetch`, the output guard and injection fixtures, the logger's redaction, the error taxonomy, the worker's boundary, bearer and project guard, and the queue migration's rules | nothing: no database, no network, no secrets |
 | `npm test` | the unit tests plus the `supabase` project, `tests/tenant-isolation.test.ts` and `tests/extraction.test.ts`, against a real Supabase project; the extraction suite runs the worker in-process with fake and replayed providers | `.env.test` |
-| `npm run test:db` | every file in `supabase/tests/`: the stale-run reaper and the queue (the wake, the sweep, the ceilings, the ledger, the grants), each in a rolled-back transaction, against the test project | `.env.test` and a logged-in Supabase CLI |
+| `npm run test:db` | every file in `supabase/tests/`: the stale-run reaper and the queue (the wake, the sweep, the ceilings, the ledger, the grants), each in a rolled-back transaction, then the two-session lock-order tests in `supabase/tests/sessions/` (a finish racing the sweep, and a claim), which commit one small fixture and remove it, against the test project | `.env.test` and a logged-in Supabase CLI |
 | `npm run eval` | the offline eval: recorded provider answers replayed and scored (see [Evals](#evals)) | nothing |
 | `npm run typecheck` | `next typegen` then `tsc --noEmit` | nothing |
 

@@ -120,7 +120,7 @@ Every failure a user can hit, the code `src/lib/errors.ts` gives it, and the mes
 
 ## Extraction: how a run can fail
 
-These come from the text stored in `extraction_runs.error`, written by the queue's worker (`src/lib/extraction/delivery.ts`, the orchestrator in `run.ts`) or by `reap_extraction_run` in the database (`20260925000002`). The Extract action only enqueues, so it returns none of them; the organization page shows them as the run polls to its end.
+These come from the text stored in `extraction_runs.error`, written by the queue's worker (`src/lib/extraction/delivery.ts`, the orchestrator in `run.ts`) or by `reap_extraction_run` in the database (`20260925000002`, replaced with the same texts in `20260925000003`). The Extract action only enqueues, so it returns none of them; the organization page shows them as the run polls to its end.
 
 A stored error may start with "cost estimated at the dearest price on file (SQLSTATE; served by model id): ". `failedCloseAttempts` in `run.ts` writes it when the run was charged at the dearest price on file because the database couldn't price the model that served it. It may also start with "cost estimated at claude-sonnet-5 prices (abandoned; …): ", which `reap_extraction_run` writes for a run abandoned at its page-count estimate. Neither is a failure of its own: `classifyRunError` skips it and classifies what follows, and `isCostEstimated` reports it.
 

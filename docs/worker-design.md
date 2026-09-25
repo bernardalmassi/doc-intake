@@ -171,6 +171,8 @@ A reap is still rolled back if the same open is refused by the hourly limit. In 
    - Otherwise it sets `running` and `claimed_at = now()`, inserts a fresh claim token, and returns the run id, token, `storage_path`, `mime_type` and `page_count`.
 
    Reading the message and claiming the run are one transaction, so `read_ct = 1` always means "claimed".
+
+   Since `20260925000003` (section 15), the read locks the message before the claim knows its run, so the run's document and the run are taken with NOWAIT. If either is held, the read is rolled back (`read_ct` and `vt` as they were) and the claim returns no row.
 6. **Preflight in the worker.**
    - It downloads the object with the secret key.
    - It checks the magic bytes against the row's type.
@@ -348,7 +350,7 @@ In this order:
 The unit test asserts 180 < 240 < 300 ≤ 600.
 
 **The sweep** runs every 60 s. It has four steps and runs them in the order (a), (c), (d), (b), so it never wakes a worker for a run it has just expired:
-- **(a) Claimed runs past their visibility timeout.** For messages with `read_ct >= 1 and vt <= now()` (`for update skip locked` on `pgmq.q_extraction`): reap the run by the abandoned rule and archive the message.
+- **(a) Claimed runs past their visibility timeout.** For messages with `read_ct >= 1 and vt <= now()`: reap the run by the abandoned rule and archive the message. Since `20260925000003` the sweep reads these without locking the message, and locks as section 15 says. `20260925000002` used `for update skip locked` on `pgmq.q_extraction`, which locked the message before the run.
 - **(b) Wakes that never arrived.** For messages with `read_ct = 0 and vt <= now() and enqueued_at < now() - 60 s`, whose run is still younger than `stale_run_minutes`: one wake each, at most 5 per tick.
 - **(c) Old-path runs.** For runs `running` with no live message and `coalesce(claimed_at, started_at)` older than 10 minutes: `reap_extraction_run`, at the abandoned estimate. This closes "a stale document is released only by the next click".
 - **(d) Queued runs past the deadline.** For runs `queued` with `started_at` older than `stale_run_minutes`: expire the run at 0 and archive its message.
@@ -595,3 +597,69 @@ Local dev enqueues to the app project, which wakes the production worker. That i
 **Ongoing:**
 - Rotating the bearer means changing Vercel and Vault together. Wakes in between get 401 and stay at `read_ct` 0, and the sweep wakes them again.
 - If runs sit `queued`, check the pg_net worker and run `select net.worker_restart();`. Until then, sweep step (d) expires them at 0 after 10 minutes.
+
+## 15. Lock order (`20260925000003`)
+
+**The bug.** In `20260925000002` the queue took a message and its run in opposite orders. A Codex adversarial review found it:
+- Sweep step (a) locked the message (`for update skip locked`) and then waited for the run in `reap_extraction_run`.
+- `finish_extraction_run` held the run and then waited to archive the message.
+- `claim_extraction_run` did what the sweep did: `pgmq.read` locked an expired message, and then it waited for the run.
+
+A finish arriving as its visibility timeout ran out made a cycle, and Postgres aborted one side. If it aborted the finish, the sweep or the claim went on to reap the run. The worker's retries then found the claim token gone, so a paid result was dropped and charged as abandoned.
+
+**The order.** Every function takes these, whenever it takes them, in this order:
+
+| # | What | How it is taken |
+|---|---|---|
+| 1 | the tenant row | key share (enqueue, open, finish, close); update (`delete_tenant`) |
+| 2 | the document row | `for update` |
+| 3 | the run row | `for update` |
+| 4 | the queue message | `pgmq.archive` (a delete), or `pgmq.read` (skip locked, then an update) |
+| 5 | the limits' advisory lock | `check_extraction_limits`; nothing waits after it |
+
+**Why this order.**
+- **The tenant first.** `delete_tenant` has to lock the tenant before it can check for runs in flight. Inserting a run or its fields takes the tenant's key share through the foreign key. Before, the enqueue took that key share after the document, so it could wait for `delete_tenant` while holding the document that `delete_tenant`'s cascade would wait for. Enqueue, open, finish and close now take it first.
+- **The document before the run.** Two things lock them in that order and can't be turned round. The enqueue locks the document to order enqueues for it before it knows whether a run of it is stale. A document's deletion locks the document and then, through `on delete set null`, its runs. Everything else follows them.
+- **The message after the run.** Archiving it is the last thing that ending a run does, and nothing holding a message needs more than its run's rows.
+- **The advisory lock last.** The enqueue takes it after everything else, and after it only inserts rows nobody else can hold.
+
+**Function by function.** `private.lock_extraction_run(run_id, nowait)` is the one place a run is locked. It reads the run's document id, locks the document, then locks the run, and returns the run as it is under the lock.
+
+| Function | Takes, in order | Waits? |
+|---|---|---|
+| `enqueue_extraction_run`, `open_extraction_run` | tenant (key share); document; for a stale run of that document, its run and message (`reap_extraction_run`); the limits lock | yes |
+| `finish_extraction_run`, `close_extraction_run` | tenant (key share); document and run (`lock_extraction_run`); the message (finish only) | yes |
+| `reap_extraction_run` | document and run (`lock_extraction_run`); the message | yes. Its callers already hold the document (enqueue, open) or the document and the run (claim, sweep). |
+| `claim_extraction_run` | the message (`pgmq.read`), then document and run | **Out of order, so it never waits.** The document and the run are taken with NOWAIT, in the same subtransaction as the read. On a miss the subtransaction rolls back: the message keeps its `read_ct` and `vt` and is released, and the claim returns no row. |
+| `sweep_extraction_queue` (a), (c), (d) | for each candidate: document and run, then the message | Candidates are read with no lock. Each candidate's document and run are taken with NOWAIT, in a subtransaction of their own. The state is checked again under the locks before any reap or archive. Only the archive waits. |
+| sweep (b) | nothing | |
+| `delete_tenant` | tenant (update); all its documents, then all its runs, by id; then the cascade | yes |
+| a user deleting a document | document, then its runs (the cascade) | yes, already in order |
+
+**Why the sweep never waits for a document or a run.** It ends many runs in one transaction and keeps their locks until it commits. Waiting for one candidate while holding others could close a cycle with another transaction that locks several documents, such as `delete_tenant`. So it skips what it can't lock, and the next tick sees it again.
+
+**Why `delete_tenant` locks before the cascade.** Deleting the tenant cascades to its documents and runs in the order Postgres fires the foreign keys' triggers, which is the order of their names. On the test project that happens to be documents before runs, but nothing guarantees it. Locked first, in the order, the cascade waits for nothing.
+
+**What a miss costs.**
+- A claim that misses returns no row, and the worker logs `idle`. A message never read is woken again by sweep (b) after 60 s; a claimed one is ended by sweep (a) at its visibility timeout.
+- A miss needs someone holding the run's document or the run at the moment of the read: a finish, a reap, the sweep, an enqueue of that document, or a user renaming it.
+- A sweep candidate that misses waits one tick.
+
+**Tested** by the two-session tests in `supabase/tests/sessions/`, run by `npm run test:db` on two connections to the test project:
+1. A finish holds its run while the sweep runs at the message's visibility timeout.
+2. A claim reads the same expired message while a finish holds its run.
+
+Session F takes the finish's first locks (tenant, document, run) with the finish's own statements, in one transaction. It holds them until the other session has acted or is waiting on it, then calls `finish_extraction_run` in the same transaction. Each case passes only if:
+- the finish commits with its result: run succeeded, field written, document extracted, one `charge` row
+- neither session reports a deadlock
+- the message is archived exactly once, with `read_ct` 1
+- the other session returned within `deadlock_timeout` and left the run running
+- the sweep never locked the message (its `xmax` stayed 0)
+- the claim's read was rolled back (a non-zero `xmax`, with `read_ct` and `vt` unchanged)
+
+Run against `20260925000002`'s functions, both cases failed with `40P01 deadlock detected`. There Postgres aborted the sweep or the claim, the side that had waited first, and the finish committed. With the waits the other way round, the finish is the side aborted.
+
+**Outside this order.** Found while mapping it, not changed:
+- **The caller's own account.** The enqueue's insert takes the key share of the caller's `auth.users` row (`started_by`) after the document, and deleting that account cascades to the documents it uploaded. An admin enqueueing their own upload while their account is being deleted can deadlock. One of the two actions fails, and nothing is charged, because no run exists yet.
+- **Account deletion's cascade order.** Deleting an account cascades to documents (`uploaded_by`) and runs (`started_by`) in trigger-name order. On the test project that is documents first, as the order wants. The app project wasn't checked, since it is never queried here. If its order were runs first, deleting the account that started a run during that run's finish could deadlock, and the worker's retry would record the run as failed with its usage.
+- **Owner removal against `delete_tenant`.** `memberships_keep_an_owner` locks the membership and then the tenant; `delete_tenant` locks the tenant and then the memberships, by cascade. An owner removed while the organization is deleted can deadlock. No spend is involved.
