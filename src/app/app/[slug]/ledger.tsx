@@ -105,7 +105,10 @@ export function RunsToggle({
         </button>
         {action}
       </div>
-      <div id={tableId} hidden={!open} className="ledger-arrive">
+      {/* Under 80rem the table has no head, so its first rule would sit
+          straight under the summary, which wraps to two lines at 375:
+          the same 12px the summary has above it. */}
+      <div id={tableId} hidden={!open} className="ledger-arrive max-xl:mt-3">
         {children}
       </div>
     </div>
