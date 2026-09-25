@@ -58,7 +58,7 @@ The signed-in pages and the auth pages. Same product and same instrument as the 
 - Signal is never text on paper: 3.22:1 on the light ground. Where something must stand out, fill it: signal ground, `#141413` text, 5.06:1 in both themes.
 - Signal goes on the Low tags, the needs-review glyph, the one primary action in a view, the focus ring, and the underline under the characters that decide a Low value. Nowhere else.
 - Hover fills a button with ink and sets its label in paper, the primary included. No hover shade of signal. Disabled and pending are a dotted ink border on paper.
-- Radius 0. No shadows. No boxes except buttons and inputs: structure is 1px ink rules.
+- Radius 0. No shadows. No boxes except buttons and inputs: structure is 1px ink rules. A line that takes a dropped file says so by thickening its two rules to 2px, never by a frame drawn inside it, which would touch its words.
 - Every page is a register on the landing's frame: 82rem at most, 16px gutters on a phone, 40px from 48rem. Labels in an 11rem column on the left, content beside them, the right edge left open. On a phone the label sits over its content.
 
 ### Type
@@ -101,7 +101,7 @@ Two faces, four sizes, nothing under 12px, tabular figures on the whole body.
 
 - One ruled row per run: result word, start (UTC), provider and model, model calls, tokens in, tokens out, cost in USD to four decimals, time taken in seconds to one decimal. Numbers right-aligned, one unit and one precision per column.
 - A failed run's catalogue sentence sits on its own line under the row. An estimated cost says "Est." under its digits, so the digits keep their column.
-- A missing number is a word ("Not known", "None", "Nothing spent"), never a bare dash.
+- A missing number is a word ("Not known", "None", "Nothing spent"), never a bare dash, and never a zero: a total with no known cost says "Not known", not $0.0000. "Yet" only while a run is still going.
 - Count everything, zeros included: "Runs 1 · 0 failed · $0.0242". An empty history is one line: "No runs yet."
 - A number shown in two places is the same number in both.
 - A refusal from a spend ceiling or the rate limit is said in words beside Extract.
@@ -111,7 +111,8 @@ Two faces, four sizes, nothing under 12px, tabular figures on the whole body.
 
 - Say what the role allows, never its name: "You can" and what follows. "Owner" on an organization of one reads wrong, and a role's name says nothing about the page.
 - An error is the catalogue's sentence in ink against a 2px ink rule on its left. It stays where it appeared. No tinted box, no triangle, no toast.
-- Waiting is said, not drawn: "Opening…", "Signing in…", "Uploading · 2 of 3". No skeleton, no shimmer, no spinner.
+- Waiting is said, not drawn: "Opening…", "Signing in…", "Uploading · 2 of 3". No skeleton, no shimmer, no spinner. A pending button repeats its own label with the verb in -ing: Create organization, Creating organization…. Waiting words never move what is already on the page.
+- Empty names what is missing: "No organizations yet.", "No documents yet.", "No runs yet.", then what would be there.
 - A button whose label repeats down the page carries its file's name for a screen reader.
 - No "Oops", no jokes, no exclamation marks. Never smart, intelligent, powerful, ultimate, made simple, magic, blazing, cutting-edge, game-changing, AI agent.
 
