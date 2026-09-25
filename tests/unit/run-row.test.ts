@@ -97,7 +97,7 @@ describe("runHistoryMeta", () => {
     expect(runHistoryMeta([recorded, noCall])).toBe("Runs 2 · 1 failed · $0.0100");
     // counts are printed at zero
     expect(runHistoryMeta([recorded])).toBe("Runs 1 · 0 failed · $0.0100");
-    expect(runHistoryMeta([dropped])).toBe("Runs 1 · 1 failed · cost not known yet");
+    expect(runHistoryMeta([dropped])).toBe("Runs 1 · 1 failed · cost not known");
   });
 });
 

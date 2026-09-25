@@ -62,7 +62,10 @@ export function runHistoryMeta(runs: RunRow[]): string {
   const { total, estimated, unknown } = runTotals(runs);
   const failed = runs.filter((run) => run.status === "failed").length;
   const head = `Runs ${runs.length} · ${failed} failed`;
-  if (unknown === runs.length) return `${head} · cost not known yet`;
+  // "yet" only while a run is still going; a finished run's cost that
+  // wasn't recorded won't arrive later. The table's total says the same.
+  if (unknown === runs.length)
+    return `${head} · cost not known${runs.some((run) => run.status === "running") ? " yet" : ""}`;
   const notes = [
     estimated > 0 ? `${estimated} estimated` : null,
     unknown > 0 ? `${unknown} not known` : null,
