@@ -31,7 +31,7 @@ export function OpeningHint({ href }: { href: string }) {
   const preview = useContext(Pending) === href;
   if (!pending && !preview) return null;
   return (
-    <span aria-hidden="true" className="label ml-3 inline-block align-[0.1em] no-underline">
+    <span aria-hidden="true" className="label ml-3 inline-block align-[0.1em] leading-none no-underline">
       Opening…
     </span>
   );
