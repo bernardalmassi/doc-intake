@@ -92,6 +92,14 @@ const num = "xl:text-right";
 // agrees with the summary line.
 export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filename: string; staleRun: boolean }) {
   const { total, rounding, estimated, unknown } = runTotals(runs);
+  // No cost known for any run: the total says so in words, as the summary
+  // line does, rather than printing $0.0000 beside "cost not known yet".
+  const totalText =
+    runs.length > 0 && unknown === runs.length
+      ? runs.some((run) => run.status === "running")
+        ? "Not known yet"
+        : "Not known"
+      : formatUsd(total);
 
   return (
     <table role="table" className="w-full text-left text-small max-xl:block">
@@ -197,7 +205,7 @@ export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filen
           <th scope="row" role="rowheader" colSpan={5} className="py-3 pr-4 text-left align-top font-normal max-xl:p-0">
             <span className="label">
               Total, {runs.length} {runs.length === 1 ? "run" : "runs"}
-              <span className="xl:hidden"> · {formatUsd(total)}</span>
+              <span className="xl:hidden"> · {totalText}</span>
             </span>
             {estimated > 0 && (
               <span className="mt-1 block max-w-prose">
@@ -211,14 +219,14 @@ export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filen
                 Added up from the unrounded costs, so it differs by {formatUsd(rounding)} from the rows as printed.
               </span>
             )}
-            {unknown > 0 && (
+            {unknown > 0 && unknown < runs.length && (
               <span className="mt-1 block max-w-prose">
                 Leaves out {unknown} {unknown === 1 ? "run" : "runs"} whose cost isn&apos;t known.
               </span>
             )}
           </th>
           <td role="cell" className="py-3 pr-4 text-right align-top max-xl:hidden">
-            {formatUsd(total)}
+            {totalText}
           </td>
           <td role="cell" className="max-xl:hidden" />
         </tr>
@@ -249,7 +257,8 @@ function Cost({ run }: { run: RunRow }) {
       </>
     );
   }
-  if (state === "unknown") return <>Not known</>;
+  // "yet" while it runs, as every other cell of a running run says.
+  if (state === "unknown") return <>{run.status === "running" ? "Not known yet" : "Not known"}</>;
   return <>Nothing spent</>;
 }
 
