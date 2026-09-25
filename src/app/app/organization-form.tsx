@@ -258,15 +258,17 @@ export function OrganizationForm({
 
           {/* While pending, the landing's dotted border and the words say it
               is working; nothing turns (DESIGN.md: no looping motion).
-              aria-disabled rather than disabled, so focus stays on it. The
-              min-w keeps the button the same width when its label swaps. */}
+              aria-disabled rather than disabled, so focus stays on it. Its
+              label is its own with the verb in -ing, as every pending
+              button's is (Sign in, Signing in…); it grows to the right,
+              where nothing sits. */}
           <button
             ref={submitRef}
             type="submit"
             aria-disabled={pending || undefined}
-            className={`${submitButtonClass} min-w-60`}
+            className={submitButtonClass}
           >
-            {pending ? "Creating…" : "Create organization"}
+            {pending ? "Creating organization…" : "Create organization"}
           </button>
         </div>
       </div>
