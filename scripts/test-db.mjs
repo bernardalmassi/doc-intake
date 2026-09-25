@@ -1,13 +1,24 @@
 #!/usr/bin/env node
 // npm run test:db: runs every file in supabase/tests (the stale-run reaper
-// and the extraction queue, each inside begin; ... rollback;) against the
-// TEST project from .env.test, never the app's, through the Supabase CLI's
+// and the extraction queue, each inside begin; ... rollback;), then the
+// two-session lock-order tests in supabase/tests/sessions, against the TEST
+// project from .env.test, never the app's, through the Supabase CLI's
 // Management API access. The CLI stays linked to the app's project: `db
 // query` takes --project-ref only together with --linked, and then queries
 // that project instead, without relinking. See
 // scripts/supabase-test-target.mjs.
+//
+// Each `db query` runs on a connection of its own, so two of them running
+// at once are two sessions: that is how the lock-order tests race a finish
+// against the sweep and against a claim (supabase/tests/sessions/setup.sql
+// says how each case runs). Every call first resets the CLI's temporary
+// login role, and two calls doing that at once can fail one of them
+// (28P01, password authentication failed for cli_login_postgres). So the
+// second session starts only once the first has sent its query, which the
+// first's --debug output shows; the sessions then order themselves through
+// advisory locks, not timing.
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,3 +51,136 @@ for (const file of files) {
   });
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
+
+// The two-session lock-order tests -------------------------------------------
+
+const SESSIONS = "supabase/tests/sessions";
+
+// The CLI's --debug lines: requests and profile notes, no credentials
+const DEBUG_LINE = /^(\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2} HTTP |Using |Supabase CLI |NotFound: |Pooler username )/;
+
+// One `db query` of a file, on its own connection: its exit status, the
+// rows of its last statement (null on an error) and what it printed.
+// onSent, if given, is called once the query request has gone out (or the
+// call has ended without sending it, with false).
+function query(file, onSent) {
+  return new Promise((resolve) => {
+    const args = ["db", "query", "--linked", "--project-ref", target.ref, "--output-format", "json", "-f", `${SESSIONS}/${file}`];
+    if (onSent) args.push("--debug");
+    const child = spawn(supabase, args, { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => (stdout += chunk));
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+      if (onSent && /HTTP POST: \S+\/database\/query/.test(stderr)) {
+        onSent(true);
+        onSent = null;
+      }
+    });
+    child.on("close", (status) => {
+      onSent?.(false);
+      let rows = null;
+      try {
+        const parsed = JSON.parse(stdout);
+        if (Array.isArray(parsed.rows)) rows = parsed.rows;
+      } catch {
+        // not JSON: an error the CLI printed as text
+      }
+      const printed = stderr.split("\n").filter((line) => !DEBUG_LINE.test(line)).join("\n");
+      resolve({ file, status, rows: status === 0 ? rows : null, text: `${stdout}\n${printed}`.trim() });
+    });
+  });
+}
+
+function failure(result) {
+  return `${result.file} failed (exit ${result.status}): ${result.text.slice(0, 2000)}`;
+}
+
+// What session S or C must report: the race happened (the message was the
+// candidate, F held the run when the other session acted, and the run was
+// still running), and the other session neither waited nor kept anything.
+const CASES = [
+  {
+    name: "a finish holds its run while the sweep runs at the message's visibility timeout",
+    session: "sweep.sql",
+    expect: (r) => [
+      [r.candidate === true, "the message was not a claimed message past its visibility timeout"],
+      [r.finish_held_locks === true, "session F no longer held the run when the sweep returned"],
+      [r.xmax_before === "0" && r.xmax_after === "0", "the sweep locked the message"],
+      [Number(r.sweep_ms) < 1000, "the sweep waited (it took longer than deadlock_timeout)"],
+      [r.run_after_sweep === "running", "the sweep ended the run the finish held"],
+    ],
+  },
+  {
+    name: "a claim reads the expired message while a finish holds its run",
+    session: "claim.sql",
+    expect: (r) => [
+      [r.candidate === true, "the message was not visible to the claim"],
+      [r.finish_held_locks === true, "session F no longer held the run when the claim returned"],
+      [r.xmax_before === "0" && typeof r.xmax_after === "string" && r.xmax_after !== "0", "the claim never read the message"],
+      [Number(r.claimed) === 0, "the claim returned a run"],
+      [Number(r.read_ct_before) === 1 && Number(r.read_ct_after) === 1, "the claim's read was not rolled back (read_ct)"],
+      [r.vt_unchanged === true, "the claim's read was not rolled back (vt)"],
+      [Number(r.claim_ms) < 1000, "the claim waited (it took longer than deadlock_timeout)"],
+      [r.run_after_claim === "running", "the claim ended the run the finish held"],
+    ],
+  },
+];
+
+let failed = false;
+for (const testCase of CASES) {
+  console.error(`test:db ${SESSIONS}: ${testCase.name}, against project ${target.ref}`);
+  const problems = [];
+
+  const before = await query("cleanup.sql");
+  if (before.status !== 0) {
+    console.error(failure(before));
+    process.exit(1);
+  }
+  try {
+    const setup = await query("setup.sql");
+    const claimed = setup.rows?.[0];
+    if (!claimed || claimed.status !== "running" || Number(claimed.read_ct) !== 1 || claimed.hidden !== true) {
+      problems.push(setup.rows ? `setup.sql did not leave one claimed run: ${JSON.stringify(setup.rows)}` : failure(setup));
+    } else {
+      let sent;
+      const finishSent = new Promise((resolve) => (sent = resolve));
+      const running = query("finish.sql", sent);
+      const [finish, other] = await Promise.all([
+        running,
+        finishSent.then((ok) =>
+          ok
+            ? query(testCase.session)
+            : { file: testCase.session, status: null, rows: null, text: "not started: finish.sql ended before sending its query" },
+        ),
+      ]);
+      for (const session of [finish, other]) {
+        if (/deadlock detected|40P01/i.test(session.text)) problems.push(`${session.file}: a deadlock was reported`);
+        if (!session.rows) problems.push(failure(session));
+      }
+      const report = other.rows?.[0];
+      if (other.rows && !report) problems.push(`${testCase.session} reported nothing`);
+      if (report) {
+        for (const [ok, problem] of testCase.expect(report)) if (!ok) problems.push(`${problem}: ${JSON.stringify(report)}`);
+        console.error(`  ${testCase.session}: ${JSON.stringify(report)}`);
+      }
+      if (finish.rows) console.error(`  finish.sql: ${JSON.stringify(finish.rows[0] ?? null)}`);
+
+      const check = await query("check.sql");
+      if (check.rows) console.error(`  check.sql: ${JSON.stringify(check.rows[0] ?? null)}`);
+      else problems.push(failure(check));
+    }
+  } finally {
+    const after = await query("cleanup.sql");
+    if (after.status !== 0) problems.push(failure(after));
+  }
+
+  if (problems.length > 0) {
+    failed = true;
+    for (const problem of problems) console.error(`  FAILED: ${problem}`);
+  } else {
+    console.error("  ok: the finish committed with its result, no deadlock, the message archived once");
+  }
+}
+process.exit(failed ? 1 : 0);
