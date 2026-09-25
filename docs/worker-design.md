@@ -649,6 +649,8 @@ A finish arriving as its visibility timeout ran out made a cycle, and Postgres a
 1. A finish holds its run while the sweep runs at the message's visibility timeout.
 2. A claim reads the same expired message while a finish holds its run.
 
+pg_cron's `extraction-sweep` job is paused while the cases run and turned back on in a `finally`, so a live tick can't reap a fixture mid-case and write a permanent `abandoned` row. The run fails unless the job is active again and no tick started while it was paused. The pause refuses if the job is already paused, for example by a killed run.
+
 Session F takes the finish's first locks (tenant, document, run) with the finish's own statements, in one transaction. It holds them until the other session has acted or is waiting on it, then calls `finish_extraction_run` in the same transaction. Each case passes only if:
 - the finish commits with its result: run succeeded, field written, document extracted, one `charge` row
 - neither session reports a deadlock

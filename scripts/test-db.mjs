@@ -16,7 +16,9 @@
 // (28P01, password authentication failed for cli_login_postgres). So the
 // second session starts only once the first has sent its query, which the
 // first's --debug output shows; the sessions then order themselves through
-// advisory locks, not timing.
+// advisory locks, not timing. pg_cron's extraction-sweep job is paused for
+// the cases and turned back on in a finally; the run fails unless it is
+// active again and no tick started meanwhile.
 
 import { spawn, spawnSync } from "node:child_process";
 import { readdirSync } from "node:fs";
@@ -128,15 +130,16 @@ const CASES = [
   },
 ];
 
-let failed = false;
-for (const testCase of CASES) {
+// One case: cleanup, setup, the two sessions, the check, cleanup again.
+// True if it passed.
+async function runCase(testCase) {
   console.error(`test:db ${SESSIONS}: ${testCase.name}, against project ${target.ref}`);
   const problems = [];
 
   const before = await query("cleanup.sql");
   if (before.status !== 0) {
-    console.error(failure(before));
-    process.exit(1);
+    console.error(`  FAILED: ${failure(before)}`);
+    return false;
   }
   try {
     const setup = await query("setup.sql");
@@ -176,11 +179,59 @@ for (const testCase of CASES) {
     if (after.status !== 0) problems.push(failure(after));
   }
 
-  if (problems.length > 0) {
-    failed = true;
-    for (const problem of problems) console.error(`  FAILED: ${problem}`);
-  } else {
-    console.error("  ok: the finish committed with its result, no deadlock, the message archived once");
+  for (const problem of problems) console.error(`  FAILED: ${problem}`);
+  if (problems.length === 0) console.error("  ok: the finish committed with its result, no deadlock, the message archived once");
+  return problems.length === 0;
+}
+
+// Turns the extraction-sweep job back on (sweep-resume.sql) and checks it is
+// active and that no tick started after pausedAt. True if so.
+async function resumeSweep(pausedAt) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const resume = await query("sweep-resume.sql");
+    const row = resume.rows?.[0];
+    if (!row) {
+      console.error(`  sweep-resume.sql, attempt ${attempt}: ${failure(resume)}`);
+      continue;
+    }
+    const resumedAt = Number(row.resumed_at);
+    const whilePaused = Number.isFinite(pausedAt)
+      ? (row.recent_starts ?? []).map(Number).filter((start) => start > pausedAt && start < resumedAt)
+      : [];
+    if (row.active !== true) {
+      console.error(`  FAILED: the extraction-sweep cron job is not active again: ${JSON.stringify(row)}`);
+      return false;
+    }
+    if (whilePaused.length > 0) {
+      console.error(`  FAILED: ${whilePaused.length} extraction-sweep tick(s) started while the job was paused`);
+      return false;
+    }
+    console.error(
+      `test:db ${SESSIONS}: the extraction-sweep cron job is active again, and no tick started in the ${Math.round(resumedAt - pausedAt)} s it was paused`,
+    );
+    return true;
   }
+  console.error(
+    "  FAILED: the extraction-sweep cron job could not be turned back on; run: select cron.alter_job(jobid, active := true) from cron.job where jobname = 'extraction-sweep';",
+  );
+  return false;
+}
+
+// The live sweep stays off the fixtures while the cases run
+// (sweep-pause.sql says why), and is turned back on whatever happens.
+console.error(`test:db ${SESSIONS}: pausing the extraction-sweep cron job on project ${target.ref}`);
+let failed = false;
+const pause = await query("sweep-pause.sql");
+const paused = pause.rows?.[0]?.active === false;
+if (!paused) {
+  failed = true;
+  console.error(`  FAILED: ${pause.rows ? `sweep-pause.sql did not pause the job: ${JSON.stringify(pause.rows)}` : failure(pause)}`);
+  // it was paused before this run: leave it for someone to look at
+  if (/already paused/.test(pause.text)) process.exit(1);
+}
+try {
+  if (paused) for (const testCase of CASES) if (!(await runCase(testCase))) failed = true;
+} finally {
+  if (!(await resumeSweep(Number(pause.rows?.[0]?.paused_at)))) failed = true;
 }
 process.exit(failed ? 1 : 0);

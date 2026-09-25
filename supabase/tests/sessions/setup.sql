@@ -1,7 +1,10 @@
 -- The two-session lock-order tests (20260925000003, docs/worker-design.md
 -- section 15), run by scripts/test-db.mjs against the TEST project, never
 -- the app's. Unlike the files one level up, these commit: two sessions can
--- only see each other's rows once they are committed. So each case runs
+-- only see each other's rows once they are committed. pg_cron's
+-- extraction-sweep job is paused around all the cases (sweep-pause.sql,
+-- then sweep-resume.sql in a finally), so no live tick can reap a fixture
+-- mid-case. Each case runs
 --
 --   cleanup.sql   removes anything a killed earlier run left
 --   setup.sql     this file: a claimed run, committed
