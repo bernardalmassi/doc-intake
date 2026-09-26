@@ -2,7 +2,8 @@
 // with fakes: no network, no keys, no database. It proves what the worker
 // relies on (docs/worker-design.md, section 10):
 //
-//   - a download failure, a magic-byte mismatch, pages that can't be
+//   - a download failure, or one that outlasts its time limit (aborted
+//     then), a magic-byte mismatch, pages that can't be
 //     counted, more than 100 pages, and a count other than the one the run
 //     was enqueued with each finish the run as failed with no provider
 //     built or called: no model, 0 tokens, so 0 USD
@@ -22,6 +23,7 @@ import { buildPdf } from "../../evals/pdf";
 import { classifyRunError, isCostEstimated } from "@/lib/errors";
 import {
   dearestModelFor,
+  DOWNLOAD_TIMEOUT_MS,
   EXTRACTION_LIMITS,
   FINISH_ATTEMPT_TIMEOUT_MS,
   FINISH_MIN_ATTEMPT_MS,
@@ -161,6 +163,63 @@ describe("the preflight", () => {
     expect(result.outcome.status === "failed" && classifyRunError(result.outcome.error)).toBe("extraction.not_configured");
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({ p_status: "failed", p_model: null, p_attempts: 0 });
+  });
+});
+
+describe("the download", () => {
+  it("that outlasts its time limit fails the run at 0 with no provider built, and is aborted", async () => {
+    vi.useFakeTimers();
+    try {
+      let signal: AbortSignal | undefined;
+      const { calls, finish } = finisher();
+      const delivering = deliver({
+        run: RUN,
+        // never answers until it is aborted, and not even then
+        download: (s) => {
+          signal = s;
+          return new Promise<DownloadedFile>(() => {});
+        },
+        providers: noProviders,
+        finish,
+        log,
+        deadline: Date.now() + 3_600_000,
+      });
+      await vi.advanceTimersByTimeAsync(DOWNLOAD_TIMEOUT_MS - 1);
+      expect(calls).toHaveLength(0);
+      expect(signal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      const result = await delivering;
+
+      expect(signal?.aborted).toBe(true);
+      expect(result.outcome).toMatchObject({ status: "failed", provider: null, model: null, attempts: 0, inputTokens: 0, outputTokens: 0 });
+      expect(result.outcome.status === "failed" && result.outcome.error).toBe(`could not download the file: timed out after ${DOWNLOAD_TIMEOUT_MS / 1000} s`);
+      expect(result.outcome.status === "failed" && classifyRunError(result.outcome.error)).toBe("extraction.download_failed");
+      expect(calls).toEqual([expect.objectContaining({ p_status: "failed", p_model: null, p_input_tokens: 0, p_cost_estimated: false })]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("that finishes inside its time limit goes on to the preflight and the model", async () => {
+    vi.useFakeTimers();
+    try {
+      const primary = fakeProvider("openai", "gpt-5-nano", [answer(validJson(), "gpt-5-nano-2025-08-07")]);
+      const { calls, finish } = finisher();
+      const delivering = deliver({
+        run: RUN,
+        download: () => new Promise<DownloadedFile>((resolve) => setTimeout(() => resolve({ ok: true, bytes: onePage }), DOWNLOAD_TIMEOUT_MS - 1)),
+        providers: () => ({ primary, fallback: null }),
+        finish,
+        log,
+        deadline: Date.now() + 3_600_000,
+      });
+      await vi.advanceTimersByTimeAsync(DOWNLOAD_TIMEOUT_MS);
+      await delivering;
+      expect(primary.requests).toHaveLength(1);
+      expect(calls[0]).toMatchObject({ p_status: "succeeded" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

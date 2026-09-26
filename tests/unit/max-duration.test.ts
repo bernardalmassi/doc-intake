@@ -14,6 +14,7 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  DOWNLOAD_TIMEOUT_MS,
   EXTRACTION_LIMITS,
   FINISH_ATTEMPT_TIMEOUT_MS,
   PROVIDER_TIMEOUT_MS,
@@ -54,12 +55,12 @@ describe("the queue's time bounds", () => {
   });
 
   it("leave the finish at least two full attempts before the worker's deadline", () => {
-    // what the calls and their counts can take at most, then the finish
+    // what the download, the calls and their counts can take at most, then the finish
     // retries until the deadline (delivery.ts): the route's maxDuration less
     // the margin
     const route = literalMaxDuration(ROUTE) ?? 0;
     const modelMs = EXTRACTION_LIMITS.maxCallsPerRun * (TOKEN_COUNT_TIMEOUT_MS + PROVIDER_TIMEOUT_MS);
-    const finishWindowMs = route * 1000 - WORKER_DEADLINE_MARGIN_MS - modelMs;
+    const finishWindowMs = route * 1000 - WORKER_DEADLINE_MARGIN_MS - DOWNLOAD_TIMEOUT_MS - modelMs;
     expect(finishWindowMs).toBeGreaterThanOrEqual(2 * FINISH_ATTEMPT_TIMEOUT_MS);
     // and the route computes the deadline from its own maxDuration
     expect(readFileSync(join(root, ROUTE), "utf8")).toContain("maxDuration * 1000 - WORKER_DEADLINE_MARGIN_MS");

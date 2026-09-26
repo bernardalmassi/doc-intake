@@ -107,7 +107,7 @@ export async function processOneDelivery({
           mimeType: row.mime_type,
           pageCount: row.page_count,
         },
-        download: () => downloadFile(supabase, row.storage_path, runLog),
+        download: (signal) => downloadFile(supabase, row.storage_path, runLog, signal),
         providers,
         // each attempt is aborted when its time is up (delivery.ts)
         finish: async (params, signal) => {
@@ -132,10 +132,11 @@ export async function processOneDelivery({
 }
 
 // With the secret key, which reads any tenant's files; the path is the
-// claimed run's own document's, from the database.
-async function downloadFile(supabase: SupabaseClient, path: string, runLog: Logger): Promise<DownloadedFile> {
+// claimed run's own document's, from the database. `signal` aborts the
+// request and the body's read once the delivery's download time is up.
+async function downloadFile(supabase: SupabaseClient, path: string, runLog: Logger, signal: AbortSignal): Promise<DownloadedFile> {
   try {
-    const downloaded = await supabase.storage.from("documents").download(path);
+    const downloaded = await supabase.storage.from("documents").download(path, {}, { signal });
     if (downloaded.error || !downloaded.data) {
       const reason = downloaded.error ? classifyStorageError(downloaded.error, "download") : "no data";
       const status =

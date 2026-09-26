@@ -103,6 +103,10 @@ export const PROVIDER_TIMEOUT_MS = 60_000;
 // many counts as calls; a count that fails or times out sends no call.
 export const TOKEN_COUNT_TIMEOUT_MS = 15_000;
 
+// The worker's download of the claimed run's file (delivery.ts). One that
+// hasn't finished by then fails the run at 0 USD with no model call.
+export const DOWNLOAD_TIMEOUT_MS = 15_000;
+
 // The worker's finish (delivery.ts). A finish that gets no answer, or one of
 // the database's transient refusals, is sent again after a wait that
 // doubles from the first delay up to the last, each attempt given at most

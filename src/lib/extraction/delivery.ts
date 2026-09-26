@@ -6,7 +6,8 @@
 // and count every provider call and every finish.
 //
 // The preflight, before any provider is built or called:
-//   - the bytes must download (with the worker's key)
+//   - the bytes must download (with the worker's key) within
+//     DOWNLOAD_TIMEOUT_MS; the download is aborted then
 //   - their magic bytes must match the row's type (sniff.ts)
 //   - their pages must be countable, at most maxPagesPerDocument, and the
 //     count the run was enqueued with. The enqueue trusts the count the
@@ -38,6 +39,7 @@ import { failureFields } from "@/app/log-fields";
 import { classifyRunError, RUN_ERROR_MARKERS, TRANSIENT_SQLSTATES } from "../errors";
 import type { Logger, LogFields } from "../log";
 import {
+  DOWNLOAD_TIMEOUT_MS,
   EXTRACTION_LIMITS,
   FINISH_ATTEMPT_TIMEOUT_MS,
   FINISH_MIN_ATTEMPT_MS,
@@ -169,9 +171,33 @@ export type DeliveryResult = {
   finishCalls: number;
 };
 
+// The download, or "timed out" once DOWNLOAD_TIMEOUT_MS has passed, when
+// `signal` is aborted so the request stops too.
+async function downloadInTime(download: (signal: AbortSignal) => Promise<DownloadedFile>, runLog: Logger): Promise<DownloadedFile> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<DownloadedFile>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      runLog.warn("extraction.download_failed", {
+        error_code: "extraction.download_failed",
+        error_kind: "transport",
+        latency_ms: DOWNLOAD_TIMEOUT_MS,
+      });
+      resolve({ ok: false, reason: `timed out after ${DOWNLOAD_TIMEOUT_MS / 1000} s` });
+    }, DOWNLOAD_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([download(controller.signal), timedOut]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function deliver(input: {
   run: ClaimedRun;
-  download: () => Promise<DownloadedFile>;
+  // aborted if it outlasts DOWNLOAD_TIMEOUT_MS
+  download: (signal: AbortSignal) => Promise<DownloadedFile>;
   // called only once the preflight has passed
   providers: () => ProviderPair;
   finish: Finish;
@@ -198,7 +224,7 @@ export async function deliver(input: {
 
   let outcome: RunOutcome;
   try {
-    const checked = await preflight(await input.download(), run);
+    const checked = await preflight(await downloadInTime(input.download, runLog), run);
     if (!checked.ok) {
       runLog.warn("worker.preflight_failed", checked.log);
       outcome = failed(checked.error);
