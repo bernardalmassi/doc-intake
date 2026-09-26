@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { OpeningHint } from "@/app/components/pending";
-import { linkClass, pageTitleClass } from "@/app/ui";
+import { pageTitleClass } from "@/app/ui";
 import { ChevronRightIcon } from "./[slug]/icons";
 import { roleAbilities } from "./[slug]/messages";
 
@@ -112,7 +112,10 @@ export function OrganizationsView({
 // One organization's line. The name is the link, underlined like every
 // link, and its ::after covers the line, so the whole line is the target;
 // the chevron says so without being a second control. From the click until
-// the organization page arrives, "Opening…" follows the name.
+// the organization page arrives, "Opening…" follows the name. The
+// underline is on the name's own span (linkClass's, with the hover on the
+// link), so the space before "Opening…" isn't underlined and a long name
+// can push it to a line of its own without indenting it.
 function OrganizationLine({ organization }: { organization: Organization }) {
   return (
     <div className="relative border-b border-ink py-4">
@@ -120,10 +123,12 @@ function OrganizationLine({ organization }: { organization: Organization }) {
         <h3 className="min-w-0 flex-1">
           <Link
             href={`/app/${organization.slug}`}
-            className={`${linkClass} [overflow-wrap:anywhere] after:absolute after:inset-0 after:content-['']`}
+            className="group text-ink [overflow-wrap:anywhere] after:absolute after:inset-0 after:content-['']"
           >
-            {organization.name}
-            <OpeningHint href={`/app/${organization.slug}`} />
+            <span className="underline decoration-1 underline-offset-[0.25em] group-hover:decoration-2">
+              {organization.name}
+            </span>
+            <OpeningHint href={`/app/${organization.slug}`} lead="space" />
           </Link>
         </h3>
         <span aria-hidden="true" className="flex h-7 items-center">

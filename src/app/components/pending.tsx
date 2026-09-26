@@ -26,13 +26,25 @@ export function PreviewPending({ target, children }: { target: string; children:
 // inline-block, so the link's underline doesn't run under it; hidden from
 // assistive technology, which hears the new page's title when it arrives.
 // href is the link's own, for the preview only.
-export function OpeningHint({ href }: { href: string }) {
+//
+// lead is what separates it from the link's words. margin: 12px, for a
+// link whose words never wrap (the breadcrumb). space: a widened space,
+// for a link that underlines only its words (not the <a>, whose spaces
+// would be underlined too) and may wrap, since a space at a line's end
+// takes no room: where the hint drops to a line of its own it starts at
+// the line's edge, not 12px in.
+export function OpeningHint({ href, lead = "margin" }: { href: string; lead?: "margin" | "space" }) {
   const { pending } = useLinkStatus();
   const preview = useContext(Pending) === href;
   if (!pending && !preview) return null;
   return (
-    <span aria-hidden="true" className="label ml-3 inline-block align-[0.1em] leading-none no-underline">
-      Opening…
+    <span aria-hidden="true">
+      {lead === "space" && <span className="[word-spacing:0.5em]"> </span>}
+      <span
+        className={`label inline-block align-[0.1em] leading-none no-underline ${lead === "margin" ? "ml-3" : ""}`}
+      >
+        Opening…
+      </span>
     </span>
   );
 }
