@@ -114,7 +114,44 @@ describe("runHistoryMeta with an abandoned run", () => {
     expect(reaped.cost_estimated).toBe(true);
     // abandoned before the reaper charged anything: not known
     const older = toRunRow({ ...base, error: "abandoned: still running after 10 minutes; failed by a later open" });
-    expect(runHistoryMeta([reaped, older])).toBe("Runs 2 · 2 failed · $0.0532 · 1 estimated · 1 not known");
+    expect(runHistoryMeta([reaped, older])).toBe("Runs 2 · 0 failed · 2 abandoned · $0.0532 · 1 estimated · 1 not known");
+    const failed = toRunRow({ ...base, error: `${RUN_ERROR_MARKERS.downloadFailed}: download.not_found` });
+    expect(runHistoryMeta([failed, reaped])).toBe("Runs 2 · 1 failed · 1 abandoned · $0.0532 · 1 estimated");
+  });
+});
+
+describe("an abandoned run's row", () => {
+  const row = (run: ReturnType<typeof toRunRow>) =>
+    renderToStaticMarkup(createElement(RunHistory, { runs: [run], filename: "a.pdf", staleRun: false }))
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&#x27;/g, "'")
+      .replace(/\s+/g, " ");
+
+  // As the stale-run check writes it: no model, calls or tokens, and the
+  // estimate from the run's pages.
+  const reaped = toRunRow({
+    ...base,
+    cost_usd: "0.10644000",
+    error:
+      "cost estimated at claude-sonnet-5 prices (abandoned; at most 3 calls of 7500 tokens in and 2048 out, for 1 page): " +
+      "abandoned: still running after 10 minutes; failed by a later open",
+  });
+
+  it("reads as abandoned and charged its estimate, not as a failure with no model call", () => {
+    const text = row(reaped);
+    expect(text).toContain("Abandoned Charged its estimate");
+    expect(text).toContain("$0.1064 ( Est. imated)");
+    expect(text).toContain("This extraction stopped before it finished and was cancelled.");
+    expect(text).not.toContain("Failed");
+    expect(text).not.toContain("No model call");
+    expect(text).not.toContain("No model answered");
+  });
+
+  it("says an older one, ended before estimates, stopped responding and its cost isn't known", () => {
+    const text = row(toRunRow({ ...base, error: "abandoned: still running after 10 minutes; failed by a later open" }));
+    expect(text).toContain("Abandoned Stopped responding");
+    expect(text).toContain("Not known");
+    expect(text).not.toContain("No model call");
   });
 });
 

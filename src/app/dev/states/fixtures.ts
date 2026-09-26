@@ -11,6 +11,7 @@ import { buildEntries } from "@/app/app/[slug]/entries";
 import type { DocumentRow, FieldRow, Organization as OrgRow, RunRow } from "@/app/app/[slug]/types";
 import type { Organization } from "@/app/app/organizations";
 import type { ErrorCode } from "@/lib/errors";
+import { abandonedRunCostUsd } from "@/lib/extraction/config";
 
 // Documents and finished runs are dated around 24 Sep 2026. Runs still
 // running are dated from the time of the request (entriesFor), so their
@@ -171,8 +172,9 @@ const runs: RunRow[] = [
   }),
 
 
-  // Failed with no usable answer, after an earlier run the reaper
-  // abandoned and charged an estimate.
+  // Failed with no usable answer, after an earlier run the stale-run check
+  // abandoned and charged the estimate for its 4 pages. As it records one:
+  // no provider, model, calls, tokens or time.
   run({
     id: "run-lease-2",
     document_id: FAILED_ID,
@@ -191,8 +193,7 @@ const runs: RunRow[] = [
     id: "run-lease-1",
     document_id: FAILED_ID,
     status: "failed",
-    model: "claude-sonnet-5",
-    cost_usd: "0.06608000",
+    cost_usd: abandonedRunCostUsd(4).toFixed(8),
     error_code: "extraction.abandoned",
     cost_estimated: true,
     started_at: at("2026-09-22T11:06:30Z"),
@@ -255,6 +256,19 @@ FAILURES.forEach(([code, filename, calledModel], index) => {
             latency_ms: code === "extraction.provider_timeout" ? 60_000 : 9_400 + index * 530,
           }
         : { latency_ms: 380 + index * 20 }),
+      // An abandoned run records nothing but the estimate it was charged.
+      ...(code === "extraction.abandoned"
+        ? {
+            provider: null,
+            model: null,
+            attempts: 0,
+            input_tokens: null,
+            output_tokens: null,
+            latency_ms: null,
+            cost_usd: abandonedRunCostUsd(1).toFixed(8),
+            cost_estimated: true,
+          }
+        : {}),
       error_code: code,
       started_at: at(`2026-09-20T08:${minute}:30Z`),
     }),

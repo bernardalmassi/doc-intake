@@ -14,6 +14,16 @@ const RUN_STATUS: Record<string, { word: string; glyph: Glyph }> = {
   failed: { word: "Failed", glyph: "cross" },
 };
 const STALLED = { word: "Stalled", glyph: "cross" as Glyph };
+const ABANDONED = { word: "Abandoned", glyph: "cross" as Glyph };
+
+// A run the stale-run check ended because it stopped responding. It may
+// have called a model, but nothing it did was recorded: no model, calls or
+// tokens. Since 20260918000003 it is charged an estimate from its pages
+// (cost_estimated); one ended before that has no cost at all. Either way
+// it reads as abandoned, never as a failure with no model call.
+export function isAbandoned(run: RunRow): boolean {
+  return run.status === "failed" && run.error_code === "extraction.abandoned";
+}
 
 // What the Cost cell can say about a run:
 //   recorded   the database priced it
@@ -60,8 +70,10 @@ function runTotals(runs: RunRow[]) {
 // in capitals.
 export function runHistoryMeta(runs: RunRow[]): string {
   const { total, estimated, unknown } = runTotals(runs);
-  const failed = runs.filter((run) => run.status === "failed").length;
-  const head = `Runs ${runs.length} · ${failed} failed`;
+  // An abandoned run is counted as that, as its row reads, not as failed.
+  const abandoned = runs.filter(isAbandoned).length;
+  const failed = runs.filter((run) => run.status === "failed").length - abandoned;
+  const head = `Runs ${runs.length} · ${failed} failed${abandoned > 0 ? ` · ${abandoned} abandoned` : ""}`;
   // "yet" only while a run is still going; a finished run's cost that
   // wasn't recorded won't arrive later. The table's total says the same.
   if (unknown === runs.length)
@@ -144,7 +156,11 @@ export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filen
       <tbody role="rowgroup" className="max-xl:block">
         {runs.map((run, index) => {
           const stalled = index === 0 && staleRun && run.status === "running";
-          const status = stalled ? STALLED : (RUN_STATUS[run.status] ?? { word: run.status, glyph: "empty" as Glyph });
+          const status = stalled
+            ? STALLED
+            : isAbandoned(run)
+              ? ABANDONED
+              : (RUN_STATUS[run.status] ?? { word: run.status, glyph: "empty" as Glyph });
           return (
             <Fragment key={run.id}>
               <tr
@@ -168,7 +184,9 @@ export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filen
                       {run.model && <span className="block [overflow-wrap:break-word] xl:whitespace-nowrap">{run.model}</span>}
                     </>
                   ) : (
-                    <span>{run.status === "running" ? "Not known yet" : "No model answered"}</span>
+                    <span>
+                      {run.status === "running" ? "Not known yet" : isAbandoned(run) ? "Not recorded" : "No model answered"}
+                    </span>
                   )}
                 </td>
                 <td role="cell" data-label="Tokens in" className={`${td} ${num}`}>
@@ -239,7 +257,8 @@ export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filen
 }
 
 function describeAttempts(run: RunRow, stalled: boolean): string {
-  if (stalled || run.error_code === "extraction.abandoned") return "Stopped responding";
+  if (isAbandoned(run)) return run.cost_estimated ? "Charged its estimate" : "Stopped responding";
+  if (stalled) return "Stopped responding";
   if (run.attempts === 0) return run.status === "running" ? "In progress" : "No model call";
   return `${run.attempts} ${run.attempts === 1 ? "call" : "calls"}`;
 }
