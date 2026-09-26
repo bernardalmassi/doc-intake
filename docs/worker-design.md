@@ -665,3 +665,24 @@ Run against `20260925000002`'s functions, both cases failed with `40P01 deadlock
 - **The caller's own account.** The enqueue's insert takes the key share of the caller's `auth.users` row (`started_by`) after the document, and deleting that account cascades to the documents it uploaded. An admin enqueueing their own upload while their account is being deleted can deadlock. One of the two actions fails, and nothing is charged, because no run exists yet.
 - **Account deletion's cascade order.** Deleting an account cascades to documents (`uploaded_by`) and runs (`started_by`) in trigger-name order. On the test project that is documents first, as the order wants. The app project wasn't checked, since it is never queried here. If its order were runs first, deleting the account that started a run during that run's finish could deadlock, and the worker's retry would record the run as failed with its usage.
 - **Owner removal against `delete_tenant`.** `memberships_keep_an_owner` locks the membership and then the tenant; `delete_tenant` locks the tenant and then the memberships, by cascade. An owner removed while the organization is deleted can deadlock. No spend is involved.
+
+## 16. Review fixes (`20260925000004` and the worker, 2026-09-26)
+
+Two adversarial reviews of this branch found ways past the design above. What changed, in the order of the fixes (each its own commit on `worker`):
+
+1. **Every call is measured before it is sent.** The orchestrator counts each call's input with the provider's token counting endpoint and sends it only if it fits `inputTokensPerCall(pages)`, the per-call input the estimate assumes (section 2), and keeps the run within the estimate's 800 000 cap. A first call over it fails the run as `extraction.too_dense` at 0 USD; a fallback that can't be measured isn't used; a retry over it isn't sent. Counts add up to 3 × 15 s, so the route's `maxDuration` is 280 (section 6's bounds become 225 < 280 < 300 ≤ 600).
+2. **A call with no answer costs its maximum.** It is recorded at its measured input plus the output cap; tokens from two models are priced at the dearer; either way the ledger row is `estimate`.
+3. **One snapshot per ceiling.** `check_extraction_limits` reads each ceiling's ledger and in-flight sums in one statement, so a finish between them is counted once (section 4 assumed this; two statements broke it). A third two-session case races a check against a finish.
+4. **A finish that gets no answer is retried**, unchanged, with backoff, until the route's deadline; only a definite refusal goes to `failedCloseAttempts` (section 4, step 8).
+5. **The claim locks in order and skips busy runs.** It lists visible messages without locks, takes a candidate's document and run with NOWAIT, then reads that message: the order of section 15, message last. A held run is skipped and the next tried, up to 5. Enqueue, open and close check the caller before any row lock.
+6. **The claim expires a queued run past the stale limit** at 0 instead of starting it.
+7. **The worker's download has its own 15 s timeout** (section 2's "what isn't bounded").
+8. **Each wake in sweep step (b) is its own subtransaction**, so a failing wake can't roll back the tick's reaps.
+9. **The wake URL is checked strictly** (`private.extraction_worker_url_problem`: https, a plain host, no credentials, port, query, fragment or whitespace, exactly `/api/extraction-worker`), and a malformed one raises a warning instead of being skipped silently (section 6's pattern let credentials and ports through).
+10. **The SDK clients' base URLs are fixed in code** (`providers/clients.ts`).
+11. **Members can't read `queue_msg_id`** (section 5's table said the new columns were harmless; the message id counts the project-wide queue).
+12. **`sweep-pause.sql` refuses a project whose Vault holds `extraction_worker_url`.**
+13. **Extract refuses a file the worker would only fail** (a failed download, the wrong type, no pages) with no run.
+14. **The page polls through a Server Action**, stops only when two renders agree nothing is in flight, skips failed refreshes, never overlaps, and shows a run as stalled only from the database's terminal state (section 9's timer is gone).
+
+SECURITY.md has the claims these make, each with the test that proves it.
