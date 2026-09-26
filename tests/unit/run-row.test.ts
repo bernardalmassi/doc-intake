@@ -6,9 +6,10 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { runFailureSentence, UNKNOWN_RUN_FAILURE } from "@/app/app/[slug]/messages";
 import { RunHistory, runHistoryMeta } from "@/app/app/[slug]/run-history";
 import { type RunRecord, toRunRow } from "@/app/app/[slug]/types";
-import { isErrorCode, RUN_ERROR_MARKERS } from "@/lib/errors";
+import { isErrorCode, RUN_ERROR_MARKERS, userFacingError } from "@/lib/errors";
 
 const base: RunRecord = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -178,5 +179,31 @@ describe("the run table's total", () => {
     const text = table([running, recorded]);
     expect(text).toContain("$0.0100");
     expect(text).toContain("Leaves out 1 run whose cost isn't known.");
+  });
+});
+
+describe("a failed run's sentence", () => {
+  const row = (run: ReturnType<typeof toRunRow>) =>
+    renderToStaticMarkup(createElement(RunHistory, { runs: [run], filename: "a.pdf", staleRun: false }))
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&#x27;/g, "'")
+      .replace(/\s+/g, " ");
+
+  it("is the catalog's for a known code", () => {
+    expect(runFailureSentence("extraction.invalid_answer")).toBe(userFacingError("extraction.invalid_answer").message);
+  });
+
+  it("says what failed, never the catalog's unknown alone, when the reason can't be shown or wasn't stored", () => {
+    const vague = userFacingError("unknown").message;
+    expect(runFailureSentence("unknown")).toBe(`${UNKNOWN_RUN_FAILURE} Please try again.`);
+    expect(runFailureSentence(null)).toBe(`${UNKNOWN_RUN_FAILURE} Please try again.`);
+
+    const planted = row(toRunRow({ ...base, attempts: 1, error: "anything nobody anticipated" }));
+    expect(planted).toContain("The extraction failed, and this page can't say why.");
+    expect(planted).not.toContain(vague);
+    // a failed run that stored no error still says so
+    expect(row(toRunRow({ ...base, attempts: 1 }))).toContain("The extraction failed, and this page can't say why.");
+    // a run that didn't fail gets no sentence
+    expect(row(toRunRow({ ...base, status: "succeeded", attempts: 1, cost_usd: "0.001" }))).not.toContain("can't say why");
   });
 });

@@ -1,6 +1,6 @@
 import { Fragment } from "react";
-import { userFacingError } from "@/lib/errors";
 import { formatCount, formatSeconds, formatUsd, formatUtc } from "./format";
+import { runFailureSentence } from "./messages";
 import { type Glyph, StateGlyph } from "./state-glyph";
 import type { RunRow } from "./types";
 
@@ -206,11 +206,12 @@ export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filen
                       : "Not recorded"}
                 </td>
               </tr>
-              {run.error_code && (
-                // Belongs to the run above it: no rule between them.
+              {(run.error_code || run.status === "failed") && (
+                // Belongs to the run above it: no rule between them. A
+                // failed run always says why, or that the page can't.
                 <tr role="row" className="max-xl:block">
                   <td role="cell" colSpan={7} className="pb-3 max-xl:block xl:pl-48">
-                    <p className="max-w-prose">{userFacingError(run.error_code).message}</p>
+                    <p className="max-w-prose">{runFailureSentence(run.error_code)}</p>
                   </td>
                 </tr>
               )}

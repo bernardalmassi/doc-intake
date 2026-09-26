@@ -7,7 +7,7 @@ import { ExtractionPanel } from "./extraction-panel";
 import { extractReads, fieldSummary } from "./fields";
 import { fileKind, formatBytes, formatClock, formatUtc } from "./format";
 import { Elapsed, LedgerLine, LineDetail, LineStateMark, Register, RegisterKey, RunsToggle } from "./ledger";
-import { DOCUMENTS_HEADING_ID } from "./messages";
+import { DOCUMENTS_HEADING_ID, runFailureSentence, UNKNOWN_RUN_FAILURE } from "./messages";
 import { RunHistory, runHistoryMeta } from "./run-history";
 import { StateMark } from "./state-glyph";
 import type { DocumentEntry } from "./types";
@@ -191,10 +191,12 @@ function DocumentLine({
         }
         exit={exit}
       >
-        {hasFields && latest?.status === "failed" && latest.error_code && (
+        {hasFields && latest?.status === "failed" && (
           <p className={`mb-4 max-w-prose text-small md:ml-48 ${errorInkRuleClass}`}>
-            The latest run failed. {userFacingError(latest.error_code).message} The fields below are from an earlier
-            run.
+            {latest.error_code && latest.error_code !== "unknown"
+              ? `The latest run failed. ${userFacingError(latest.error_code).message}`
+              : "The latest run failed, and this page can't say why."}{" "}
+            The fields below are from an earlier run.
           </p>
         )}
 
@@ -367,8 +369,9 @@ function failureReason(entry: DocumentEntry, canManage: boolean): string {
   const forMember =
     canManage || exit === "download" ? "" : exit === "delete" ? " Only an admin can delete it." : " Only an admin can extract it again.";
   const latest = runs[0];
-  if (latest?.status === "failed" && latest.error_code) {
-    return `${userFacingError(latest.error_code).message}${forMember}`;
-  }
-  return `Extraction failed.${forMember}`;
+  const code = latest?.status === "failed" ? latest.error_code : null;
+  // An admin is told to try again, as the catalog's retryable sentences
+  // do; a member is told who can.
+  if (code === null || code === "unknown") return `${UNKNOWN_RUN_FAILURE}${forMember || " Please try again."}`;
+  return `${runFailureSentence(code)}${forMember}`;
 }

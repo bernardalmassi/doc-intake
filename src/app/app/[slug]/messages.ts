@@ -4,7 +4,7 @@
 
 import { EXTRACTION_LIMITS } from "@/lib/extraction/config";
 import type { FormState } from "@/app/form-state";
-import { userFacingError } from "@/lib/errors";
+import { type ErrorCode, userFacingError } from "@/lib/errors";
 import { formatBytes, NBSP } from "./format";
 import type { Role } from "./types";
 
@@ -84,6 +84,19 @@ export function describeRejection(
 export const UPLOAD_STEPS = ["Preparing", "Sending the file", "Checking it arrived"] as const;
 
 // ------------------------------------------------------- extract results
+
+// Why a failed run failed, for its document's line and its row in the run
+// history: the catalog's sentence for its code. Except the catalog's
+// unknown, "Something went wrong. Please try again.", which alone doesn't
+// say what went wrong, and a failed run that stored no error at all: for
+// those the page says what failed, and that it can't say why (the stored
+// text, if any, never reaches the page).
+export const UNKNOWN_RUN_FAILURE = "The extraction failed, and this page can't say why.";
+
+export function runFailureSentence(code: ErrorCode | null): string {
+  if (code === null || code === "unknown") return `${UNKNOWN_RUN_FAILURE} Please try again.`;
+  return userFacingError(code).message;
+}
 
 // A sentence for the notice beside a document's buttons.
 export type Explained = { text: string };
