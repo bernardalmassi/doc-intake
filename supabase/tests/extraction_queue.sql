@@ -551,6 +551,68 @@ begin
   perform private.reap_extraction_run(v_open.run_id, 'test');
 end $t$;
 
+-- 6d. Month attribution -------------------------------------------------------
+
+-- A run's charge counts in the month it is written, whenever the run
+-- started; a run in flight counts at its estimate whatever month it started
+-- in (SECURITY.md, "Month attribution").
+insert into public.tenants (id, name, slug)
+values ('e2e2e2e2-0000-4000-8000-000000000014', 'Queue test 14', 'queue-test-14');
+insert into public.memberships (tenant_id, user_id, role)
+values ('e2e2e2e2-0000-4000-8000-000000000014', 'e1e1e1e1-0000-4000-8000-000000000001', 'owner');
+insert into public.documents (id, tenant_id, filename, uploaded_by, status, mime_type, size_bytes) values
+  ('e3e3e3e3-0000-4000-8000-000000000141', 'e2e2e2e2-0000-4000-8000-000000000014', 'queue-14a.pdf',
+   'e1e1e1e1-0000-4000-8000-000000000001', 'pending', 'application/pdf', 3141),
+  ('e3e3e3e3-0000-4000-8000-000000000142', 'e2e2e2e2-0000-4000-8000-000000000014', 'queue-14b.pdf',
+   'e1e1e1e1-0000-4000-8000-000000000001', 'pending', 'application/pdf', 3141);
+
+do $t$
+declare
+  v_tenant      uuid := 'e2e2e2e2-0000-4000-8000-000000000014';
+  v_limits      public.extraction_limits := (select l from public.extraction_limits l);
+  v_month_start timestamptz := date_trunc('month', now(), 'UTC');
+  v_run_id      uuid;
+  v_claim       record;
+  v_row         record;
+  v_est         numeric := (select e.cost_usd from private.abandoned_estimate(1) e);
+begin
+  -- started last month, finished now: its charge is this month's
+  v_run_id := public.enqueue_extraction_run('e3e3e3e3-0000-4000-8000-000000000141', 1);
+  select * into v_claim from public.claim_extraction_run();
+  if v_claim.run_id is distinct from v_run_id then
+    raise exception 'expected to claim %, got %', v_run_id, v_claim.run_id;
+  end if;
+  update public.extraction_runs set started_at = v_month_start - interval '1 day' where id = v_run_id;
+  perform public.finish_extraction_run(v_run_id, v_claim.claim_token, 'succeeded', 'openai', 'gpt-5-nano',
+    1000, 100, 1200, 1, false, null, null, '[]'::jsonb);
+  select s.* into v_row from private.extraction_spend s where s.run_id = v_run_id;
+  if v_row.created_at < v_month_start or v_row.cost_usd <> 0.00009 then
+    raise exception 'a run started last month and finished now must be charged this month: % at %', v_row.cost_usd, v_row.created_at;
+  end if;
+  insert into checks (step, result) values ('a run started last month and finished this month is charged in this month''s ledger', '0.00009 USD');
+
+  -- in flight since last month: still held at its estimate. The ledger
+  -- brought to the ceiling less one one-page estimate, so only that run
+  -- reaches it.
+  v_run_id := public.enqueue_extraction_run('e3e3e3e3-0000-4000-8000-000000000142', 1);
+  update public.extraction_runs set started_at = v_month_start - interval '1 day' where id = v_run_id;
+  insert into private.extraction_spend (kind, tenant_id, run_id, cost_usd)
+  values ('charge', v_tenant, gen_random_uuid(),
+          v_limits.tenant_monthly_ceiling_usd - v_est
+          - (select coalesce(sum(s.cost_usd), 0) from private.extraction_spend s
+             where s.tenant_id = v_tenant and s.created_at >= v_month_start));
+  begin
+    perform private.check_extraction_limits(v_tenant, null);
+    raise exception 'a run in flight since last month was left out of this month''s check';
+  exception when sqlstate '53400' then
+    if sqlerrm not like 'this organization has reached its monthly extraction spend ceiling%' then
+      raise exception 'unexpected 53400 message: %', sqlerrm;
+    end if;
+  end;
+  insert into checks (step, result) values ('a run in flight since last month still holds its estimate this month', v_est::text || ' USD');
+  perform private.reap_extraction_run(v_run_id, 'test');
+end $t$;
+
 -- 7. Ceilings from the ledger ------------------------------------------------
 
 do $t$

@@ -224,6 +224,25 @@ describe("the live budget", () => {
     expect(tight.calls).toBe(2);
   });
 
+  it("charges a call that got no answer at its measured input and the output cap, and one refused with a status at 0", async () => {
+    const b = budget();
+    const recorder = recordingProvider(
+      fake([new ProviderError("anthropic", "transport", "request timed out")]),
+      b,
+      cost,
+      () => 0,
+    );
+    await runExtraction({ bytes: pdf, mimeType: "application/pdf", pages: 1, primary: recorder, fallback: null });
+    // the fake's count is 1000 (the object literal above)
+    expect(b.spentUsd).toBe(computeCostUsd(DEFAULT_MODELS.anthropic, 1000, MAX_OUTPUT_TOKENS));
+    expect(recorder.calls).toHaveLength(1);
+
+    const refused = budget();
+    const rejecting = recordingProvider(fake([new ProviderError("anthropic", "client", "invalid request", 400)]), refused, cost, () => 0);
+    await runExtraction({ bytes: pdf, mimeType: "application/pdf", pages: 1, primary: rejecting, fallback: null });
+    expect(refused.spentUsd).toBe(0);
+  });
+
   it("fails closed when the served model can't be priced: the pass aborts, nothing is free", async () => {
     // the provider answers, but reports a model the price table doesn't know
     const inner: ExtractionProvider = {

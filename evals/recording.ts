@@ -281,9 +281,12 @@ export type RecordingProvider = ExtractionProvider & { readonly calls: RecordedC
 
 // Wraps a real provider: reserves budget, forwards the request, charges
 // what the provider reports it billed, and keeps the answer or the
-// classified error with the request's fingerprint. Charging happens outside
-// the provider's try, so a pricing failure can't be mistaken for a provider
-// error and recorded at zero cost; it aborts the pass.
+// classified error with the request's fingerprint. A call that was sent and
+// got no answer (an error with no HTTP status and no usage) may have been
+// billed, so it is charged as run.ts charges it: the input its count just
+// measured plus the output cap. Charging happens outside the provider's
+// try, so a pricing failure can't be mistaken for a provider error and
+// recorded at zero cost; it aborts the pass.
 export function recordingProvider(
   inner: ExtractionProvider,
   budget: CallBudget,
@@ -291,6 +294,8 @@ export function recordingProvider(
   now: () => number = Date.now,
 ): RecordingProvider {
   const calls: RecordedCall[] = [];
+  // what the count before the latest call measured (run.ts counts every call)
+  let lastCount: number | null = null;
 
   function charge(usage: ProviderUsage): void {
     let usd: number;
@@ -307,7 +312,10 @@ export function recordingProvider(
     model: inner.model,
     calls,
     // the provider's own count; no call is made, so nothing is reserved
-    countInputTokens: (request) => inner.countInputTokens(request),
+    async countInputTokens(request) {
+      lastCount = await inner.countInputTokens(request);
+      return lastCount;
+    },
     async extract(request) {
       const fingerprint = fingerprintRequest(inner.name, inner.model, request);
       budget.reserve(inner.model);
@@ -321,8 +329,13 @@ export function recordingProvider(
             ? { kind: error.kind, status: error.status ?? null, message: error.message, usage: error.usage ?? null }
             : { kind: "client", status: null, message: error instanceof Error ? error.message : String(error), usage: null };
         calls.push({ fingerprint, latencyMs: now() - started, response: null, error: classified });
-        // an unusable answer is billed like any other
+        // an unusable answer is billed like any other, and a call with no
+        // answer at the most it could have cost
         if (classified.usage) charge(classified.usage);
+        else if (classified.status === null) {
+          if (lastCount === null) throw budget.abort("a call was sent with no count before it");
+          charge({ model: inner.model, inputTokens: lastCount, outputTokens: request.maxOutputTokens });
+        }
         throw error;
       }
       const latencyMs = now() - started;

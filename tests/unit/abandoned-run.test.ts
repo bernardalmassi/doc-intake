@@ -54,6 +54,24 @@ describe("the abandoned-run estimate", () => {
     expect(EXTRACTION_LIMITS.hourlyRunLimit * abandonedRunCostUsd(1)).toBeLessThan(CEILING);
   });
 
+  // SECURITY.md, "Stale runs": the table of what a run in flight holds and
+  // an abandoned run is charged, row by row, at Sonnet 5 prices (now) and
+  // Haiku 4.5 prices (before 20260918000004)
+  it.each([
+    [1, 22_500, 0.10644, 0.05322],
+    [2, 31_500, 0.12444, 0.06222],
+    [10, 103_500, 0.26844, 0.13422],
+    [20, 193_500, 0.44844, 0.22422],
+    [50, 463_500, 0.98844, 0.49422],
+    [88, 800_000, 1.66144, 0.83072],
+    [100, 800_000, 1.66144, 0.83072],
+    [null, 800_000, 1.66144, 0.83072],
+  ] as const)("SECURITY.md's table: %s pages hold %i tokens in and 6 144 out, %f USD (Haiku %f)", (pages, input, sonnet, haiku) => {
+    expect(abandonedRunUsage(pages)).toMatchObject({ inputTokens: input, outputTokens: 6_144 });
+    expect(abandonedRunCostUsd(pages)).toBe(sonnet);
+    expect(computeCostUsd("claude-haiku-4-5-20251001", input, 6_144)).toBe(haiku);
+  });
+
   it("grows with the page count instead of charging every run the same", () => {
     const costs = Array.from({ length: EXTRACTION_LIMITS.maxPagesPerDocument }, (_, i) => abandonedRunCostUsd(i + 1));
     // strictly more for each page until a cap binds: a call's input
