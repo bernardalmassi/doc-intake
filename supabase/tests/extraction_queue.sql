@@ -219,6 +219,47 @@ begin
     v_run.cost_usd::text || ' USD');
 end $t$;
 
+-- 4b. The claim expires a queued run past the stale limit (20260925000004) --
+
+insert into public.tenants (id, name, slug)
+values ('e2e2e2e2-0000-4000-8000-000000000012', 'Queue test 12', 'queue-test-12');
+insert into public.memberships (tenant_id, user_id, role)
+values ('e2e2e2e2-0000-4000-8000-000000000012', 'e1e1e1e1-0000-4000-8000-000000000001', 'owner');
+insert into public.documents (id, tenant_id, filename, uploaded_by, status, mime_type, size_bytes)
+values ('e3e3e3e3-0000-4000-8000-000000000013', 'e2e2e2e2-0000-4000-8000-000000000012', 'queue-13.pdf',
+  'e1e1e1e1-0000-4000-8000-000000000001', 'extracted', 'application/pdf', 3141);
+
+do $t$
+declare
+  v_minutes integer := (select stale_run_minutes from public.extraction_limits);
+  v_run_id  uuid;
+  v_claim   record;
+  v_run     public.extraction_runs;
+  v_spend   record;
+begin
+  v_run_id := public.enqueue_extraction_run('e3e3e3e3-0000-4000-8000-000000000013', 1);
+  -- queued a second past the deadline, and not yet swept
+  update public.extraction_runs set started_at = now() - make_interval(mins => v_minutes) - interval '1 second'
+  where id = v_run_id;
+  select * into v_claim from public.claim_extraction_run();
+  if v_claim.run_id is not null then
+    raise exception 'the claim started a run queued past the stale limit: %', row_to_json(v_claim);
+  end if;
+  select r.* into v_run from public.extraction_runs r where r.id = v_run_id;
+  select s.* into v_spend from private.extraction_spend s where s.run_id = v_run_id;
+  if v_run.status <> 'failed' or v_run.cost_usd <> 0 or v_run.error not like 'expired: not claimed within % minutes; expired by the claim%'
+     or v_run.claimed_at is not null
+     or v_spend.kind is distinct from 'expired' or v_spend.cost_usd <> 0
+     or exists (select 1 from private.extraction_run_tokens t where t.run_id = v_run_id)
+     or exists (select 1 from pgmq.q_extraction where msg_id = v_run.queue_msg_id)
+     or not exists (select 1 from pgmq.a_extraction where msg_id = v_run.queue_msg_id)
+     or (select status from public.documents where id = v_run.document_id) <> 'extracted' then
+    raise exception 'a claim must expire a stale queued run at 0: % / % / % / %', v_run.status, v_run.cost_usd, v_run.error, v_spend.kind;
+  end if;
+  insert into checks (step, result) values
+    ('the claim expires a queued run past the stale limit at 0 instead of starting it, message archived, document released', v_run.error);
+end $t$;
+
 -- 5. The sweep, one case per state (fix 1) ----------------------------------
 
 do $t$

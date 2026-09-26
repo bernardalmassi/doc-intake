@@ -444,6 +444,10 @@ $$;
 -- touched, so it keeps its read_ct and vt. A message that is read and turns
 -- out to be a second delivery, a run no longer queued, or a run whose
 -- document is gone is ended and archived as before, and the next tried.
+--
+-- 6. A queued run older than stale_run_minutes is expired at 0, as sweep
+-- step (d) expires it, instead of being started: before, a wake arriving
+-- between the deadline and the sweep's next tick started a run past it.
 create or replace function public.claim_extraction_run()
 returns table (run_id uuid, claim_token uuid, tenant_id uuid, document_id uuid,
                storage_path text, mime_type text, page_count integer)
@@ -504,6 +508,16 @@ begin
     end if;
 
     if v_run.id is null or v_run.status <> 'queued' then
+      perform pgmq.archive('extraction', v_msg.msg_id);
+      continue;
+    end if;
+
+    -- queued for longer than the stale limit: expired at 0, as sweep step
+    -- (d) would, never started. The run's estimate stops being held at the
+    -- deadline the sweep enforces, so no delivery may begin after it.
+    if v_run.started_at < now() - make_interval(mins => v_limits.stale_run_minutes) then
+      perform private.reap_extraction_run(v_run.id,
+        format('not claimed within %s minutes; expired by the claim instead of started', v_limits.stale_run_minutes));
       perform pgmq.archive('extraction', v_msg.msg_id);
       continue;
     end if;
