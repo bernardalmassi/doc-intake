@@ -551,6 +551,66 @@ begin
   perform private.reap_extraction_run(v_open.run_id, 'test');
 end $t$;
 
+-- 6e. Only the worker ends a queue run (20260925000004) ------------------------
+
+-- close_extraction_run, the old path's, compared the close token with <>,
+-- which a null token passed; and a claimed run's token lives in the same
+-- table. So the admin who enqueued a run could close it while the worker
+-- called the model. Now a close with no token, or of any run that has a
+-- message or was claimed, is refused.
+insert into public.tenants (id, name, slug)
+values ('e2e2e2e2-0000-4000-8000-000000000015', 'Queue test 15', 'queue-test-15');
+insert into public.memberships (tenant_id, user_id, role)
+values ('e2e2e2e2-0000-4000-8000-000000000015', 'e1e1e1e1-0000-4000-8000-000000000001', 'owner');
+insert into public.documents (id, tenant_id, filename, uploaded_by, status, mime_type, size_bytes)
+values ('e3e3e3e3-0000-4000-8000-000000000015', 'e2e2e2e2-0000-4000-8000-000000000015', 'queue-15.pdf',
+  'e1e1e1e1-0000-4000-8000-000000000001', 'pending', 'application/pdf', 3141);
+
+do $t$
+declare
+  v_run_id uuid;
+  v_claim  record;
+  v_token  uuid;
+  v_case   text;
+begin
+  v_run_id := public.enqueue_extraction_run('e3e3e3e3-0000-4000-8000-000000000015', 1);
+  -- queued: no close, not even with no token
+  begin
+    perform public.close_extraction_run(v_run_id, null, 'failed', null, null, 0, 0, 1, 0, 'closed by its admin');
+    raise exception 'the admin closed their queued run with no token';
+  exception when sqlstate '42501' then null;
+  end;
+
+  select * into v_claim from public.claim_extraction_run();
+  if v_claim.run_id is distinct from v_run_id then
+    raise exception 'expected to claim %, got %', v_run_id, v_claim.run_id;
+  end if;
+  -- claimed, the worker calling the model: no token, and not even the
+  -- claim token itself (which no user can read) closes it
+  foreach v_case in array array['no token', 'the claim token'] loop
+    v_token := case v_case when 'no token' then null else v_claim.claim_token end;
+    begin
+      perform public.close_extraction_run(v_run_id, v_token, 'succeeded', 'openai', 'gpt-5-nano', 0, 0, 1, 1, null, null,
+        '[{"name":"title","value":"forged","confidence":0.99,"band":"high","source_text":null,"clarifying_question":null}]'::jsonb);
+      raise exception 'the admin closed a claimed run with %', v_case;
+    exception when sqlstate '42501' then null;
+    end;
+  end loop;
+  if (select status from public.extraction_runs where id = v_run_id) <> 'running'
+     or not exists (select 1 from private.extraction_run_tokens t where t.run_id = v_run_id and t.token = v_claim.claim_token)
+     or exists (select 1 from private.extraction_spend s where s.run_id = v_run_id) then
+    raise exception 'a refused close changed the run, its token or the ledger';
+  end if;
+  -- the worker's own finish still goes through, with its cost
+  perform public.finish_extraction_run(v_run_id, v_claim.claim_token, 'failed', 'openai', 'gpt-5-nano',
+    1000, 100, 1200, 1, false, 'the worker''s finish', null, null);
+  if (select cost_usd from private.extraction_spend s where s.run_id = v_run_id) <> 0.00009 then
+    raise exception 'the worker''s finish was not recorded at its cost';
+  end if;
+  insert into checks (step, result) values
+    ('no close ends a queue run, queued or claimed, with no token or with the claim token; the worker''s finish records it', 'ok');
+end $t$;
+
 -- 6d. Month attribution -------------------------------------------------------
 
 -- A run's charge counts in the month it is written, whenever the run

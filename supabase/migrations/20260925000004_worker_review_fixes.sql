@@ -262,6 +262,15 @@ $$;
 -- any run id could lock that run's organization, document and run. The
 -- token is checked again under the lock, since a reap or another close may
 -- have deleted it in between.
+--
+-- And a close with no token, or of a run on the queue path, is refused. The
+-- token check was "v_token <> p_close_token", which is null, so not true,
+-- for a null p_close_token; and the claim keeps its token in the same table.
+-- So the admin who enqueued a run could close it, as failed at 0 USD or as
+-- succeeded with fields of their own, while the worker was calling the
+-- model, deleting the claim token the worker's finish needs: the real spend
+-- was never recorded, and the output guard never saw the fields. A queue
+-- run (it has a message, or was claimed) is the worker's to finish alone.
 create or replace function public.close_extraction_run(
   p_run_id        uuid,
   p_close_token   uuid,
@@ -282,6 +291,7 @@ declare
   v_user_id   uuid := (select auth.uid());
   v_tenant_id uuid;
   v_starter   uuid;
+  v_queued    boolean;
   v_run       public.extraction_runs;
   v_token     uuid;
   v_field     jsonb;
@@ -302,9 +312,11 @@ begin
 
   -- the caller, before any lock. One error for unknown id, wrong token and
   -- no token, so nothing is leaked.
-  select r.tenant_id, r.started_by into v_tenant_id, v_starter from public.extraction_runs r where r.id = p_run_id;
+  select r.tenant_id, r.started_by, r.queue_msg_id is not null or r.claimed_at is not null
+  into v_tenant_id, v_starter, v_queued
+  from public.extraction_runs r where r.id = p_run_id;
   select t.token into v_token from private.extraction_run_tokens t where t.run_id = p_run_id;
-  if v_token is null or v_token <> p_close_token then
+  if v_token is null or v_token is distinct from p_close_token or v_queued then
     raise exception 'run not found or close token invalid' using errcode = '42501';
   end if;
   -- The token proves the caller was handed the run; the starter check is
@@ -321,7 +333,8 @@ begin
   -- twice lands here too.
   select t.token into v_token from private.extraction_run_tokens t
   where t.run_id = p_run_id;
-  if not found or v_token is null or v_token <> p_close_token then
+  if not found or v_token is null or v_token is distinct from p_close_token
+     or v_run.queue_msg_id is not null or v_run.claimed_at is not null then
     raise exception 'run not found or close token invalid' using errcode = '42501';
   end if;
 
@@ -472,6 +485,13 @@ begin
     limit 1;
     if not found then
       return;
+    end if;
+
+    -- a message that names no run (only enqueue sends messages, and it
+    -- always names one) is archived, not left to take a skip on every claim
+    if v_candidate.run_id is null then
+      perform pgmq.archive('extraction', v_candidate.msg_id);
+      continue;
     end if;
 
     begin
