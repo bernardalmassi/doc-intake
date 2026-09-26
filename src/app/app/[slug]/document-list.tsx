@@ -227,13 +227,15 @@ function DocumentLine({
           </p>
         )}
 
-        {/* An upload still arriving isn't deleted from under its sender:
-            Delete comes back if it never finishes. */}
+        {/* Delete stays here while a line reads uploading: the page can't
+            tell an upload under way from one that failed a moment ago,
+            whose sender the upload form sends here to delete it. Deleting
+            one under way stops it; Storage refuses the rest of its bytes. */}
         <FileRow
           entry={entry}
           actions={actions}
           canDownload={hasFile && !downloadOnLine}
-          canDelete={canManage && !deleteOnLine && state !== "uploading"}
+          canDelete={canManage && !deleteOnLine}
         />
       </LedgerLine>
     </article>
