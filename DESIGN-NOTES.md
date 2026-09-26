@@ -216,17 +216,13 @@ There is deliberately no loading state for the organization page. A `loading.tsx
 
 ## The design preview
 
-`/dev/states` (committed, development only, a 404 in production builds) has replaced these pages: it renders every screen and state of /app and the auth pages from static data. What follows describes the older local pages.
+The signed-in pages can't be seen without an account, so `/dev/states` renders every screen and state of /app and the auth pages from static data (`src/app/dev/states/`): `/dev/states` lists them by group, and `/dev/states?screen=<id>` renders one exactly as its route does, with the same header, `<main>` and widths. It is committed, needs no sign-in and reaches no database, and a production build answers 404 (the page calls `notFound()` when `NODE_ENV` is `production`).
 
-The signed-in pages can't be seen without an account, so every state is rendered from fixture data on local pages under `src/app/design-preview/`. They are listed in `.git/info/exclude` and never committed, and no real page imports them. The proxy only refreshes sessions, so they load without signing in.
+- **Rows.** `fixtures.ts` holds the rows the page would read, already through `toRunRow` (a run's error only as its code), and groups them with the page's own `buildEntries`. Runs and uploads in progress are dated from the request, so their clocks run; queued has no source value yet, so its document is given the state explicitly (`StatedEntry.state`).
+- **Actions.** `fixture-operations.tsx` fills the organization page's operations context with stand-ins whose outcome each screen picks (finished, refused with a code, never answering, or lost as a request that never came back), and `fixture-forms.tsx` renders the forms' views with a fixed state. `PreviewPending` holds a link's "Opening…" or Sign out's pending state on.
+- **Ids are stable.** The capture plans in `.design-work/` (git-excluded) refer to them; a screen reached by a click says what the plan clicks in its title.
 
-- `/design-preview`: every primitive, the four sizes and the swatches, in the current theme.
-- `/design-preview/public`: the sign-in and sign-up forms in every state, driven by fake actions.
-- `/design-preview/orgs`: the empty state, a long list with every role, and the create form's states.
-- `/design-preview/tenant?view=owner|admin|member|empty-owner|empty-member|upload`: the organization page with every document status, fields, runs, and a live upload form whose fake calls fail on purpose for file names containing `fail-start`, `fail-name`, `fail-send`, `fail-size` or `fail-confirm`.
-- `/design-preview/error`: a page that throws, to show the error page.
-
-The real components render there because each page keeps fetching in `page.tsx` and presentation in components that take props, and the organization page's actions come through a context the fixture fills with fakes. Tailwind's scanner skips excluded paths, so `globals.css` registers the folder with `@source "./design-preview"`; in a clone without the folder that line compiles to nothing.
+It replaced the older local fixture pages under `src/app/design-preview/`, which were git-excluded and needed an `@source` line in `globals.css` for Tailwind to scan them. That line is gone; a copy of the folder that still exists locally renders without the classes only it used.
 
 ## Decisions under ambiguity
 

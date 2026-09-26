@@ -1,10 +1,5 @@
 @import "tailwindcss";
 
-/* The local /design-preview fixture page is git-excluded, and Tailwind
-   skips excluded paths, so it is registered here. A no-op in a clone
-   without the folder. */
-@source "./design-preview";
-
 /*
   Design tokens, one set for the landing page and /app (DESIGN.md), defined
   here and nowhere else. Three colours, named for their job, in both
