@@ -544,3 +544,104 @@ begin
   end loop;
 end;
 $$;
+
+-- 8. A wake that fails can't undo the sweep ------------------------------------
+
+-- As in 20260925000003, except that step (b) sends each wake in a
+-- subtransaction of its own. The sweep ends runs in steps (a), (c) and (d)
+-- and wakes last, all in one transaction; a wake that raised (pg_net, Vault)
+-- used to abort the whole tick, rolling back every reap it had made, and
+-- every tick after it did the same while the cause lasted. Now a failed wake
+-- is logged as a warning, with its SQLSTATE only, and the tick goes on.
+create or replace function private.sweep_extraction_queue()
+returns void language plpgsql security definer set search_path = '' as $$
+declare
+  v_limits public.extraction_limits;
+  v_msg    record;
+  v_run_id uuid;
+  v_run    public.extraction_runs;
+  v_wakes  integer;
+begin
+  select l.* into v_limits from public.extraction_limits l;
+
+  -- (a)
+  for v_msg in
+    select q.msg_id, (q.message ->> 'run_id')::uuid as run_id from pgmq.q_extraction q
+    where q.read_ct >= 1 and q.vt <= now()
+    order by q.msg_id
+  loop
+    begin
+      v_run := private.lock_extraction_run(v_msg.run_id, true);
+      if exists (select 1 from pgmq.q_extraction q
+                 where q.msg_id = v_msg.msg_id and q.read_ct >= 1 and q.vt <= now()) then
+        if v_run.id is not null then
+          perform private.reap_extraction_run(v_run.id,
+            format('claimed but not finished within %s seconds', v_limits.worker_visibility_seconds));
+        end if;
+        perform pgmq.archive('extraction', v_msg.msg_id);
+      end if;
+    exception when lock_not_available then
+      null;
+    end;
+  end loop;
+
+  -- (c)
+  for v_run_id in
+    select r.id from public.extraction_runs r
+    where r.status = 'running'
+      and coalesce(r.claimed_at, r.started_at) < now() - make_interval(mins => v_limits.stale_run_minutes)
+      and not exists (select 1 from pgmq.q_extraction q where q.msg_id = r.queue_msg_id)
+    order by r.id
+  loop
+    begin
+      v_run := private.lock_extraction_run(v_run_id, true);
+      if v_run.status = 'running'
+         and coalesce(v_run.claimed_at, v_run.started_at) < now() - make_interval(mins => v_limits.stale_run_minutes)
+         and not exists (select 1 from pgmq.q_extraction q where q.msg_id = v_run.queue_msg_id) then
+        perform private.reap_extraction_run(v_run.id,
+          format('still running after %s minutes; failed by the sweep', v_limits.stale_run_minutes));
+      end if;
+    exception when lock_not_available then
+      null;
+    end;
+  end loop;
+
+  -- (d)
+  for v_run_id in
+    select r.id from public.extraction_runs r
+    where r.status = 'queued'
+      and r.started_at < now() - make_interval(mins => v_limits.stale_run_minutes)
+    order by r.id
+  loop
+    begin
+      v_run := private.lock_extraction_run(v_run_id, true);
+      if v_run.status = 'queued'
+         and v_run.started_at < now() - make_interval(mins => v_limits.stale_run_minutes) then
+        perform private.reap_extraction_run(v_run.id,
+          format('not claimed within %s minutes; cancelled at no cost', v_limits.stale_run_minutes));
+      end if;
+    exception when lock_not_available then
+      null;
+    end;
+  end loop;
+
+  -- (b), each wake on its own
+  select count(*) into v_wakes from (
+    select 1 from pgmq.q_extraction q
+    join public.extraction_runs r on r.id = (q.message ->> 'run_id')::uuid
+    where q.read_ct = 0
+      and q.vt <= now()
+      and q.enqueued_at < now() - interval '60 seconds'
+      and r.status = 'queued'
+      and r.started_at >= now() - make_interval(mins => v_limits.stale_run_minutes)
+    limit 5
+  ) lost;
+  for i in 1 .. v_wakes loop
+    begin
+      perform private.wake_extraction_worker();
+    exception when others then
+      raise warning 'extraction worker not woken (SQLSTATE %)', sqlstate;
+    end;
+  end loop;
+end;
+$$;
