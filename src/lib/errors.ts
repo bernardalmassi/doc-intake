@@ -579,8 +579,9 @@ const JWT_REJECTED = new Set(["PGRST301", "PGRST302", "PGRST303"]);
 
 // Worth repeating unchanged: serialization failure, deadlock, out of
 // resources, lock not available, statement timeout, shutdowns. Not the
-// whole of class 53: 53400 is our spend ceiling.
-const TRANSIENT_SQLSTATES = new Set([
+// whole of class 53: 53400 is our spend ceiling. The worker also repeats a
+// finish refused with one of these (delivery.ts).
+export const TRANSIENT_SQLSTATES: ReadonlySet<string> = new Set([
   "40001",
   "40P01",
   "53000",

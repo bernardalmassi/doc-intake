@@ -88,6 +88,8 @@ export const LOG_EVENTS = [
   "worker.unexpected_error",
   "worker.finished",
   "worker.finish_failed",
+  "worker.finish_retrying",
+  "worker.finish_unconfirmed",
   "worker.finish_retried",
   // src/app/auth/actions.ts
   "auth.sign_up_refused",

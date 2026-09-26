@@ -13,7 +13,13 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { EXTRACTION_LIMITS, PROVIDER_TIMEOUT_MS, TOKEN_COUNT_TIMEOUT_MS } from "@/lib/extraction/config";
+import {
+  EXTRACTION_LIMITS,
+  FINISH_ATTEMPT_TIMEOUT_MS,
+  PROVIDER_TIMEOUT_MS,
+  TOKEN_COUNT_TIMEOUT_MS,
+  WORKER_DEADLINE_MARGIN_MS,
+} from "@/lib/extraction/config";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const ROUTE = "src/app/api/extraction-worker/route.ts";
@@ -45,6 +51,21 @@ describe("the queue's time bounds", () => {
     expect(route, `${ROUTE} has no literal maxDuration export`).not.toBeNull();
     expect(route).toBeGreaterThan(modelSeconds);
     expect(route).toBeLessThan(HOST_MAX_SECONDS);
+  });
+
+  it("leave the finish at least two full attempts before the worker's deadline", () => {
+    // what the calls and their counts can take at most, then the finish
+    // retries until the deadline (delivery.ts): the route's maxDuration less
+    // the margin
+    const route = literalMaxDuration(ROUTE) ?? 0;
+    const modelMs = EXTRACTION_LIMITS.maxCallsPerRun * (TOKEN_COUNT_TIMEOUT_MS + PROVIDER_TIMEOUT_MS);
+    const finishWindowMs = route * 1000 - WORKER_DEADLINE_MARGIN_MS - modelMs;
+    expect(finishWindowMs).toBeGreaterThanOrEqual(2 * FINISH_ATTEMPT_TIMEOUT_MS);
+    // and the route computes the deadline from its own maxDuration
+    expect(readFileSync(join(root, ROUTE), "utf8")).toContain("maxDuration * 1000 - WORKER_DEADLINE_MARGIN_MS");
+    // the local runner uses the same limit
+    const runner = readFileSync(join(root, "tests/helpers/local-worker.ts"), "utf8").match(/^const RUNNER_SECONDS = (\d+);$/m);
+    expect(Number(runner?.[1])).toBe(route);
   });
 
   it("end before the visibility timeout, which ends no later than the stale limit", () => {

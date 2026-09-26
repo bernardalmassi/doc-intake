@@ -103,6 +103,19 @@ export const PROVIDER_TIMEOUT_MS = 60_000;
 // many counts as calls; a count that fails or times out sends no call.
 export const TOKEN_COUNT_TIMEOUT_MS = 15_000;
 
+// The worker's finish (delivery.ts). A finish that gets no answer, or one of
+// the database's transient refusals, is sent again after a wait that
+// doubles from the first delay up to the last, each attempt given at most
+// FINISH_ATTEMPT_TIMEOUT_MS, until WORKER_DEADLINE_MARGIN_MS before the end
+// of the worker route's maxDuration. The margin leaves the function time to
+// log and return before the host stops it.
+export const FINISH_ATTEMPT_TIMEOUT_MS = 10_000;
+export const FINISH_RETRY_FIRST_DELAY_MS = 500;
+export const FINISH_RETRY_MAX_DELAY_MS = 8_000;
+export const WORKER_DEADLINE_MARGIN_MS = 10_000;
+// the shortest attempt worth making; less time than this left, no attempt
+export const FINISH_MIN_ATTEMPT_MS = 1_000;
+
 // One retry after a response that fails schema validation.
 export const MAX_VALIDATION_RETRIES = 1;
 

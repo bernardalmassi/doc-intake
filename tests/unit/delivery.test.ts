@@ -9,15 +9,29 @@
 //   - a clean preflight makes exactly the calls runExtraction makes on its
 //     own, over every combination of answers (the matrix in
 //     orchestrator.test.ts), so at most three
-//   - a refused finish repeats only finishes, as failedCloseAttempts plans
-//     them: the failure with the run's usage, then at the dearest price on
-//     file marked estimated; a finish that throws counts as refused
+//   - a finish that gets no answer, or a transient refusal, is sent again
+//     unchanged with doubling waits until the invocation's deadline, each
+//     attempt with its own time limit: a paid result is never replaced by a
+//     blip
+//   - only a definite refusal repeats the finish as failedCloseAttempts
+//     plans it: the failure with the run's usage, then at the dearest price
+//     on file marked estimated; a 42501 after a lost answer stops there
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildPdf } from "../../evals/pdf";
 import { classifyRunError, isCostEstimated } from "@/lib/errors";
-import { dearestModelFor, EXTRACTION_LIMITS, inputTokensPerCall, MAX_OUTPUT_TOKENS, PRICING } from "@/lib/extraction/config";
-import { deliver, preflight, type ClaimedRun, type DownloadedFile, type Finish, type ProviderPair } from "@/lib/extraction/delivery";
+import {
+  dearestModelFor,
+  EXTRACTION_LIMITS,
+  FINISH_ATTEMPT_TIMEOUT_MS,
+  FINISH_MIN_ATTEMPT_MS,
+  FINISH_RETRY_FIRST_DELAY_MS,
+  FINISH_RETRY_MAX_DELAY_MS,
+  inputTokensPerCall,
+  MAX_OUTPUT_TOKENS,
+  PRICING,
+} from "@/lib/extraction/config";
+import { deliver, isTransientFinishRefusal, preflight, type ClaimedRun, type DownloadedFile, type Finish, type ProviderPair } from "@/lib/extraction/delivery";
 import { ProviderError } from "@/lib/extraction/providers/types";
 import { runExtraction, toFinishParams } from "@/lib/extraction/run";
 import { log } from "@/lib/log";
@@ -39,6 +53,9 @@ const RUN: ClaimedRun = {
 };
 
 type FinishParams = ReturnType<typeof toFinishParams>;
+
+// a deadline that no test reaches unless it means to
+const FAR = Date.now() + 3_600_000;
 
 // Records every finish and answers with the refusals given, in order, then
 // accepts.
@@ -79,7 +96,7 @@ describe("the preflight", () => {
     ["a run enqueued with no count", { ok: true, bytes: onePage }, { ...RUN, pageCount: null }, "extraction.page_count_mismatch"],
   ] as const)("fails the run with no provider call when %s", async (_label, downloaded, run, code) => {
     const { calls, finish } = finisher();
-    const result = await deliver({ run, download: async () => downloaded, providers: noProviders, finish, log });
+    const result = await deliver({ run, download: async () => downloaded, providers: noProviders, finish, log, deadline: FAR });
 
     expect(result.outcome).toMatchObject({ status: "failed", provider: null, model: null, attempts: 0, inputTokens: 0, outputTokens: 0 });
     expect(result.outcome.status === "failed" && classifyRunError(result.outcome.error)).toBe(code);
@@ -120,6 +137,7 @@ describe("the preflight", () => {
       },
       finish,
       log,
+      deadline: FAR,
     });
     expect(built).toBe(1);
     expect(result.outcome.status).toBe("succeeded");
@@ -138,6 +156,7 @@ describe("the preflight", () => {
       },
       finish,
       log,
+      deadline: FAR,
     });
     expect(result.outcome.status === "failed" && classifyRunError(result.outcome.error)).toBe("extraction.not_configured");
     expect(calls).toHaveLength(1);
@@ -151,13 +170,13 @@ describe("the per-call input limit", () => {
     const sent = fakeProvider("openai", "gpt-5-nano", [answer(validJson(), "gpt-5-nano-2025-08-07")], [limit]);
     const ok = finisher();
     const run = { ...RUN, pageCount: 3 };
-    await deliver({ run, download: file(pages(3)), providers: () => ({ primary: sent, fallback: null }), finish: ok.finish, log });
+    await deliver({ run, download: file(pages(3)), providers: () => ({ primary: sent, fallback: null }), finish: ok.finish, log, deadline: FAR });
     expect(sent.requests).toHaveLength(1);
     expect(ok.calls[0]).toMatchObject({ p_status: "succeeded" });
 
     const dense = fakeProvider("openai", "gpt-5-nano", [answer(validJson(), "gpt-5-nano-2025-08-07")], [limit + 1]);
     const refused = finisher();
-    const result = await deliver({ run, download: file(pages(3)), providers: () => ({ primary: dense, fallback: null }), finish: refused.finish, log });
+    const result = await deliver({ run, download: file(pages(3)), providers: () => ({ primary: dense, fallback: null }), finish: refused.finish, log, deadline: FAR });
     expect(dense.requests).toHaveLength(0);
     expect(result.outcome.status === "failed" && classifyRunError(result.outcome.error)).toBe("extraction.too_dense");
     expect(refused.calls[0]).toMatchObject({ p_status: "failed", p_provider: null, p_model: null, p_attempts: 0, p_input_tokens: 0, p_output_tokens: 0 });
@@ -168,7 +187,7 @@ describe("a call that got no answer", () => {
   it("is finished at its measured input plus the output cap, marked estimated, and stays so if the finish is refused", async () => {
     const primary = fakeProvider("anthropic", "claude-sonnet-5", [new ProviderError("anthropic", "transport", "request timed out")], [4321]);
     const { calls, finish } = finisher([{ code: "22023" }]);
-    await deliver({ run: RUN, download: file(onePage), providers: () => ({ primary, fallback: null }), finish, log });
+    await deliver({ run: RUN, download: file(onePage), providers: () => ({ primary, fallback: null }), finish, log, deadline: FAR });
 
     const expected = {
       p_status: "failed",
@@ -202,6 +221,7 @@ describe("a clean preflight", () => {
           providers: () => ({ primary: delivered.primary, fallback: delivered.fallback }),
           finish,
           log,
+          deadline: FAR,
         });
         runs += 1;
 
@@ -225,7 +245,7 @@ describe("a refused finish", () => {
   it("repeats only the finish: the same run as failed with its usage, never another model call", async () => {
     const primary = priced();
     const { calls, finish } = finisher([{ code: "22023", status: 400 }]);
-    const result = await deliver({ run: RUN, download: file(onePage), providers: () => ({ primary, fallback: null }), finish, log });
+    const result = await deliver({ run: RUN, download: file(onePage), providers: () => ({ primary, fallback: null }), finish, log, deadline: FAR });
 
     expect(primary.requests).toHaveLength(1);
     expect(result.finishCalls).toBe(2);
@@ -245,7 +265,7 @@ describe("a refused finish", () => {
   it("then at the dearest price on file, marked estimated, if that is refused too", async () => {
     const primary = priced();
     const { calls, finish } = finisher([{ code: "22023" }, { code: "22023" }]);
-    const result = await deliver({ run: RUN, download: file(onePage), providers: () => ({ primary, fallback: null }), finish, log });
+    const result = await deliver({ run: RUN, download: file(onePage), providers: () => ({ primary, fallback: null }), finish, log, deadline: FAR });
 
     expect(primary.requests).toHaveLength(1);
     expect(calls).toHaveLength(3);
@@ -262,19 +282,19 @@ describe("a refused finish", () => {
     expect(result.recorded?.model).toBe(dearest);
   });
 
-  it("leaves the run to the sweep when every finish is refused, and a thrown finish counts as refused", async () => {
+  it("leaves the run to the sweep when every plan is definitely refused", async () => {
     const primary = priced();
-    const { calls, finish } = finisher(["throw", { code: "22023" }, "throw"]);
-    const result = await deliver({ run: RUN, download: file(onePage), providers: () => ({ primary, fallback: null }), finish, log });
+    const { calls, finish } = finisher([{ code: "22023" }, { code: "22023" }, { code: "22023" }]);
+    const result = await deliver({ run: RUN, download: file(onePage), providers: () => ({ primary, fallback: null }), finish, log, deadline: FAR });
 
     expect(primary.requests).toHaveLength(1);
     expect(calls).toHaveLength(3);
-    expect(result.recorded).toBeNull();
+    expect(result).toMatchObject({ recorded: null, unconfirmed: false });
   });
 
   it("finishes a run that called no model once more at most, with nothing to estimate", async () => {
-    const { calls, finish } = finisher([{ code: "40001" }, { code: "40001" }]);
-    const result = await deliver({ run: { ...RUN, pageCount: 2 }, download: file(onePage), providers: noProviders, finish, log });
+    const { calls, finish } = finisher([{ code: "23514" }, { code: "23514" }]);
+    const result = await deliver({ run: { ...RUN, pageCount: 2 }, download: file(onePage), providers: noProviders, finish, log, deadline: FAR });
     expect(calls).toHaveLength(2);
     expect(calls.every((c) => c.p_model === null && c.p_cost_estimated === false)).toBe(true);
     expect(result.recorded).toBeNull();
@@ -282,10 +302,155 @@ describe("a refused finish", () => {
 
   it("keeps a failed run's own error when it is finished again", async () => {
     const primary = fakeProvider("anthropic", "claude-sonnet-5", [new ProviderError("anthropic", "client", "Could not process PDF", 400)]);
-    const { calls, finish } = finisher([{ code: "08006" }]);
-    await deliver({ run: RUN, download: file(onePage), providers: () => ({ primary, fallback: null }), finish, log });
+    const { calls, finish } = finisher([{ code: "23514" }]);
+    await deliver({ run: RUN, download: file(onePage), providers: () => ({ primary, fallback: null }), finish, log, deadline: FAR });
     expect(calls).toHaveLength(2);
     expect(calls[1].p_error).toBe(calls[0].p_error);
     expect(classifyRunError(calls[1].p_error)).toBe("extraction.provider_rejected");
+  });
+});
+
+describe("a finish that gets no answer", () => {
+  const priced = () => fakeProvider("openai", "gpt-5-nano", [answer(validJson(), "gpt-5-nano-2025-08-07", 1000, 100)]);
+
+  // A clock that only moves when the delivery waits.
+  function fakeClock(start = 1_000_000) {
+    let now = start;
+    const waits: number[] = [];
+    return { now: () => now, sleep: async (ms: number) => void (waits.push(ms), (now += ms)), waits, advance: (ms: number) => (now += ms) };
+  }
+
+  it.each([
+    ["throws (no response at all)", "throw" as const],
+    ["comes back with code '' (postgrest-js: no response, or aborted)", { code: "", status: 0 }],
+    ["gets a gateway's 502 with no database error", { code: null, status: 502 }],
+    ["finds the database unreachable (PGRST001)", { code: "PGRST001", status: 503 }],
+    ["hits a deadlock (40P01)", { code: "40P01", status: 500 }],
+    ["hits a statement timeout (57014)", { code: "57014", status: 500 }],
+  ])("is sent again, unchanged, when it %s: a paid result is never replaced by a blip", async (_, blip) => {
+    const primary = priced();
+    const clock = fakeClock();
+    const { calls, finish } = finisher([blip, blip]);
+    const result = await deliver({
+      run: RUN,
+      download: file(onePage),
+      providers: () => ({ primary, fallback: null }),
+      finish,
+      log,
+      deadline: clock.now() + 60_000,
+      clock,
+    });
+
+    expect(primary.requests).toHaveLength(1);
+    expect(calls).toHaveLength(3);
+    // every one the success, with its fields
+    for (const call of calls) expect(call).toEqual(calls[0]);
+    expect(calls[0]).toMatchObject({ p_status: "succeeded", p_model: "gpt-5-nano-2025-08-07" });
+    expect(result).toMatchObject({ recorded: result.outcome, unconfirmed: false });
+    // waits that double
+    expect(clock.waits).toEqual([FINISH_RETRY_FIRST_DELAY_MS, 2 * FINISH_RETRY_FIRST_DELAY_MS]);
+  });
+
+  it("backs off up to the longest wait, and stops at the deadline without replacing the outcome", async () => {
+    const primary = priced();
+    const clock = fakeClock();
+    const finish: Finish = async () => {
+      calls.push(1);
+      return { code: "", status: 0 };
+    };
+    const calls: number[] = [];
+    const deadline = clock.now() + 60_000;
+    const result = await deliver({ run: RUN, download: file(onePage), providers: () => ({ primary, fallback: null }), finish, log, deadline, clock });
+
+    // no failedCloseAttempts: nothing definite refused the result
+    expect(result).toMatchObject({ recorded: null, unconfirmed: false });
+    expect(result.finishCalls).toBe(calls.length);
+    // 0.5, 1, 2, 4, 8, 8, ... seconds
+    expect(clock.waits[0]).toBe(FINISH_RETRY_FIRST_DELAY_MS);
+    for (let i = 1; i < clock.waits.length; i++) expect(clock.waits[i]).toBe(Math.min(2 * clock.waits[i - 1], FINISH_RETRY_MAX_DELAY_MS));
+    expect(clock.waits.at(-1)).toBe(FINISH_RETRY_MAX_DELAY_MS);
+    // every attempt started with at least the shortest attempt's time left,
+    // and the last wait would have left too little for another
+    expect(deadline - clock.now()).toBeGreaterThanOrEqual(FINISH_MIN_ATTEMPT_MS);
+    expect(deadline - clock.now()).toBeLessThan(FINISH_MIN_ATTEMPT_MS + FINISH_RETRY_MAX_DELAY_MS);
+    expect(calls.length).toBe(clock.waits.length + 1);
+  });
+
+  it("gives each attempt its own time limit, never past the deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const primary = priced();
+      const signals: AbortSignal[] = [];
+      const finish: Finish = (_params, signal) => {
+        signals.push(signal);
+        // hangs until it is aborted, as a request with no answer does
+        return new Promise((resolve) => signal.addEventListener("abort", () => resolve({ code: "", status: 0 }), { once: true }));
+      };
+      const start = Date.now();
+      const delivering = deliver({
+        run: RUN,
+        download: file(onePage),
+        providers: () => ({ primary, fallback: null }),
+        finish,
+        log,
+        deadline: start + FINISH_ATTEMPT_TIMEOUT_MS + 3_000,
+      });
+      await vi.advanceTimersByTimeAsync(FINISH_ATTEMPT_TIMEOUT_MS - 1);
+      expect(signals).toHaveLength(1);
+      expect(signals[0].aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(signals[0].aborted).toBe(true);
+      // the next attempt gets only what is left before the deadline
+      await vi.advanceTimersByTimeAsync(FINISH_RETRY_FIRST_DELAY_MS);
+      expect(signals).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(3_000 - FINISH_RETRY_FIRST_DELAY_MS - 1);
+      expect(signals[1].aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(signals[1].aborted).toBe(true);
+      const result = await delivering;
+      expect(result).toMatchObject({ recorded: null, finishCalls: 2 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("goes to failedCloseAttempts only once a refusal is definite", async () => {
+    const primary = priced();
+    const clock = fakeClock();
+    const { calls, finish } = finisher([{ code: "", status: 0 }, { code: "22023", status: 400 }]);
+    const result = await deliver({ run: RUN, download: file(onePage), providers: () => ({ primary, fallback: null }), finish, log, deadline: clock.now() + 60_000, clock });
+
+    expect(calls.map((c) => c.p_status)).toEqual(["succeeded", "succeeded", "failed"]);
+    expect(result.recorded).toMatchObject({ status: "failed" });
+  });
+
+  it("stops without replacing anything when the token is gone after a finish whose answer was lost", async () => {
+    // the first finish committed, but its answer never arrived; the second
+    // finds the token deleted by it
+    const primary = priced();
+    const clock = fakeClock();
+    const { calls, finish } = finisher(["throw", { code: "42501", status: 403 }]);
+    const result = await deliver({ run: RUN, download: file(onePage), providers: () => ({ primary, fallback: null }), finish, log, deadline: clock.now() + 60_000, clock });
+
+    expect(calls).toHaveLength(2);
+    expect(calls.every((c) => c.p_status === "succeeded")).toBe(true);
+    expect(result).toMatchObject({ recorded: null, unconfirmed: true });
+  });
+
+  it("treats a 42501 as definite when no answer was lost before it", async () => {
+    const primary = priced();
+    const { calls, finish } = finisher([{ code: "42501", status: 403 }, { code: "42501" }, { code: "42501" }]);
+    const result = await deliver({ run: RUN, download: file(onePage), providers: () => ({ primary, fallback: null }), finish, log, deadline: FAR });
+    expect(calls.map((c) => c.p_status)).toEqual(["succeeded", "failed", "failed"]);
+    expect(result).toMatchObject({ recorded: null, unconfirmed: false });
+  });
+
+  it("classifies refusals: no answer and the database's transient errors are retried, anything else is definite", () => {
+    for (const blip of [{ code: "" }, { status: 0 }, { code: null, status: 504 }, {}, { code: "PGRST000" }, { code: "PGRST003" }, { code: "08006" }, { code: "40001" }, { code: "40P01" }, { code: "55P03" }, { code: "57014" }, { code: "57P01" }, { code: "53300" }]) {
+      expect(isTransientFinishRefusal(blip), JSON.stringify(blip)).toBe(true);
+    }
+    for (const refusal of [{ code: "42501", status: 403 }, { code: "22023", status: 400 }, { code: "55000" }, { code: "23514" }, { code: "PGRST202", status: 404 }, { code: "53400" }, { code: null, status: 400 }, { code: "XX000", status: 500 }]) {
+      expect(isTransientFinishRefusal(refusal), JSON.stringify(refusal)).toBe(false);
+    }
   });
 });

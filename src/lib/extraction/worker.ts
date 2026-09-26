@@ -53,8 +53,16 @@ type ClaimRow = {
 
 // providers is called only once a claimed run has passed its preflight: the
 // route passes selectProviders, so a missing key fails that run with
-// "extraction is not configured" instead of leaving it queued.
-export async function processOneDelivery({ providers }: { providers: () => ProviderPair }): Promise<WorkerResult> {
+// "extraction is not configured" instead of leaving it queued. deadline is
+// when the invocation must be done with its finishes (epoch milliseconds):
+// the route's start plus its maxDuration, less WORKER_DEADLINE_MARGIN_MS.
+export async function processOneDelivery({
+  providers,
+  deadline,
+}: {
+  providers: () => ProviderPair;
+  deadline: number;
+}): Promise<WorkerResult> {
   let url: string;
   try {
     // refuses every project but this NODE_ENV's one, before any client exists
@@ -101,11 +109,13 @@ export async function processOneDelivery({ providers }: { providers: () => Provi
         },
         download: () => downloadFile(supabase, row.storage_path, runLog),
         providers,
-        finish: async (params) => {
-          const finished = await supabase.rpc("finish_extraction_run", params);
+        // each attempt is aborted when its time is up (delivery.ts)
+        finish: async (params, signal) => {
+          const finished = await supabase.rpc("finish_extraction_run", params).abortSignal(signal);
           return finished.error ? { code: finished.error.code, status: finished.status } : null;
         },
         log: runLog,
+        deadline,
       });
       return { kind: "delivered", runId: row.run_id, ...result };
     } finally {

@@ -16,19 +16,34 @@
 // Any failure finishes the run as failed with no model call: no model, 0
 // tokens, 0 USD.
 //
-// The finish: if it is refused, failedCloseAttempts (run.ts) plans what to
-// finish with instead, as the Extract action closed runs before the queue:
-// the same failure with the run's usage, then at the dearest price on file,
-// marked estimated. Only finishes are repeated, never model calls. If every
-// finish is refused, the run stays running and the queue's sweep charges it
-// the estimate once its visibility timeout has passed.
+// The finish. One that gets no answer (a lost connection, a timeout, a 5xx
+// from the gateway with no database error in it) or one of the database's
+// transient refusals (a deadlock, a serialization failure, a statement
+// timeout, no connection to the database) is sent again, unchanged, after a
+// wait that doubles, for as long as the invocation has time left
+// (`deadline`). A paid result is never replaced because of a blip. Only a
+// definite refusal, the database answering with any other error, makes
+// failedCloseAttempts (run.ts) plan what to finish with instead, as the
+// Extract action closed runs before the queue: the same failure with the
+// run's usage, then at the dearest price on file, marked estimated. A
+// "not found or token invalid" (42501) after a finish that got no answer
+// means the run has already ended, most likely by that finish: nothing more
+// is tried. Only finishes are repeated, never model calls. If no finish is
+// recorded, the run stays running and the queue's sweep charges it the
+// estimate once its visibility timeout has passed.
 //
 // One log line per step, under the run's ids (src/lib/log.ts).
 
 import { failureFields } from "@/app/log-fields";
-import { classifyRunError, RUN_ERROR_MARKERS } from "../errors";
+import { classifyRunError, RUN_ERROR_MARKERS, TRANSIENT_SQLSTATES } from "../errors";
 import type { Logger, LogFields } from "../log";
-import { EXTRACTION_LIMITS } from "./config";
+import {
+  EXTRACTION_LIMITS,
+  FINISH_ATTEMPT_TIMEOUT_MS,
+  FINISH_MIN_ATTEMPT_MS,
+  FINISH_RETRY_FIRST_DELAY_MS,
+  FINISH_RETRY_MAX_DELAY_MS,
+} from "./config";
 import { countPages } from "./pages";
 import { describeError, type ExtractionProvider } from "./providers/types";
 import { failedCloseAttempts, runExtraction, toFinishParams, type RunOutcome } from "./run";
@@ -54,9 +69,37 @@ export type DownloadedFile = { ok: true; bytes: Uint8Array } | { ok: false; reas
 export type ProviderPair = { primary: ExtractionProvider; fallback: ExtractionProvider | null };
 
 // What refused a finish, if anything: finish_extraction_run's SQLSTATE and
-// the response's status, or a thrown error's class name.
+// the response's status, or a thrown error's class name. postgrest-js
+// reports a request that got no response (a lost connection, an abort) as
+// code "" and status 0.
 export type FinishRefusal = { code?: string | null; name?: string | null; status?: number | null };
-export type Finish = (params: ReturnType<typeof toFinishParams>) => Promise<FinishRefusal | null>;
+// `signal` aborts the request when this attempt's time is up.
+export type Finish = (params: ReturnType<typeof toFinishParams>, signal: AbortSignal) => Promise<FinishRefusal | null>;
+
+// The time the finish may use, and how to wait: real by default, fake in
+// tests.
+export type Clock = { now(): number; sleep(ms: number): Promise<void> };
+const realClock: Clock = { now: () => Date.now(), sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)) };
+
+// Whether a finish's refusal is worth sending the same finish again: no
+// answer, a gateway's 5xx with no database error in it, PostgREST unable to
+// reach the database, or a transient SQLSTATE. Anything else is the
+// database refusing this outcome.
+export function isTransientFinishRefusal(refusal: FinishRefusal): boolean {
+  const code = refusal.code ?? null;
+  const status = refusal.status ?? null;
+  if (code === "" || status === 0) return true;
+  if (code === null) return status === null || status >= 500;
+  return /^PGRST00[0-3]$/.test(code) || code.startsWith("08") || TRANSIENT_SQLSTATES.has(code);
+}
+
+// A refusal that means the request may have been carried out: no answer came
+// back at all, or a gateway answered for it.
+function answerLost(refusal: FinishRefusal): boolean {
+  const code = refusal.code ?? null;
+  const status = refusal.status ?? null;
+  return code === "" || status === 0 || (code === null && (status === null || status >= 500));
+}
 
 export type Preflighted =
   | { ok: true; bytes: Uint8Array; mimeType: SupportedMimeType; pages: number }
@@ -118,8 +161,11 @@ export type DeliveryResult = {
   // what the run ended with
   outcome: RunOutcome;
   // what was recorded: the outcome itself, the failure a refused finish was
-  // replaced with, or null if every finish was refused
+  // replaced with, or null if none was
   recorded: RunOutcome | null;
+  // a finish got no answer and a later one found the run already ended: it
+  // was most likely recorded by the one whose answer was lost
+  unconfirmed: boolean;
   finishCalls: number;
 };
 
@@ -130,8 +176,12 @@ export async function deliver(input: {
   providers: () => ProviderPair;
   finish: Finish;
   log: Logger;
+  // when the invocation must be done with its finishes (epoch milliseconds)
+  deadline: number;
+  clock?: Clock;
 }): Promise<DeliveryResult> {
   const { run, log: runLog } = input;
+  const clock = input.clock ?? realClock;
   const startedAt = Date.now();
   const failed = (error: string): RunOutcome => ({
     status: "failed",
@@ -180,18 +230,48 @@ export async function deliver(input: {
     latency_ms: outcome.latencyMs,
   };
   let finishCalls = 0;
-  const finish = async (attempt: RunOutcome, costEstimated: boolean): Promise<FinishRefusal | null> => {
+  const finishOnce = async (attempt: RunOutcome, timeoutMs: number): Promise<FinishRefusal | null> => {
     finishCalls += 1;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      return await input.finish(toFinishParams(run.runId, run.claimToken, attempt, costEstimated));
+      return await input.finish(toFinishParams(run.runId, run.claimToken, attempt, attempt.costEstimated), controller.signal);
     } catch (error) {
       // no answer at all, as postgrest-js reports a lost connection
       return { code: "", name: error instanceof Error ? error.name : null };
+    } finally {
+      clearTimeout(timer);
     }
   };
 
-  const refused = await finish(outcome, outcome.costEstimated);
-  if (!refused) {
+  // One finish, sent again while it gets no answer or a transient refusal
+  // and the deadline allows. What it came to: recorded, a definite refusal,
+  // or out of time; and whether an attempt's answer was lost on the way.
+  type Recording = { recorded: true } | { recorded: false; refusal: FinishRefusal; definite: boolean; lost: boolean };
+  const record = async (attempt: RunOutcome, retry: number): Promise<Recording> => {
+    let delay = FINISH_RETRY_FIRST_DELAY_MS;
+    let lost = false;
+    let last: FinishRefusal = { code: "", name: "DeadlineReached" };
+    for (let sent = 0; ; sent++) {
+      const remaining = input.deadline - clock.now();
+      if (remaining < FINISH_MIN_ATTEMPT_MS) return { recorded: false, refusal: last, definite: false, lost };
+      const refused = await finishOnce(attempt, Math.min(FINISH_ATTEMPT_TIMEOUT_MS, remaining));
+      if (!refused) return { recorded: true };
+      last = refused;
+      if (!isTransientFinishRefusal(refused)) return { recorded: false, refusal: refused, definite: true, lost };
+      lost ||= answerLost(refused);
+      // another attempt only after the full wait, and only with time for it
+      if (clock.now() + delay + FINISH_MIN_ATTEMPT_MS > input.deadline) {
+        return { recorded: false, refusal: refused, definite: false, lost };
+      }
+      runLog.warn("worker.finish_retrying", { retry, attempt: sent + 1, run_status: attempt.status, ...failureFields(refused, refused.status) });
+      await clock.sleep(delay);
+      delay = Math.min(delay * 2, FINISH_RETRY_MAX_DELAY_MS);
+    }
+  };
+
+  const first = await record(outcome, 0);
+  if (first.recorded) {
     if (outcome.status === "failed") {
       runLog.warn("worker.finished", { run_status: "failed", error_code: classifyRunError(outcome.error), ...usage });
     } else {
@@ -202,10 +282,10 @@ export async function deliver(input: {
         ...usage,
       });
     }
-    return { outcome, recorded: outcome, finishCalls };
+    return { outcome, recorded: outcome, unconfirmed: false, finishCalls };
   }
 
-  const refusal = failureFields(refused, refused.status);
+  const refusal = failureFields(first.refusal, first.refusal.status);
   runLog.error("worker.finish_failed", {
     retry: 0,
     run_status: outcome.status,
@@ -213,10 +293,20 @@ export async function deliver(input: {
     ...refusal,
     ...usage,
   });
+  // out of time, or a blip that never cleared: the outcome is not replaced;
+  // the sweep charges the run the estimate after its visibility timeout
+  if (!first.definite) return { outcome, recorded: null, unconfirmed: false, finishCalls };
+  // the token is gone after a finish whose answer was lost: that finish most
+  // likely recorded the run, and every other would get the same refusal
+  if (first.lost && first.refusal.code === "42501") {
+    runLog.warn("worker.finish_unconfirmed", { run_status: outcome.status, ...refusal });
+    return { outcome, recorded: null, unconfirmed: true, finishCalls };
+  }
+
   for (const [index, attempt] of failedCloseAttempts(outcome, refusal.db_code ?? null).entries()) {
     const retry = index + 1;
-    const again = await finish(attempt, attempt.costEstimated);
-    if (!again) {
+    const again = await record(attempt, retry);
+    if (again.recorded) {
       runLog.warn("worker.finish_retried", {
         retry,
         run_status: "failed",
@@ -225,14 +315,19 @@ export async function deliver(input: {
         input_tokens: attempt.inputTokens,
         output_tokens: attempt.outputTokens,
       });
-      return { outcome, recorded: attempt, finishCalls };
+      return { outcome, recorded: attempt, unconfirmed: false, finishCalls };
     }
     runLog.error("worker.finish_failed", {
       retry,
       run_status: "failed",
       error_code: "extraction.record_failed",
-      ...failureFields(again, again.status),
+      ...failureFields(again.refusal, again.refusal.status),
     });
+    if (!again.definite) break;
+    if (again.lost && again.refusal.code === "42501") {
+      runLog.warn("worker.finish_unconfirmed", { run_status: "failed", ...failureFields(again.refusal, again.refusal.status) });
+      return { outcome, recorded: null, unconfirmed: true, finishCalls };
+    }
   }
-  return { outcome, recorded: null, finishCalls };
+  return { outcome, recorded: null, unconfirmed: false, finishCalls };
 }

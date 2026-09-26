@@ -9,6 +9,7 @@
 // request has no session to refresh.
 
 import { after } from "next/server";
+import { WORKER_DEADLINE_MARGIN_MS } from "@/lib/extraction/config";
 import { selectProviders } from "@/lib/extraction/providers/select";
 import { isAuthorizedWorkerRequest, processOneDelivery } from "@/lib/extraction/worker";
 import { log } from "@/lib/log";
@@ -24,10 +25,13 @@ import { log } from "@/lib/log";
 export const maxDuration = 280;
 
 export async function POST(request: Request): Promise<Response> {
+  // the invocation's end, as the host counts it, less a margin: the worker
+  // retries a finish that got no answer until then (delivery.ts)
+  const deadline = Date.now() + maxDuration * 1000 - WORKER_DEADLINE_MARGIN_MS;
   if (!isAuthorizedWorkerRequest(request.headers.get("authorization"))) {
     log.warn("worker.unauthorized");
     return new Response(null, { status: 401 });
   }
-  after(() => processOneDelivery({ providers: selectProviders }));
+  after(() => processOneDelivery({ providers: selectProviders, deadline }));
   return new Response(null, { status: 202 });
 }
