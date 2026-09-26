@@ -266,13 +266,16 @@ describe("through the orchestrator, with real SDK errors", () => {
     return {
       name: provider,
       model: DEFAULT_MODELS[provider],
+      async countInputTokens() {
+        return 1000;
+      },
       async extract(request) {
         throw classify(await thrownBy(provider, fetch, request.maxOutputTokens));
       },
     };
   }
 
-  const input = { bytes: pdfBytes("sdk"), mimeType: "application/pdf" as const, filename: "sdk.pdf" };
+  const input = { bytes: pdfBytes("sdk"), mimeType: "application/pdf" as const, filename: "sdk.pdf", pages: 1 };
 
   it("a real SDK timeout on the primary is answered by the fallback", async () => {
     const primaryFetch = hangs();

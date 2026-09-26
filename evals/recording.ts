@@ -182,6 +182,15 @@ export function replayProvider(recording: Recording): ReplayProvider {
     name: recording.provider,
     model,
     problems,
+    // No count was recorded: a call's recorded input stands in for what the
+    // count before it would have said, so replay checks the same per-call
+    // limit a live run does (run.ts). The call's fingerprint is checked when
+    // it is made.
+    async countInputTokens() {
+      const call = recording.calls[next];
+      if (!call) fail(`the run counted call ${next + 1} but only ${recording.calls.length} were recorded`);
+      return call.response?.inputTokens ?? call.error?.usage?.inputTokens ?? 0;
+    },
     async extract(request) {
       const index = next;
       next += 1;
@@ -297,6 +306,8 @@ export function recordingProvider(
     name: inner.name,
     model: inner.model,
     calls,
+    // the provider's own count; no call is made, so nothing is reserved
+    countInputTokens: (request) => inner.countInputTokens(request),
     async extract(request) {
       const fingerprint = fingerprintRequest(inner.name, inner.model, request);
       budget.reserve(inner.model);

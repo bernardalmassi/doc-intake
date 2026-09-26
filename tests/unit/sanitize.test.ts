@@ -190,10 +190,14 @@ describe("toCloseParams: the last line before Postgres", () => {
     const outcome = await runExtraction({
       bytes: new TextEncoder().encode("%PDF-1.4\n%%EOF\n"),
       mimeType: "application/pdf",
+      pages: 1,
       filename: "x.pdf",
       primary: {
         name: "anthropic",
         model: "claude-haiku-4-5-20251001",
+        async countInputTokens() {
+          return 1000;
+        },
         async extract() {
           return { text, inputTokens: 1, outputTokens: 1, model: "claude-haiku-4-5-20251001" };
         },

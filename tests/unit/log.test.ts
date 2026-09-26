@@ -233,6 +233,7 @@ const VALID: { [K in LogFieldName]-?: NonNullable<LogFields[K]> } = {
   retry: 1,
   input_tokens: 800_000,
   output_tokens: 8_192,
+  input_limit: 304_500,
   latency_ms: 60_000,
   size_bytes: 10_485_760,
   page_count: 100,
@@ -988,6 +989,9 @@ describe("an extraction run logs counts and kinds, never content", () => {
     return {
       name,
       model,
+      async countInputTokens() {
+        return 1000;
+      },
       async extract() {
         const next = answers.shift();
         if (!next) throw new Error("no answer left");
@@ -1011,6 +1015,7 @@ describe("an extraction run logs counts and kinds, never content", () => {
     const outcome = await runExtraction({
       bytes: BYTES,
       mimeType: "application/pdf",
+      pages: 1,
       filename: FILENAME,
       primary: provider("anthropic", "claude-haiku-4-5-20251001", [answer(canaryAnswer(), "claude-haiku-4-5-20251001")]),
       fallback: null,
@@ -1019,8 +1024,17 @@ describe("an extraction run logs counts and kinds, never content", () => {
     expect(outcome.status).toBe("succeeded");
 
     const parsed = lines.map(parse);
-    expect(parsed.map((l) => l.event)).toEqual(["extraction.call_succeeded", "extraction.run_finished"]);
-    expect(parsed[0].fields).toMatchObject({
+    // the count before the call, then the call, then the finish
+    expect(parsed.map((l) => l.event)).toEqual(["extraction.input_counted", "extraction.call_succeeded", "extraction.run_finished"]);
+    expect(parsed[0].fields).toEqual({
+      run_id: RUN_ID,
+      document_id: DOCUMENT_ID,
+      provider: "anthropic",
+      model: "claude-haiku-4-5-20251001",
+      input_tokens: 1000,
+      input_limit: 7500,
+    });
+    expect(parsed[1].fields).toMatchObject({
       run_id: RUN_ID,
       document_id: DOCUMENT_ID,
       provider: "anthropic",
@@ -1029,7 +1043,7 @@ describe("an extraction run logs counts and kinds, never content", () => {
       input_tokens: 5036,
       output_tokens: 468,
     });
-    expect(parsed[1]).toMatchObject({
+    expect(parsed[2]).toMatchObject({
       level: "info",
       fields: {
         run_id: RUN_ID,
@@ -1056,6 +1070,7 @@ describe("an extraction run logs counts and kinds, never content", () => {
     const outcome = await runExtraction({
       bytes: BYTES,
       mimeType: "application/pdf",
+      pages: 1,
       filename: FILENAME,
       primary: provider("anthropic", "claude-haiku-4-5-20251001", [
         new ProviderError("anthropic", "server", `overloaded; zebra; key ${ANTHROPIC_KEY}`, 529),
@@ -1070,17 +1085,21 @@ describe("an extraction run logs counts and kinds, never content", () => {
 
     const parsed = lines.map(parse);
     expect(parsed.map((l) => l.event)).toEqual([
+      "extraction.input_counted",
       "extraction.call_failed",
       "extraction.fallback",
+      "extraction.input_counted",
       "extraction.call_succeeded",
       "extraction.validation_retry",
+      "extraction.input_counted",
       "extraction.call_succeeded",
       "extraction.run_finished",
     ]);
-    expect(parsed[0].fields).toMatchObject({ provider: "anthropic", attempt: 1, error_kind: "server", http_status: 529 });
-    expect(parsed[1].fields).toMatchObject({ from_provider: "anthropic", to_provider: "openai", error_kind: "server" });
-    expect(parsed[3].fields).toEqual({ run_id: RUN_ID, provider: "openai", retry: 1, error_kind: "validation" });
-    expect(parsed[5].fields).toMatchObject({ run_status: "succeeded", attempts: 3, fallback_used: true, provider: "openai" });
+    expect(parsed[1].fields).toMatchObject({ provider: "anthropic", attempt: 1, error_kind: "server", http_status: 529 });
+    expect(parsed[2].fields).toMatchObject({ from_provider: "anthropic", to_provider: "openai", error_kind: "server" });
+    expect(parsed[3].fields).toMatchObject({ provider: "openai", input_tokens: 1000, input_limit: 7500 });
+    expect(parsed[5].fields).toEqual({ run_id: RUN_ID, provider: "openai", retry: 1, error_kind: "validation" });
+    expect(parsed[8].fields).toMatchObject({ run_status: "succeeded", attempts: 3, fallback_used: true, provider: "openai" });
     expectNoContent();
   });
 
@@ -1088,6 +1107,7 @@ describe("an extraction run logs counts and kinds, never content", () => {
     const outcome = await runExtraction({
       bytes: BYTES,
       mimeType: "application/pdf",
+      pages: 1,
       filename: FILENAME,
       primary: provider("anthropic", "claude-haiku-4-5-20251001", [
         new ProviderError("anthropic", "client", `invalid x-api-key ${ANTHROPIC_KEY} for zebra`, 401),
@@ -1112,11 +1132,13 @@ describe("an extraction run logs counts and kinds, never content", () => {
     await runExtraction({
       bytes: BYTES,
       mimeType: "application/pdf",
+      pages: 1,
       filename: FILENAME,
       primary: provider("anthropic", "claude-haiku-4-5-20251001", [new TypeError(`fetch failed: ${SIGNED_URL} zebra`)]),
       fallback: null,
     });
-    const failed = parse(lines[0]);
+    const failed = parse(lines[1]);
+    expect(failed.event).toBe("extraction.call_failed");
     expect(failed.fields).toMatchObject({ error_kind: "unexpected", error_name: "TypeError" });
     expectNoContent();
     expectNoLeak(lines, [SESSION_JWT]);
@@ -1126,6 +1148,7 @@ describe("an extraction run logs counts and kinds, never content", () => {
     await runExtraction({
       bytes: BYTES,
       mimeType: "application/pdf",
+      pages: 1,
       filename: FILENAME,
       primary: provider("anthropic", "claude-haiku-4-5-20251001", [
         answer("zebra canary, not JSON", "claude-haiku-4-5-20251001"),

@@ -81,6 +81,7 @@ describe("numeric dates against payment terms", () => {
     const outcome = await runExtraction({
       bytes: pdfBytes("dates"),
       mimeType: "application/pdf",
+      pages: 1,
       filename: "invoice.pdf",
       primary: fakeProvider("anthropic", "claude-haiku-4-5-20251001", [answer(json)]),
       fallback: null,

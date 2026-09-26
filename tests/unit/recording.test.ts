@@ -46,6 +46,9 @@ function fake(answers: (string | ProviderError)[]): ExtractionProvider & { reque
     name: "anthropic",
     model: DEFAULT_MODELS.anthropic,
     requests,
+    async countInputTokens() {
+      return 1000;
+    },
     async extract(request): Promise<ProviderResponse> {
       requests.push(request);
       const next = answers.shift();
@@ -64,14 +67,14 @@ const cost = (u: ProviderUsage) => computeCostUsd(u.model, u.inputTokens, u.outp
 
 async function record(answers: (string | ProviderError)[], bytes = pdf) {
   const recorder = recordingProvider(fake(answers), budget(), cost, () => 0);
-  const outcome = await runExtraction({ bytes, mimeType: "application/pdf", filename: "x.pdf", primary: recorder, fallback: null });
+  const outcome = await runExtraction({ bytes, mimeType: "application/pdf", pages: 1, filename: "x.pdf", primary: recorder, fallback: null });
   const recording = parseRecording(serializeRecording(toRecording("unit", recorder, new Date(0))), "unit");
   return { outcome, recording };
 }
 
 async function replay(recording: ReturnType<typeof parseRecording>, bytes = pdf) {
   const provider = replayProvider(recording);
-  const outcome = await runExtraction({ bytes, mimeType: "application/pdf", filename: "x.pdf", primary: provider, fallback: null });
+  const outcome = await runExtraction({ bytes, mimeType: "application/pdf", pages: 1, filename: "x.pdf", primary: provider, fallback: null });
   return { outcome, provider };
 }
 
@@ -226,13 +229,16 @@ describe("the live budget", () => {
     const inner: ExtractionProvider = {
       name: "anthropic",
       model: DEFAULT_MODELS.anthropic,
+      async countInputTokens() {
+        return 1000;
+      },
       async extract() {
         return { text: answer(), inputTokens: 5000, outputTokens: 400, model: "claude-unpriced-9" };
       },
     };
     const b = budget();
     const recorder = recordingProvider(inner, b, cost);
-    const outcome = await runExtraction({ bytes: pdf, mimeType: "application/pdf", filename: "x.pdf", primary: recorder, fallback: null });
+    const outcome = await runExtraction({ bytes: pdf, mimeType: "application/pdf", pages: 1, filename: "x.pdf", primary: recorder, fallback: null });
     // runExtraction reports it as a failed run; the live runner checks the
     // budget after every run and stops on this
     expect(outcome.status).toBe("failed");

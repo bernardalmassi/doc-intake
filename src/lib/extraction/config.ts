@@ -98,6 +98,11 @@ export const MAX_OUTPUT_TOKENS = 2048;
 // (attempts, the token clamp above) allow four.
 export const PROVIDER_TIMEOUT_MS = 60_000;
 
+// Per token count. Every call's input is counted first, with the
+// provider's token counting endpoint (run.ts), so a run makes at most as
+// many counts as calls; a count that fails or times out sends no call.
+export const TOKEN_COUNT_TIMEOUT_MS = 15_000;
+
 // One retry after a response that fails schema validation.
 export const MAX_VALIDATION_RETRIES = 1;
 
@@ -193,12 +198,24 @@ export function dearestModelFor(inputTokens: number, outputTokens: number): stri
 export function abandonedRunUsage(pages: number | null): { inputTokens: number; outputTokens: number; pages: number } {
   const limits = EXTRACTION_LIMITS;
   const counted = Math.min(Math.max(1, pages ?? limits.maxPagesPerDocument), limits.maxPagesPerDocument);
-  const perCall = Math.min(limits.promptInputTokens + counted * limits.inputTokensPerPage, limits.maxInputTokensPerCall);
   return {
     pages: counted,
-    inputTokens: Math.min(limits.maxCallsPerRun * perCall, limits.maxInputTokensPerRun),
+    inputTokens: Math.min(limits.maxCallsPerRun * inputTokensPerCall(counted), limits.maxInputTokensPerRun),
     outputTokens: Math.min(limits.maxCallsPerRun * limits.maxOutputTokensPerCall, limits.maxOutputTokensPerRun),
   };
+}
+
+// The most one call may read for a document of `pages` pages (null:
+// unknown, counted as the most a document can have): the prompt plus every
+// page, and no more than a call can take. It is what the estimate above
+// assumes each call reads, so the orchestrator measures every call's input
+// with the provider's token counting endpoint before sending it and sends
+// none that reads more (run.ts). The same formula as the input_per_call of
+// private.abandoned_estimate.
+export function inputTokensPerCall(pages: number | null): number {
+  const limits = EXTRACTION_LIMITS;
+  const counted = Math.min(Math.max(1, pages ?? limits.maxPagesPerDocument), limits.maxPagesPerDocument);
+  return Math.min(limits.promptInputTokens + counted * limits.inputTokensPerPage, limits.maxInputTokensPerCall);
 }
 
 export function abandonedRunCostUsd(pages: number | null): number {

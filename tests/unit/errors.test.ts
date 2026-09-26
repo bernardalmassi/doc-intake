@@ -430,6 +430,10 @@ const RUN_STRING_CASES: [label: string, error: string | null, ErrorCode][] = [
   ["an OpenAI response that failed", "openai server: the response did not complete (failed)", "extraction.provider_unavailable"],
   ["an OpenAI response cancelled", "openai client: the response did not complete (cancelled)", "extraction.answer_incomplete"],
   ["cut off at the context window", "anthropic truncated: the answer was cut off at the model's context window", "extraction.truncated"],
+  ["too dense", "too dense: its input (310000 tokens) is over the 304500 a call may read for 100 pages", "extraction.too_dense"],
+  ["a count rejected", "input not measured: anthropic client 400: Could not process PDF", "extraction.provider_rejected"],
+  ["a count that got no answer", "input not measured: openai transport: connection failed", "extraction.provider_unavailable"],
+  ["a count behind a marker that isn't one", "input not measured: nothing a provider wrote", "unknown"],
   ["an exception from the action", describeError(new TypeError(SECRET)), "unknown"],
   ["empty", "", "unknown"],
   ["blank", "   ", "unknown"],
@@ -443,6 +447,10 @@ type RunCase = {
   label: string;
   primary: (ProviderResponse | ProviderError)[];
   fallback?: (ProviderResponse | ProviderError)[];
+  // what each fake's token count says before each call, if not the default
+  // (run.ts measures every call first)
+  primaryCounts?: (number | ProviderError)[];
+  fallbackCounts?: (number | ProviderError)[];
   // what run.ts stores, where the exact text matters
   stored?: string | RegExp;
   expected: ErrorCode;
@@ -540,15 +548,70 @@ const RUN_CASES: RunCase[] = [
   { label: "invalid, then the retry times out", primary: [notJson(), new ProviderError("anthropic", "transport", PROVIDER_MESSAGES.timeout)], expected: "extraction.provider_timeout" },
   { label: "impersonating keys, then the retry times out", primary: [spoofed, new ProviderError("anthropic", "transport", PROVIDER_MESSAGES.timeout)], expected: "extraction.provider_timeout" },
   { label: "invalid, then the retry is refused", primary: [notJson(), new ProviderError("anthropic", "refusal", "declined")], expected: "extraction.refused" },
+  // what the count before each call can stop (run.ts)
+  {
+    label: "the first call measures over the limit: nothing sent",
+    primary: [],
+    primaryCounts: [7501],
+    stored: "too dense: its input (7501 tokens) is over the 7500 a call may read for 1 page",
+    expected: "extraction.too_dense",
+  },
+  {
+    label: "the count times out, no fallback",
+    primary: [],
+    primaryCounts: [new ProviderError("anthropic", "transport", PROVIDER_MESSAGES.timeout)],
+    stored: "input not measured: anthropic transport: request timed out; no fallback provider is configured",
+    expected: "extraction.provider_timeout",
+  },
+  {
+    label: "the count is rejected",
+    primary: [],
+    primaryCounts: [new ProviderError("anthropic", "client", "Could not process PDF", 400)],
+    fallback: [],
+    stored: "input not measured: anthropic client 400: Could not process PDF",
+    expected: "extraction.provider_rejected",
+  },
+  {
+    label: "primary times out, the fallback's count fails: the fallback isn't used",
+    primary: [new ProviderError("anthropic", "transport", PROVIDER_MESSAGES.timeout)],
+    fallback: [],
+    fallbackCounts: [new ProviderError("openai", "server", "Service Unavailable", 503)],
+    stored:
+      "anthropic transport: request timed out; the fallback provider was not used: its input could not be measured (openai server 503: Service Unavailable)",
+    expected: "extraction.provider_timeout",
+  },
+  {
+    label: "primary 5xx, the fallback measures over the limit: the fallback isn't used",
+    primary: [new ProviderError("anthropic", "server", "Overloaded", 529)],
+    fallback: [],
+    fallbackCounts: [9000],
+    stored: "anthropic server 529: Overloaded; the fallback provider was not used: its input (9000 tokens) is over the 7500 a call may read for 1 page",
+    expected: "extraction.provider_unavailable",
+  },
+  {
+    label: "invalid, then the retry measures over the limit: not sent",
+    primary: [notJson()],
+    primaryCounts: [1000, 9000],
+    stored: /^retry after invalid response \([\s\S]*\) failed: the retry was not sent: its input \(9000 tokens\) is over the 7500 a call may read for 1 page$/,
+    expected: "extraction.invalid_answer",
+  },
+  {
+    label: "invalid, then the retry's count times out",
+    primary: [notJson()],
+    primaryCounts: [1000, new ProviderError("anthropic", "transport", PROVIDER_MESSAGES.timeout)],
+    stored: /\) failed: input not measured: anthropic transport: request timed out$/,
+    expected: "extraction.provider_timeout",
+  },
 ];
 
-async function storedError(primary: (ProviderResponse | ProviderError)[], fallback?: (ProviderResponse | ProviderError)[]) {
+async function storedError({ primary, fallback, primaryCounts, fallbackCounts }: RunCase) {
   const outcome = await runExtraction({
     bytes: new TextEncoder().encode("%PDF-1.4 fake"),
     mimeType: "application/pdf",
+    pages: 1,
     filename: "fake.pdf",
-    primary: fakeProvider("anthropic", "claude-haiku-4-5-20251001", primary),
-    fallback: fallback ? fakeProvider("openai", "gpt-5-nano", fallback) : null,
+    primary: fakeProvider("anthropic", "claude-haiku-4-5-20251001", primary, primaryCounts),
+    fallback: fallback ? fakeProvider("openai", "gpt-5-nano", fallback, fallbackCounts) : null,
   });
   if (outcome.status !== "failed") throw new Error("expected the fake run to fail");
   return outcome.error;
@@ -897,8 +960,9 @@ describe("classifyRunError", () => {
     expect(classifyRunError(error)).toBe(expected);
   });
 
-  it.each(RUN_CASES)("what the orchestrator stores: $label", async ({ primary, fallback, stored, expected }) => {
-    const error = await storedError(primary, fallback);
+  it.each(RUN_CASES)("what the orchestrator stores: $label", async (runCase) => {
+    const { stored, expected } = runCase;
+    const error = await storedError(runCase);
     if (typeof stored === "string") expect(error).toBe(stored);
     else if (stored) expect(error).toMatch(stored);
     expect(classifyRunError(error)).toBe(expected);

@@ -383,6 +383,9 @@ describe("enqueue", () => {
     const waiting: ExtractionProvider = {
       name: "openai",
       model: NANO,
+      async countInputTokens() {
+        return 1000;
+      },
       async extract() {
         called();
         await released;

@@ -1,5 +1,6 @@
 // The time bounds a queued run lives under (docs/worker-design.md, section
-// 6): its model calls (3 x 60 s), the worker route's maxDuration, which
+// 6): its model calls, each counted first (3 x (15 s + 60 s)), the worker
+// route's maxDuration, which
 // bounds after() too, the claimed message's visibility timeout, and the
 // stale limit the sweep and the reaper go by. Each must outlast the one
 // before it: a delivery must finish inside its function, and no second
@@ -12,7 +13,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { EXTRACTION_LIMITS, PROVIDER_TIMEOUT_MS } from "@/lib/extraction/config";
+import { EXTRACTION_LIMITS, PROVIDER_TIMEOUT_MS, TOKEN_COUNT_TIMEOUT_MS } from "@/lib/extraction/config";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const ROUTE = "src/app/api/extraction-worker/route.ts";
@@ -35,10 +36,12 @@ function sourceFiles(dir: string): string[] {
 }
 
 describe("the queue's time bounds", () => {
-  it("run in order: model calls < the route's maxDuration < the host's maximum", () => {
-    const modelSeconds = (EXTRACTION_LIMITS.maxCallsPerRun * PROVIDER_TIMEOUT_MS) / 1000;
+  it("run in order: model calls and their counts < the route's maxDuration < the host's maximum", () => {
+    // every call is counted before it is sent (run.ts), so a run makes at
+    // most as many counts as calls
+    const modelSeconds = (EXTRACTION_LIMITS.maxCallsPerRun * (TOKEN_COUNT_TIMEOUT_MS + PROVIDER_TIMEOUT_MS)) / 1000;
     const route = literalMaxDuration(ROUTE);
-    expect(modelSeconds).toBe(180);
+    expect(modelSeconds).toBe(225);
     expect(route, `${ROUTE} has no literal maxDuration export`).not.toBeNull();
     expect(route).toBeGreaterThan(modelSeconds);
     expect(route).toBeLessThan(HOST_MAX_SECONDS);

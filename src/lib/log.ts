@@ -63,6 +63,9 @@ export const LOG_EVENTS = [
   "extraction.providers_selected",
   "extraction.not_configured",
   // extraction/run.ts
+  "extraction.input_counted",
+  "extraction.count_failed",
+  "extraction.call_not_sent",
   "extraction.call_succeeded",
   "extraction.call_failed",
   "extraction.fallback",
@@ -178,7 +181,9 @@ export const LOG_ERROR_CODES = [
   "worker_target_refused",
 ] as const;
 
-export type LogErrorKind = ProviderErrorKind | "validation" | "unexpected";
+// over_limit: a call whose measured input was over the per-call limit, so
+// it wasn't sent (run.ts)
+export type LogErrorKind = ProviderErrorKind | "validation" | "unexpected" | "over_limit";
 const ERROR_KINDS: Record<LogErrorKind, true> = {
   transport: true,
   server: true,
@@ -187,6 +192,7 @@ const ERROR_KINDS: Record<LogErrorKind, true> = {
   truncated: true,
   validation: true,
   unexpected: true,
+  over_limit: true,
 };
 
 // public.extraction_run_status and public.document_status
@@ -214,6 +220,8 @@ const LOG_FIELDS = {
   retry: count(1000),
   input_tokens: count(),
   output_tokens: count(),
+  // the most input one call may read for the run's pages (run.ts)
+  input_limit: count(),
   latency_ms: count(),
   size_bytes: count(),
   // a document's pages as counted, and as the run was enqueued with

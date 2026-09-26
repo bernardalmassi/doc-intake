@@ -16,7 +16,7 @@
 import { describe, expect, it } from "vitest";
 import { buildPdf } from "../../evals/pdf";
 import { classifyRunError, isCostEstimated } from "@/lib/errors";
-import { dearestModelFor, EXTRACTION_LIMITS, PRICING } from "@/lib/extraction/config";
+import { dearestModelFor, EXTRACTION_LIMITS, inputTokensPerCall, PRICING } from "@/lib/extraction/config";
 import { deliver, preflight, type ClaimedRun, type DownloadedFile, type Finish, type ProviderPair } from "@/lib/extraction/delivery";
 import { ProviderError } from "@/lib/extraction/providers/types";
 import { runExtraction, toFinishParams } from "@/lib/extraction/run";
@@ -145,6 +145,25 @@ describe("the preflight", () => {
   });
 });
 
+describe("the per-call input limit", () => {
+  it("is the one for the pages the worker counted: a call at it is sent, one over it isn't, and the run fails at 0", async () => {
+    const limit = inputTokensPerCall(3);
+    const sent = fakeProvider("openai", "gpt-5-nano", [answer(validJson(), "gpt-5-nano-2025-08-07")], [limit]);
+    const ok = finisher();
+    const run = { ...RUN, pageCount: 3 };
+    await deliver({ run, download: file(pages(3)), providers: () => ({ primary: sent, fallback: null }), finish: ok.finish, log });
+    expect(sent.requests).toHaveLength(1);
+    expect(ok.calls[0]).toMatchObject({ p_status: "succeeded" });
+
+    const dense = fakeProvider("openai", "gpt-5-nano", [answer(validJson(), "gpt-5-nano-2025-08-07")], [limit + 1]);
+    const refused = finisher();
+    const result = await deliver({ run, download: file(pages(3)), providers: () => ({ primary: dense, fallback: null }), finish: refused.finish, log });
+    expect(dense.requests).toHaveLength(0);
+    expect(result.outcome.status === "failed" && classifyRunError(result.outcome.error)).toBe("extraction.too_dense");
+    expect(refused.calls[0]).toMatchObject({ p_status: "failed", p_provider: null, p_model: null, p_attempts: 0, p_input_tokens: 0, p_output_tokens: 0 });
+  });
+});
+
 describe("a clean preflight", () => {
   it("makes exactly the calls runExtraction makes on its own, over every combination of answers", async () => {
     let runs = 0;
@@ -152,7 +171,7 @@ describe("a clean preflight", () => {
       for (const steps of scripts(MAX_CALLS)) {
         const label = `${steps.join(", ")}, ${withFallback ? "with" : "without"} a fallback`;
         const alone = scripted(steps, withFallback);
-        const expected = await runExtraction({ bytes: onePage, mimeType: "application/pdf", primary: alone.primary, fallback: alone.fallback });
+        const expected = await runExtraction({ bytes: onePage, mimeType: "application/pdf", pages: 1, primary: alone.primary, fallback: alone.fallback });
 
         const delivered = scripted(steps, withFallback);
         const { calls: finishes, finish } = finisher();

@@ -38,6 +38,12 @@ export type ProviderUsage = Pick<ProviderResponse, "inputTokens" | "outputTokens
 export interface ExtractionProvider {
   readonly name: ProviderName;
   readonly model: string;
+  // How many input tokens `request` would be billed for, from the
+  // provider's token counting endpoint: not a model call, and Anthropic
+  // documents its endpoint as free (OpenAI's guide, read 2026-09-26, states
+  // no price). The orchestrator counts every call before sending it
+  // (run.ts). Throws a ProviderError, as extract does.
+  countInputTokens(request: ExtractionRequest): Promise<number>;
   extract(request: ExtractionRequest): Promise<ProviderResponse>;
 }
 

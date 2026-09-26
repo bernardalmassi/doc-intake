@@ -15,12 +15,17 @@
 //     come from one model, the one the database prices the run at
 //   - over every combination of answers, a run makes at most three calls
 //     (the database accepts four) and its error fits the 2000-character column
+//   - no call is sent until its input has been counted and fits the per-call
+//     limit for the document's pages: a first call over it is "too dense"
+//     and sends nothing, a fallback that can't be measured or is over it
+//     isn't used, and a retry over it isn't sent
 //
 // That the real SDKs' timeouts and 5xx responses become the fallback-eligible
 // errors these fakes throw is proven in provider-errors.test.ts.
 
 import { describe, expect, it } from "vitest";
-import { CONFIDENCE_THRESHOLDS, MAX_OUTPUT_TOKENS, type ProviderName } from "@/lib/extraction/config";
+import { classifyRunError, userFacingError } from "@/lib/errors";
+import { CONFIDENCE_THRESHOLDS, EXTRACTION_LIMITS, inputTokensPerCall, MAX_OUTPUT_TOKENS, type ProviderName } from "@/lib/extraction/config";
 import { describeError, ProviderError } from "@/lib/extraction/providers/types";
 import { runExtraction } from "@/lib/extraction/run";
 import { answer, fakeProvider, pdfBytes, validJson } from "../helpers/fake-provider";
@@ -33,7 +38,7 @@ import { BAD_DATE, HAIKU, MAX_CALLS, NANO, NANO_SNAPSHOT, SERVED, scripted, scri
 const DB_MAX_ERROR_LENGTH = 2000;
 const DB_MAX_ATTEMPTS = 4;
 
-const input = { bytes: pdfBytes("fake"), mimeType: "application/pdf" as const, filename: "fake.pdf" };
+const input = { bytes: pdfBytes("fake"), mimeType: "application/pdf" as const, filename: "fake.pdf", pages: 1 };
 
 const timedOut = (provider: ProviderName) => new ProviderError(provider, "transport", "request timed out");
 const serverError = (provider: ProviderName, status: number, message: string) =>
@@ -115,6 +120,130 @@ describe("orchestrator (fake providers)", () => {
     expect(fallback.requests).toHaveLength(0);
     expect(outcome).toMatchObject({ status: "failed", attempts: 1, inputTokens: 0, rawResponse: null });
     if (outcome.status === "failed") expect(outcome.error).toMatch(/anthropic client 400/);
+  });
+});
+
+describe("measuring before every call", () => {
+  // what the estimate assumes one call of a one-page document reads
+  const ONE_PAGE = inputTokensPerCall(1);
+
+  it("counts every call with the request it then sends, and sends one that fits", async () => {
+    const primary = fakeProvider("anthropic", HAIKU, [answer("{ nope", HAIKU, 1000, 100), answer(validJson(), HAIKU, 1300, 150)]);
+    const outcome = await runExtraction({ ...input, primary, fallback: null });
+
+    expect(outcome).toMatchObject({ status: "succeeded", attempts: 2 });
+    // the first call and the retry, each counted just before it was sent
+    expect(primary.counted).toHaveLength(2);
+    expect(primary.counted).toEqual(primary.requests);
+  });
+
+  it("sends a call whose input is exactly the limit, and is 4 500 tokens plus 3 000 a page, at most 304 500", async () => {
+    expect(ONE_PAGE).toBe(7500);
+    expect(inputTokensPerCall(20)).toBe(64_500);
+    expect(inputTokensPerCall(100)).toBe(EXTRACTION_LIMITS.maxInputTokensPerCall);
+    const primary = fakeProvider("anthropic", HAIKU, [answer(validJson())], [ONE_PAGE]);
+    const outcome = await runExtraction({ ...input, primary, fallback: null });
+    expect(outcome.status).toBe("succeeded");
+    expect(primary.requests).toHaveLength(1);
+  });
+
+  it("sends nothing for a document whose first call measures over the limit: too dense, at 0, and no fallback", async () => {
+    const primary = fakeProvider("anthropic", HAIKU, [answer(validJson())], [ONE_PAGE + 1]);
+    const fallback = fakeProvider("openai", NANO, [answer(validJson(), NANO_SNAPSHOT)]);
+    const outcome = await runExtraction({ ...input, primary, fallback });
+
+    expect(primary.requests).toHaveLength(0);
+    expect(fallback.counted).toHaveLength(0);
+    expect(fallback.requests).toHaveLength(0);
+    // no call, no model, no tokens: finish_extraction_run records 0 USD
+    expect(outcome).toMatchObject({ status: "failed", provider: null, model: null, attempts: 0, inputTokens: 0, outputTokens: 0 });
+    if (outcome.status === "failed") {
+      expect(outcome.error).toBe(`too dense: its input (${ONE_PAGE + 1} tokens) is over the ${ONE_PAGE} a call may read for 1 page`);
+      expect(classifyRunError(outcome.error)).toBe("extraction.too_dense");
+      expect(userFacingError("extraction.too_dense").retryable).toBe(false);
+    }
+  });
+
+  it("measures against the document's own pages", async () => {
+    const counted = inputTokensPerCall(3);
+    const sent = fakeProvider("anthropic", HAIKU, [answer(validJson())], [counted]);
+    expect((await runExtraction({ ...input, pages: 3, primary: sent, fallback: null })).status).toBe("succeeded");
+    const refused = fakeProvider("anthropic", HAIKU, [answer(validJson())], [counted]);
+    expect((await runExtraction({ ...input, pages: 2, primary: refused, fallback: null })).status).toBe("failed");
+    expect(refused.requests).toHaveLength(0);
+  });
+
+  it("switches to the fallback when the primary's count gets no answer, and measures the fallback too", async () => {
+    const primary = fakeProvider("anthropic", HAIKU, [answer(validJson())], [timedOut("anthropic")]);
+    const fallback = fakeProvider("openai", NANO, [answer(validJson(), NANO_SNAPSHOT, 700, 60)], [2700]);
+    const outcome = await runExtraction({ ...input, primary, fallback });
+
+    expect(primary.requests).toHaveLength(0);
+    expect(fallback.counted).toHaveLength(1);
+    expect(outcome).toMatchObject({ status: "succeeded", provider: "openai", attempts: 1, inputTokens: 700 });
+  });
+
+  it.each([
+    ["a count rejected (400)", new ProviderError("anthropic", "client", "Could not process PDF", 400), "extraction.provider_rejected"],
+    ["a count answered with a 429", new ProviderError("anthropic", "client", "rate limited", 429), "extraction.provider_unavailable"],
+    ["a count with no usable number", new ProviderError("anthropic", "client", "the token count endpoint returned no usable count"), "unknown"],
+  ])("%s sends nothing and doesn't fall back", async (_, failure, code) => {
+    const primary = fakeProvider("anthropic", HAIKU, [answer(validJson())], [failure]);
+    const fallback = fakeProvider("openai", NANO, [answer(validJson(), NANO_SNAPSHOT)]);
+    const outcome = await runExtraction({ ...input, primary, fallback });
+
+    expect(primary.requests).toHaveLength(0);
+    expect(fallback.counted).toHaveLength(0);
+    expect(outcome).toMatchObject({ status: "failed", provider: null, model: null, attempts: 0, inputTokens: 0 });
+    if (outcome.status === "failed") expect(classifyRunError(outcome.error)).toBe(code);
+  });
+
+  it.each([
+    ["can't be measured", [new ProviderError("openai", "transport", "request timed out")], "its input could not be measured (openai transport: request timed out)"],
+    ["measures over the limit", [ONE_PAGE + 1], `its input (${ONE_PAGE + 1} tokens) is over the ${ONE_PAGE} a call may read for 1 page`],
+  ] as const)("a fallback that %s isn't used for the run", async (_, counts, why) => {
+    const primary = fakeProvider("anthropic", HAIKU, [timedOut("anthropic")]);
+    const fallback = fakeProvider("openai", NANO, [answer(validJson(), NANO_SNAPSHOT)], [...counts]);
+    const outcome = await runExtraction({ ...input, primary, fallback });
+
+    expect(primary.requests).toHaveLength(1);
+    expect(fallback.requests).toHaveLength(0);
+    expect(outcome).toMatchObject({ status: "failed", provider: "anthropic", attempts: 1 });
+    if (outcome.status === "failed") {
+      expect(outcome.error).toBe(`anthropic transport: request timed out; the fallback provider was not used: ${why}`);
+      expect(classifyRunError(outcome.error)).toBe("extraction.provider_timeout");
+    }
+  });
+
+  it("doesn't send a retry that measures over the limit: the run fails with the invalid answer it has", async () => {
+    const primary = fakeProvider("anthropic", HAIKU, [answer("{ nope", HAIKU, 1000, 100), answer(validJson())], [ONE_PAGE, ONE_PAGE + 1]);
+    const outcome = await runExtraction({ ...input, primary, fallback: null });
+
+    expect(primary.requests).toHaveLength(1);
+    expect(primary.counted).toHaveLength(2);
+    expect(outcome).toMatchObject({ status: "failed", attempts: 1, inputTokens: 1000, outputTokens: 100, rawResponse: "{ nope" });
+    if (outcome.status === "failed") {
+      expect(outcome.error).toMatch(/\) failed: the retry was not sent: its input \(7501 tokens\) is over the 7500 a call may read for 1 page$/);
+      expect(classifyRunError(outcome.error)).toBe("extraction.invalid_answer");
+    }
+  });
+
+  it("over every combination of answers, counts before every call and never sends one it didn't count", async () => {
+    for (const withFallback of [true, false]) {
+      for (const steps of scripts(MAX_CALLS)) {
+        const counts: ProviderName[] = [];
+        const { calls, primary, fallback } = scripted(steps, withFallback);
+        const counting = (provider: typeof primary) => ({
+          ...provider,
+          countInputTokens: async (request: Parameters<typeof provider.countInputTokens>[0]) => {
+            counts.push(provider.name);
+            return provider.countInputTokens(request);
+          },
+        });
+        await runExtraction({ ...input, primary: counting(primary), fallback: fallback && counting(fallback) });
+        expect(counts, steps.join(", ")).toEqual(calls.map((c) => c.provider));
+      }
+    }
   });
 });
 

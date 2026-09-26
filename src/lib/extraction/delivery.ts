@@ -156,6 +156,7 @@ export async function deliver(input: {
       outcome = await runExtraction({
         bytes: checked.bytes,
         mimeType: checked.mimeType,
+        pages: checked.pages,
         primary,
         fallback,
         logContext: { run_id: run.runId, document_id: run.documentId, tenant_id: run.tenantId },

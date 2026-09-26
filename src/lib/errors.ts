@@ -343,10 +343,19 @@ const CATALOG = {
     message: "The extraction service stopped before finishing its answer. Please try again.",
     retryable: true,
   },
+  // A second attempt is made only if it fits the per-call limit, so the
+  // message doesn't promise one.
   "extraction.invalid_answer": {
     message:
-      "The extraction service's answer failed our checks, even after a second attempt. You can try again or review the document yourself.",
+      "The extraction service's answer failed our checks, so nothing was saved from it. You can try again or review the document yourself.",
     retryable: true,
+  },
+  // run.ts measures every call before sending it; a document whose first
+  // call reads more than the per-call limit for its pages is never sent
+  "extraction.too_dense": {
+    message:
+      "This document is too dense to extract within our limits: its pages hold more than one extraction may read, so it wasn't sent and nothing was charged. Split it into smaller files and extract those.",
+    retryable: false,
   },
   "extraction.abandoned": {
     message: "This extraction stopped before it finished and was cancelled. Please try again.",
@@ -441,6 +450,15 @@ export const RUN_ERROR_MARKERS = {
   fallbackFailed: "; fallback ",
   // appended when a timeout or 5xx had no fallback to switch to
   noFallback: "; no fallback provider is configured",
+  // run.ts measures every call's input before sending it. A first call over
+  // the per-call limit: "too dense: its input (<n> tokens) is over ...".
+  tooDense: "too dense: ",
+  // a count that failed, so no call was sent: "input not measured: <the
+  // count's error, as describeError renders it>"
+  inputNotMeasured: "input not measured: ",
+  // "<primary's error>; the fallback provider was not used: <why>": the
+  // fallback's input couldn't be measured, or was over the limit
+  fallbackNotUsed: "; the fallback provider was not used: ",
   notConfigured: "extraction is not configured",
   providerNotSelected: `${PROVIDER_ENV_VAR} must be`,
   modelNotSelected: `${ANTHROPIC_MODEL_ENV_VAR} must be`,
@@ -1031,6 +1049,7 @@ function runCode(error: string | null | undefined): ErrorCode {
   if (error.startsWith(RUN_ERROR_MARKERS.pagesUnreadable)) return "document.pages_unreadable";
   if (error.startsWith(RUN_ERROR_MARKERS.tooManyPages)) return "document.too_many_pages";
   if (error.startsWith(RUN_ERROR_MARKERS.pageCountMismatch)) return "extraction.page_count_mismatch";
+  if (error.startsWith(RUN_ERROR_MARKERS.tooDense)) return "extraction.too_dense";
   // The validation error is built from the validator's own wording, but a
   // stored error can come from anywhere (an admin can close a run with any
   // text), and a document can steer the model. So nothing past these
@@ -1060,8 +1079,12 @@ function runCode(error: string | null | undefined): ErrorCode {
 }
 
 // Provider errors as describeError renders them, possibly two joined by
-// run.ts after a fallback, or one with the no-fallback note appended.
+// run.ts after a fallback, or one with the no-fallback note appended. A
+// count that failed reads as the failure it was: no call was sent after it.
 function classifyProviderText(text: string): ErrorCode {
+  if (text.startsWith(RUN_ERROR_MARKERS.inputNotMeasured)) {
+    return classifyProviderText(text.slice(RUN_ERROR_MARKERS.inputNotMeasured.length));
+  }
   if (FALLBACK_FAILED.test(text)) return "extraction.all_providers_failed";
   const match = DESCRIPTOR_AT_START.exec(text);
   if (!match) return "unknown";

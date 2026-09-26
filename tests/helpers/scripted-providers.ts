@@ -49,6 +49,10 @@ export function scripted(steps: readonly Step[], withFallback: boolean) {
   const make = (name: ProviderName, model: string): ExtractionProvider => ({
     name,
     model,
+    // every call is measured first (run.ts), well under the one-page limit
+    async countInputTokens() {
+      return 1000 + calls.length;
+    },
     async extract() {
       const n = calls.length;
       const step: Step | undefined = steps[n];

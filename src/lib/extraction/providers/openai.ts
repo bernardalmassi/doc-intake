@@ -1,19 +1,15 @@
 import "server-only";
 
 import OpenAI from "openai";
-import type { ResponseInput } from "openai/resources/responses/responses";
-import { OPENAI_REASONING_EFFORT } from "../config";
-import { ATTACHMENT_FILENAME } from "../schema";
+import { TOKEN_COUNT_TIMEOUT_MS } from "../config";
 import { classifyOpenAIError } from "./classify";
-import { interpretOpenAIResponse } from "./interpret";
+import { interpretOpenAIResponse, interpretTokenCount } from "./interpret";
+import { openAICountParams, openAICreateParams } from "./requests";
 import type { ExtractionProvider, ExtractionRequest, ProviderResponse } from "./types";
-import { toBase64 } from "./types";
 
-// Responses API with a strict JSON schema (text.format). Reference:
-// https://developers.openai.com/api/docs/guides/structured-outputs and
-// https://developers.openai.com/api/docs/guides/pdf-files (both read on
-// 2026-09-18). maxRetries is 0 on purpose: the orchestrator decides what to
-// retry and when to fall back.
+// Responses API with a strict JSON schema, and its input token count (the
+// requests are built in requests.ts). maxRetries is 0 on purpose: the
+// orchestrator decides what to retry and when to fall back.
 export function createOpenAIProvider(options: {
   apiKey: string;
   model: string;
@@ -29,40 +25,22 @@ export function createOpenAIProvider(options: {
     name: "openai",
     model: options.model,
 
-    async extract(request: ExtractionRequest): Promise<ProviderResponse> {
-      const dataUrl = `data:${request.mimeType};base64,${toBase64(request.bytes)}`;
-      const attachment =
-        request.mimeType === "application/pdf"
-          ? ({ type: "input_file", filename: ATTACHMENT_FILENAME, file_data: dataUrl } as const)
-          : ({ type: "input_image", image_url: dataUrl, detail: "auto" } as const);
-
-      const input: ResponseInput = [
-        { role: "user", content: [attachment, { type: "input_text", text: request.userPrompt }] },
-      ];
-      if (request.previousAttempt) {
-        input.push(
-          { role: "assistant", content: request.previousAttempt.rawResponse },
-          { role: "user", content: request.previousAttempt.retryPrompt },
-        );
+    async countInputTokens(request: ExtractionRequest): Promise<number> {
+      let counted: OpenAI.Responses.InputTokenCountResponse;
+      try {
+        counted = await client.responses.inputTokens.count(openAICountParams(options.model, request), {
+          timeout: TOKEN_COUNT_TIMEOUT_MS,
+        });
+      } catch (error) {
+        throw classifyOpenAIError(error);
       }
+      return interpretTokenCount("openai", counted.input_tokens);
+    },
 
+    async extract(request: ExtractionRequest): Promise<ProviderResponse> {
       let response: OpenAI.Responses.Response;
       try {
-        response = await client.responses.create({
-          model: options.model,
-          instructions: request.systemPrompt,
-          input,
-          max_output_tokens: request.maxOutputTokens,
-          reasoning: { effort: OPENAI_REASONING_EFFORT },
-          text: {
-            format: {
-              type: "json_schema",
-              name: "document_fields",
-              strict: true,
-              schema: request.schema,
-            },
-          },
-        });
+        response = await client.responses.create(openAICreateParams(options.model, request));
       } catch (error) {
         throw classifyOpenAIError(error);
       }

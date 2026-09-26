@@ -1,17 +1,15 @@
 import "server-only";
 
 import Anthropic from "@anthropic-ai/sdk";
+import { TOKEN_COUNT_TIMEOUT_MS } from "../config";
 import { classifyAnthropicError } from "./classify";
-import { interpretAnthropicMessage } from "./interpret";
+import { interpretAnthropicMessage, interpretTokenCount } from "./interpret";
+import { anthropicCountParams, anthropicCreateParams } from "./requests";
 import type { ExtractionProvider, ExtractionRequest, ProviderResponse } from "./types";
-import { toBase64 } from "./types";
-import { ANTHROPIC_THINKING } from "../config";
 
-// Messages API with a schema-constrained output (output_config.format).
-// Reference: https://platform.claude.com/docs/en/build-with-claude/structured-outputs
-// and https://platform.claude.com/docs/en/build-with-claude/pdf-support
-// (both read on 2026-09-18). maxRetries is 0 on purpose: the orchestrator
-// decides what to retry and when to fall back.
+// Messages API with a schema-constrained output, and its token counting
+// endpoint (the requests are built in requests.ts). maxRetries is 0 on
+// purpose: the orchestrator decides what to retry and when to fall back.
 export function createAnthropicProvider(options: {
   apiKey: string;
   model: string;
@@ -27,33 +25,22 @@ export function createAnthropicProvider(options: {
     name: "anthropic",
     model: options.model,
 
-    async extract(request: ExtractionRequest): Promise<ProviderResponse> {
-      const data = toBase64(request.bytes);
-      const attachment: Anthropic.ContentBlockParam =
-        request.mimeType === "application/pdf"
-          ? { type: "document", source: { type: "base64", media_type: "application/pdf", data } }
-          : { type: "image", source: { type: "base64", media_type: request.mimeType, data } };
-
-      const messages: Anthropic.MessageParam[] = [
-        { role: "user", content: [attachment, { type: "text", text: request.userPrompt }] },
-      ];
-      if (request.previousAttempt) {
-        messages.push(
-          { role: "assistant", content: request.previousAttempt.rawResponse },
-          { role: "user", content: request.previousAttempt.retryPrompt },
-        );
+    async countInputTokens(request: ExtractionRequest): Promise<number> {
+      let counted: Anthropic.MessageTokensCount;
+      try {
+        counted = await client.messages.countTokens(anthropicCountParams(options.model, request), {
+          timeout: TOKEN_COUNT_TIMEOUT_MS,
+        });
+      } catch (error) {
+        throw classifyAnthropicError(error);
       }
+      return interpretTokenCount("anthropic", counted.input_tokens);
+    },
 
+    async extract(request: ExtractionRequest): Promise<ProviderResponse> {
       let response: Anthropic.Message;
       try {
-        response = await client.messages.create({
-          model: options.model,
-          max_tokens: request.maxOutputTokens,
-          thinking: ANTHROPIC_THINKING,
-          system: request.systemPrompt,
-          messages,
-          output_config: { format: { type: "json_schema", schema: request.schema } },
-        });
+        response = await client.messages.create(anthropicCreateParams(options.model, request));
       } catch (error) {
         throw classifyAnthropicError(error);
       }
