@@ -1,9 +1,10 @@
-// The document card shows one of six states, worked out from what the page
-// reads today. These pin the mapping, so the worker that adds a queued
+// The document card shows one of seven states, worked out from what the
+// page reads today. These pin the mapping, so the worker that adds a queued
 // status adds one line to it and one case here, and every card follows.
 
 import { describe, expect, it } from "vitest";
-import { DOCUMENT_STATES, documentState, failedExit, stateOf } from "@/app/app/[slug]/document-state";
+import { DOCUMENT_STATES, documentState, failedExit, stateOf, UPLOAD_STALE_MINUTES } from "@/app/app/[slug]/document-state";
+import { buildEntries } from "@/app/app/[slug]/entries";
 import type { ErrorCode } from "@/lib/errors";
 import type { DocumentEntry, RunRow } from "@/app/app/[slug]/types";
 
@@ -25,7 +26,7 @@ function run(status: string): RunRow {
   };
 }
 
-function entry(status: string, runs: string[] = [], staleRun = false): DocumentEntry {
+function entry(status: string, runs: string[] = [], staleRun = false, staleUpload = false): DocumentEntry {
   return {
     document: {
       id: "doc",
@@ -40,6 +41,7 @@ function entry(status: string, runs: string[] = [], staleRun = false): DocumentE
     runs: runs.map(run),
     fields: [],
     staleRun,
+    staleUpload,
   };
 }
 
@@ -73,8 +75,12 @@ describe("documentState", () => {
     expect(documentState(entry("needs_review", ["failed", "succeeded"]))).toBe("needs-review");
   });
 
+  it("reads an upload still under way as uploading", () => {
+    expect(documentState(entry("uploading"))).toBe("uploading");
+  });
+
   it("reads an upload that never finished as failed", () => {
-    expect(documentState(entry("uploading"))).toBe("failed");
+    expect(documentState(entry("uploading", [], false, true))).toBe("failed");
   });
 
   it("reads the failed status as failed", () => {
@@ -91,14 +97,43 @@ describe("documentState", () => {
     for (const status of statuses) {
       for (const runs of runSets) {
         for (const stale of [false, true]) {
-          expect(documentState(entry(status, runs, stale))).not.toBe("queued");
+          expect(documentState(entry(status, runs, stale, stale))).not.toBe("queued");
         }
       }
     }
   });
 
-  it("returns only the six states", () => {
-    expect(DOCUMENT_STATES).toEqual(["ready", "queued", "running", "done", "needs-review", "failed"]);
+  it("returns only the seven states", () => {
+    expect(DOCUMENT_STATES).toEqual(["uploading", "ready", "queued", "running", "done", "needs-review", "failed"]);
+  });
+});
+
+describe("an upload's age", () => {
+  const created = Date.parse("2026-09-24T09:00:00.000Z");
+  const row = (status: string) => ({
+    id: "doc",
+    filename: "meter-reading-unit-4.jpg",
+    status,
+    storage_path: "tenant/doc",
+    size_bytes: null,
+    mime_type: null,
+    created_at: new Date(created).toISOString(),
+  });
+  const at = (minutes: number, status = "uploading") =>
+    buildEntries([row(status)], [], [], created + minutes * 60_000)[0]!;
+
+  it("is uploading until the row is ten minutes old, and never finished after", () => {
+    expect(UPLOAD_STALE_MINUTES).toBe(10);
+    expect(documentState(at(2))).toBe("uploading");
+    expect(documentState(at(10))).toBe("uploading");
+    expect(at(10.01).staleUpload).toBe(true);
+    expect(documentState(at(10.01))).toBe("failed");
+    expect(failedExit(at(10.01))).toBe("delete");
+  });
+
+  it("only ever applies to a row that is uploading", () => {
+    expect(at(60, "pending").staleUpload).toBe(false);
+    expect(documentState(at(60, "pending"))).toBe("ready");
   });
 });
 

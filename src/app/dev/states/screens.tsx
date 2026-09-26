@@ -40,6 +40,7 @@ import {
   SIX_STATE_IDS,
   STALE_ID,
   UNFINISHED_ID,
+  UPLOADING_ID,
 } from "./fixtures";
 
 export type Screen = {
@@ -491,7 +492,7 @@ export const SCREENS: Screen[] = [
   {
     id: "org-documents",
     group: "Organization page",
-    title: "Owner, every document status: needs review, extracted, pending, processing, stalled, failed, unfinished upload",
+    title: "Owner, every document status: needs review, extracted, pending, processing, stalled, uploading, unfinished upload, failed",
     render: () => <OrgPage ids={ALL_IDS} />,
   },
   {
@@ -526,7 +527,8 @@ export const SCREENS: Screen[] = [
   },
   { id: "org-doc-running", group: "Document", title: "Running, 40 seconds in", render: () => <OrgPage ids={[RUNNING_ID]} /> },
   { id: "org-doc-stale", group: "Document", title: "Running for 25 minutes: stalled", render: () => <OrgPage ids={[STALE_ID]} /> },
-  { id: "org-doc-unfinished", group: "Document", title: "An upload that never finished", render: () => <OrgPage ids={[UNFINISHED_ID]} /> },
+  { id: "org-doc-uploading", group: "Document", title: "An upload 2 minutes in, seen from another page", render: () => <OrgPage ids={[UPLOADING_ID]} /> },
+  { id: "org-doc-unfinished", group: "Document", title: "An upload that never finished (its row is over 10 minutes old)", render: () => <OrgPage ids={[UNFINISHED_ID]} /> },
   {
     id: "org-failures",
     group: "Document",

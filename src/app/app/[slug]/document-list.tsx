@@ -140,8 +140,8 @@ function DocumentLine({
   // The closed line's one exit: Extract for ready; for failed, what the
   // failure's own sentence tells the reader to do (failedExit). Needs
   // review and done open onto their fields, which is the line itself.
-  // Queued and running offer nothing. Never the signal fill: on this page
-  // signal marks what needs a person, not an action.
+  // Uploading, queued and running offer nothing. Never the signal fill: on
+  // this page signal marks what needs a person, not an action.
   const failed = state === "failed" ? failedExit(entry) : null;
   let exit: React.ReactNode = null;
   if (canManage && state === "ready" && hasFile) {
@@ -227,11 +227,13 @@ function DocumentLine({
           </p>
         )}
 
+        {/* An upload still arriving isn't deleted from under its sender:
+            Delete comes back if it never finishes. */}
         <FileRow
           entry={entry}
           actions={actions}
           canDownload={hasFile && !downloadOnLine}
-          canDelete={canManage && !deleteOnLine}
+          canDelete={canManage && !deleteOnLine && state !== "uploading"}
         />
       </LedgerLine>
     </article>
@@ -289,6 +291,16 @@ function Detail({
   const latest = runs[0];
 
   switch (state) {
+    case "uploading":
+      // When the row was made, which is when the upload started; elapsed
+      // time once the browser has a clock, as a running extraction's.
+      return (
+        <p>
+          Started <time dateTime={entry.document.created_at}>{formatClock(entry.document.created_at)}</time>
+          <Elapsed since={entry.document.created_at} spoken="uploading for" />. The file hasn&apos;t arrived yet.
+        </p>
+      );
+
     case "ready":
       if (!canManage) return <p>Not extracted yet. An admin can extract it.</p>;
       return (

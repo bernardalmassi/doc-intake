@@ -77,11 +77,11 @@ Two faces, four sizes, nothing under 12px, tabular figures on the whole body.
 
 ### Document states
 
-- Six states: ready, queued, running, done, needs review, failed. Each is a word, a glyph and one line saying what happens next. Word first, shape second, colour last.
-- The glyph is one 12px square in ink: empty for ready, dashed for queued, left half filled for running, filled for done, filled signal for needs review, crossed for failed. With the word covered, queued, running and done still read apart in greyscale.
+- Seven states: uploading, ready, queued, running, done, needs review, failed. Each is a word, a glyph and one line saying what happens next. Word first, shape second, colour last.
+- The glyph is one 12px square in ink: lower half filled for uploading, empty for ready, dashed for queued, left half filled for running, filled for done, filled signal for needs review, crossed for failed. With the word covered, uploading, queued, running and done still read apart in greyscale.
 - The state is a prop, mapped once from the data. A view never works it out again from `status`.
-- Running shows its start time and the elapsed m:ss. No spinner, no dots, no bar, no percentage: there is no progress data. Queued says it is waiting, in words.
-- One exit per state, named by its verb: Extract; nothing while queued or running; open the fields; go to the fields to check; one retry. A failure's exit follows its reason: Extract again where a retry can work, Delete where there is nothing to extract, Download where the reader is told to review it themselves.
+- Uploading and running show their start time and the elapsed m:ss. No spinner, no dots, no bar, no percentage: there is no progress data. Queued says it is waiting, in words. An upload is uploading until its row is 10 minutes old; after that it never finished, and it is failed.
+- One exit per state, named by its verb: Extract; nothing while uploading, queued or running; open the fields; go to the fields to check; one retry. A failure's exit follows its reason: Extract again where a retry can work, Delete where there is nothing to extract, Download where the reader is told to review it themselves.
 - Failed says why, in the error catalogue's sentence. Never a code, raw text, or "Something went wrong" alone.
 - Needs review carries its count beside the word ("Needs review · 2"), and the count matches the fields.
 

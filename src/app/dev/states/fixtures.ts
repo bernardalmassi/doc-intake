@@ -85,6 +85,7 @@ export const RUNNING_ID = "doc-credit-4390";
 export const FAILED_ID = "doc-lease-renewal";
 export const STALE_ID = "doc-bank-mandate";
 export const UNFINISHED_ID = "doc-site-photos";
+export const UPLOADING_ID = "doc-meter-reading";
 export const MISMATCH_ID = "doc-scan-0007";
 
 const documents: Record<string, DocumentRow> = {
@@ -351,6 +352,13 @@ const fields: FieldRow[] = [
 
 // ------------------------------------------------------------- entries
 
+// An upload in progress at the time of the request, 2 minutes in: under
+// the 10 minutes after which it reads as never finished (UNFINISHED_ID).
+function inProgressDocuments(now: number): Record<string, DocumentRow> {
+  const ago = (seconds: number) => new Date(now - seconds * 1000).toISOString();
+  return { [UPLOADING_ID]: doc(UPLOADING_ID, "meter-reading-unit-4.jpg", "uploading", null, null, ago(130)) };
+}
+
 // Runs in progress at the time of the request: one 40 seconds in, one
 // still "running" 25 minutes on, past the 10-minute stale limit.
 function runningRuns(now: number): RunRow[] {
@@ -365,7 +373,8 @@ function runningRuns(now: number): RunRow[] {
 // explicit state where the data can't say it yet (queued).
 export function entriesFor(ids: string[], states: Partial<Record<string, StatedEntry["state"]>> = SIX_STATE_OVERRIDES): StatedEntry[] {
   const now = Date.now();
-  const chosen = ids.map((id) => documents[id]);
+  const inProgress = inProgressDocuments(now);
+  const chosen = ids.map((id) => inProgress[id] ?? documents[id]);
   const set = new Set(ids);
   const all = [...runs, ...runningRuns(now)];
   return buildEntries(
@@ -386,4 +395,4 @@ export const SIX_STATE_IDS = [NEEDS_REVIEW_ID, DONE_ID, READY_ID, QUEUED_ID, RUN
 export const SIX_STATE_OVERRIDES: Partial<Record<string, StatedEntry["state"]>> = { [QUEUED_ID]: "queued" };
 
 // Every document status today's page can show.
-export const ALL_IDS = [...SIX_STATE_IDS.filter((id) => id !== QUEUED_ID), STALE_ID, UNFINISHED_ID, MISMATCH_ID];
+export const ALL_IDS = [...SIX_STATE_IDS.filter((id) => id !== QUEUED_ID), STALE_ID, UPLOADING_ID, UNFINISHED_ID, MISMATCH_ID];

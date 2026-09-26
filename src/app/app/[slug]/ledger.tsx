@@ -129,8 +129,9 @@ const serverSeconds = () => null;
 
 // " · 0:40": time since `since`, as m:ss (h:mm:ss past an hour), tabular,
 // updated once a second with no transition. A display clock: it reads the
-// run's start time, which the page already has, and the browser's clock.
-export function Elapsed({ since }: { since: string }) {
+// start time (a run's, or an upload's row), which the page already has,
+// and the browser's clock. spoken goes before the time for screen readers.
+export function Elapsed({ since, spoken = "running for" }: { since: string; spoken?: string }) {
   const now = useSyncExternalStore(subscribe, nowSeconds, serverSeconds);
   const start = Math.floor(Date.parse(since) / 1000);
   if (now === null || Number.isNaN(start)) return null;
@@ -143,7 +144,7 @@ export function Elapsed({ since }: { since: string }) {
     <>
       {" · "}
       <span>
-        <span className="sr-only">running for </span>
+        <span className="sr-only">{spoken} </span>
         {text}
       </span>
     </>

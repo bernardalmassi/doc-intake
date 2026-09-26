@@ -1,5 +1,6 @@
 import { EXTRACTION_LIMITS } from "@/lib/extraction/config";
 import { FIELDS } from "@/lib/extraction/schema";
+import { UPLOAD_STALE_MINUTES } from "./document-state";
 import type { DocumentEntry, DocumentRow, FieldRow, RunRow } from "./types";
 
 const FIELD_ORDER = new Map(FIELDS.map((field, index) => [field.name, index]));
@@ -8,7 +9,7 @@ const FIELD_ORDER = new Map(FIELDS.map((field, index) => [field.name, index]));
 // order it is shown: documents that need review first, then newest first.
 // Pure, so the design preview runs the same grouping and sorting on
 // fixture rows. `now` is passed in (milliseconds) to decide whether a
-// running extraction has gone stale.
+// running extraction, or an upload, has gone stale.
 export function buildEntries(
   documents: DocumentRow[],
   runs: RunRow[],
@@ -31,6 +32,7 @@ export function buildEntries(
   }
 
   const staleBefore = now - EXTRACTION_LIMITS.staleRunMinutes * 60_000;
+  const uploadStaleBefore = now - UPLOAD_STALE_MINUTES * 60_000;
 
   const entries = documents.map((document): DocumentEntry => {
     const documentRuns = (runsByDocument.get(document.id) ?? []).toSorted(
@@ -45,7 +47,8 @@ export function buildEntries(
       latest !== undefined &&
       latest.status === "running" &&
       Date.parse(latest.started_at) < staleBefore;
-    return { document, runs: documentRuns, fields: documentFields, staleRun };
+    const staleUpload = document.status === "uploading" && Date.parse(document.created_at) < uploadStaleBefore;
+    return { document, runs: documentRuns, fields: documentFields, staleRun, staleUpload };
   });
 
   return entries.toSorted((a, b) => {

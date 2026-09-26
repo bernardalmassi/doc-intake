@@ -79,4 +79,7 @@ export type DocumentEntry = {
   // processing, but its run has been running longer than the database's
   // stale limit, so the next Extract click fails it and starts again
   staleRun: boolean;
+  // uploading, and the row is older than UPLOAD_STALE_MINUTES
+  // (document-state.ts), so its upload never finished
+  staleUpload: boolean;
 };

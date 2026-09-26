@@ -1,15 +1,18 @@
 import type { DocumentState } from "./document-state";
 
-// The six states as a word and a mark, the same everywhere a state is
+// The seven states as a word and a mark, the same everywhere a state is
 // shown: the register's state column, its key, run rows and upload steps.
 // The word carries the state; the mark is one 12px square drawn in ink
 // whose fill says how far along it is (empty, dashed, half, full), or a
-// cross for a failure. Only needs review is signal. Decorative: the word
-// beside it says the same thing, so it is aria-hidden.
+// cross for a failure. An upload still arriving fills from the bottom
+// (lower), so it can't be read as a running extraction's left half. Only
+// needs review is signal. Decorative: the word beside it says the same
+// thing, so it is aria-hidden.
 
-export type Glyph = "empty" | "dashed" | "half" | "full" | "signal" | "cross";
+export type Glyph = "empty" | "dashed" | "lower" | "half" | "full" | "signal" | "cross";
 
 export const STATE_GLYPHS: Record<DocumentState, Glyph> = {
+  uploading: "lower",
   ready: "empty",
   queued: "dashed",
   running: "half",
@@ -19,6 +22,7 @@ export const STATE_GLYPHS: Record<DocumentState, Glyph> = {
 };
 
 export const STATE_WORDS: Record<DocumentState, string> = {
+  uploading: "Uploading",
   ready: "Ready",
   queued: "Queued",
   running: "Running",
@@ -40,6 +44,7 @@ export function StateGlyph({ glyph, className }: { glyph: Glyph; className?: str
       className={`shrink-0 ${signal ? "text-signal" : "text-ink"} ${className ?? ""}`}
     >
       {glyph === "half" && <rect x="0" y="0" width="6" height="12" fill="currentColor" />}
+      {glyph === "lower" && <rect x="0" y="6" width="12" height="6" fill="currentColor" />}
       <rect
         x="0.75"
         y="0.75"

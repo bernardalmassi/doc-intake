@@ -1,8 +1,11 @@
-// The one state a document card shows, of six, worked out from what the
+// The one state a document card shows, of seven, worked out from what the
 // page reads today: the document's status, its latest run and whether that
-// run has gone stale. Pure, and presentation only: the database keeps its
-// own statuses, and nothing here decides what anyone may do.
+// run, or an upload, has gone stale. Pure, and presentation only: the
+// database keeps its own statuses, and nothing here decides what anyone
+// may do.
 //
+//   uploading     the row exists and its file is still on its way, for up
+//                 to UPLOAD_STALE_MINUTES
 //   ready         there is a file and nothing has been extracted: Extract
 //   queued        waiting for a worker to pick it up. Nothing in the data
 //                 says this yet, so documentState never returns it; when the
@@ -16,7 +19,13 @@
 import type { ErrorCode } from "@/lib/errors";
 import type { DocumentEntry } from "./types";
 
-export const DOCUMENT_STATES = ["ready", "queued", "running", "done", "needs-review", "failed"] as const;
+export const DOCUMENT_STATES = ["uploading", "ready", "queued", "running", "done", "needs-review", "failed"] as const;
+
+// How long a row may stay uploading before it reads as an upload that
+// never finished. Nothing in the database ends one (a row in uploading
+// just stays there), so this is the page's own limit: ten minutes, the
+// same as a run's, is far longer than 10 MB takes on a slow connection.
+export const UPLOAD_STALE_MINUTES = 10;
 
 export type DocumentState = (typeof DOCUMENT_STATES)[number];
 
@@ -25,15 +34,21 @@ export type DocumentState = (typeof DOCUMENT_STATES)[number];
 // so documentState decides.
 export type StatedEntry = DocumentEntry & { state?: DocumentState };
 
-export function documentState({ document, runs, staleRun }: Pick<DocumentEntry, "document" | "runs" | "staleRun">): DocumentState {
+export function documentState({
+  document,
+  runs,
+  staleRun,
+  staleUpload,
+}: Pick<DocumentEntry, "document" | "runs" | "staleRun" | "staleUpload">): DocumentState {
   const latest = runs[0];
   switch (document.status) {
-    // The row exists but its file never arrived: nothing to extract, and
-    // the card says so. (A row mid-upload is in this status for the few
-    // seconds its upload takes; the uploader's own page doesn't list it
-    // until the upload ends.)
+    // The row exists and its file hasn't arrived. Another member's page, or
+    // a refresh, can list it while the upload is still under way, so it
+    // reads as uploading until the row is UPLOAD_STALE_MINUTES old; after
+    // that its file never arrived, there is nothing to extract, and the
+    // card says so.
     case "uploading":
-      return "failed";
+      return staleUpload ? "failed" : "uploading";
     case "pending":
       // A failed extraction puts the document back to pending.
       return latest?.status === "failed" ? "failed" : "ready";
