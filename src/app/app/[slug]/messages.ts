@@ -1,18 +1,14 @@
-// The words the organization page uses for roles, states and results.
-// Database values (roles, status enums) never reach the screen as they are,
-// and errors arrive as codes whose words are src/lib/errors.ts's.
+// The words the organization page uses for roles and results. Database
+// values (roles, status enums) never reach the screen as they are: a role
+// is said as what it allows, a status as one of the states in
+// state-glyph.tsx, and errors arrive as codes whose words are
+// src/lib/errors.ts's.
 
 import { EXTRACTION_LIMITS } from "@/lib/extraction/config";
 import type { FormState } from "@/app/form-state";
 import { type ErrorCode, userFacingError } from "@/lib/errors";
 import { formatBytes, NBSP } from "./format";
 import type { Role } from "./types";
-
-export const ROLE_LABELS: Record<Role, string> = {
-  owner: "Owner",
-  admin: "Admin",
-  member: "Member",
-};
 
 // What the reader's role lets them do here, said instead of the role's
 // name: "Owner" reads oddly on an organization of one, and the name says
@@ -26,23 +22,6 @@ export function roleAbilities(role: Role): string {
 
 export function canManage(role: Role): boolean {
   return role === "owner" || role === "admin";
-}
-
-const STATUS_LABELS: Record<string, string> = {
-  uploading: "Upload incomplete",
-  pending: "Ready to extract",
-  processing: "Extracting",
-  extracted: "Extracted",
-  needs_review: "Needs review",
-  failed: "Extraction failed",
-};
-
-// A status the page doesn't know yet still reads as words, not as an enum.
-export function statusLabel(status: string): string {
-  const known = STATUS_LABELS[status];
-  if (known) return known;
-  const words = status.replace(/_/g, " ");
-  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 // The Documents heading takes focus after a delete removes the item that
