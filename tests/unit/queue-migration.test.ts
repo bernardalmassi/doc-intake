@@ -9,6 +9,9 @@
 //   - no migration contains a URL but the pricing sources: the worker's URL
 //     lives only in the app project's Vault, so the test project, which runs
 //     every migration, can never be pointed at production
+//   - the live check_extraction_limits reads each ceiling's ledger sum and
+//     in-flight sum in one statement, one snapshot (20260925000004; the
+//     two-session case in supabase/tests/sessions races one against a finish)
 //
 // Needs no database.
 
@@ -17,6 +20,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { EXTRACTION_LIMITS, PRICING } from "@/lib/extraction/config";
+import { parseMigrations } from "../helpers/sql-raises";
 
 const dir = fileURLToPath(new URL("../../supabase/migrations/", import.meta.url));
 const migrations = readdirSync(dir)
@@ -72,5 +76,24 @@ describe("the queue's migrations", () => {
     // the wake accepts only an https URL ending in the worker's path, read
     // from Vault
     expect(all).toContain("'^https://[^/]+/api/extraction-worker$'");
+  });
+});
+
+describe("the live ceiling check", () => {
+  const body = parseMigrations(migrations).liveBodies.get("check_extraction_limits") ?? "";
+  // its statements, split at the semicolons that end them
+  const statements = body.split(";").map((statement) => statement.replace(/\s+/g, " ").trim());
+
+  it("reads the ledger and the runs in flight in the same statement, once per ceiling", () => {
+    const ledger = statements.filter((statement) => statement.includes("private.extraction_spend"));
+    expect(ledger).toHaveLength(2);
+    for (const statement of ledger) {
+      expect(statement).toMatch(/^select \(select coalesce\(sum\(s\.cost_usd\), 0\)/);
+      expect(statement).toContain("private.abandoned_estimate(r.page_count)");
+      expect(statement).toContain("r.status in ('queued', 'running')");
+      expect(statement).toMatch(/into v_total$/);
+    }
+    // nothing else sums the runs in flight on its own
+    expect(statements.filter((statement) => statement.includes("abandoned_estimate"))).toEqual(ledger);
   });
 });

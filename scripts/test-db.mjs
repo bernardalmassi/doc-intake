@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // npm run test:db: runs every file in supabase/tests (the stale-run reaper
 // and the extraction queue, each inside begin; ... rollback;), then the
-// two-session lock-order tests in supabase/tests/sessions, against the TEST
+// two-session tests in supabase/tests/sessions (the lock order, and a
+// ceiling check racing a finish), against the TEST
 // project from .env.test, never the app's, through the Supabase CLI's
 // Management API access. The CLI stays linked to the app's project: `db
 // query` takes --project-ref only together with --linked, and then queries
@@ -102,6 +103,8 @@ function failure(result) {
 // What session S or C must report: the race happened (the message was the
 // candidate, F held the run when the other session acted, and the run was
 // still running), and the other session neither waited nor kept anything.
+// The third case races a ceiling check against a finish (finish-table.sql
+// instead of finish.sql): the check must count the run exactly once.
 const CASES = [
   {
     name: "a finish holds its run while the sweep runs at the message's visibility timeout",
@@ -128,6 +131,19 @@ const CASES = [
       [r.run_after_claim === "running", "the claim ended the run the finish held"],
     ],
   },
+  {
+    name: "a ceiling check runs while a finish commits the run it would count: counted exactly once",
+    finish: "finish-table.sql",
+    session: "limits.sql",
+    expect: (r) => [
+      [r.run_before_check === "running" && r.run_after_check === "succeeded", "the finish did not commit while the check ran"],
+      [
+        typeof r.result === "string" && r.result.startsWith("refused: this organization has reached its monthly extraction spend ceiling"),
+        "the check did not count the finished run (it read the ledger and the runs in flight in two snapshots)",
+      ],
+      [Number(r.rows_left) === 0, "the check's ledger row was committed"],
+    ],
+  },
 ];
 
 // One case: cleanup, setup, the two sessions, the check, cleanup again.
@@ -149,7 +165,7 @@ async function runCase(testCase) {
     } else {
       let sent;
       const finishSent = new Promise((resolve) => (sent = resolve));
-      const running = query("finish.sql", sent);
+      const running = query(testCase.finish ?? "finish.sql", sent);
       const [finish, other] = await Promise.all([
         running,
         finishSent.then((ok) =>

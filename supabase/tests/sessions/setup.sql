@@ -11,6 +11,8 @@
 --   finish.sql    session F   } at the same time, each on its own
 --   sweep.sql or  session S/C } connection (a separate db query)
 --   claim.sql
+--   (or finish-table.sql with limits.sql: a ceiling check while the finish
+--   commits, 20260925000004)
 --   check.sql     what the database recorded
 --   cleanup.sql   again, whatever happened
 --
