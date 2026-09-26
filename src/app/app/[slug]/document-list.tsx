@@ -43,15 +43,22 @@ export function DocumentList({ entries, slug, canManage }: ListProps) {
         {entries.length > 0 && (
           // The register's key: every state's mark and word, and how many
           // lines are in it, zeros included. On a narrow screen there is no
-          // margin for it, and the lines teach it.
+          // margin for it, and the lines teach it. Needs review's square
+          // is filled only when a line needs review: at 0 it is the same
+          // square in outline, so the key still teaches the mark without
+          // the page's one call for attention pointing at nothing.
           <ul aria-label="Documents by state" className="mt-4 hidden max-w-56 lg:block">
-            {DOCUMENT_STATES.map((state) => (
-              <li key={state} className="label flex h-7 items-center gap-2">
-                <StateGlyph glyph={STATE_GLYPHS[state]} />
-                <span className="flex-1">{STATE_WORDS[state]}</span>
-                <span>{counts.get(state) ?? 0}</span>
-              </li>
-            ))}
+            {DOCUMENT_STATES.map((state) => {
+              const count = counts.get(state) ?? 0;
+              const glyph = state === "needs-review" && count === 0 ? "signal-outline" : STATE_GLYPHS[state];
+              return (
+                <li key={state} className="label flex h-7 items-center gap-2">
+                  <StateGlyph glyph={glyph} />
+                  <span className="flex-1">{STATE_WORDS[state]}</span>
+                  <span>{count}</span>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

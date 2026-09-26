@@ -6,10 +6,11 @@ import type { DocumentState } from "./document-state";
 // whose fill says how far along it is (empty, dashed, half, full), or a
 // cross for a failure. An upload still arriving fills from the bottom
 // (lower), so it can't be read as a running extraction's left half. Only
-// needs review is signal. Decorative: the word beside it says the same
-// thing, so it is aria-hidden.
+// needs review is signal: filled, or only outlined (signal-outline) where
+// a count of zero says nothing needs a person. Decorative: the word beside
+// it says the same thing, so it is aria-hidden.
 
-export type Glyph = "empty" | "dashed" | "lower" | "half" | "full" | "signal" | "cross";
+export type Glyph = "empty" | "dashed" | "lower" | "half" | "full" | "signal" | "signal-outline" | "cross";
 
 export const STATE_GLYPHS: Record<DocumentState, Glyph> = {
   uploading: "lower",
@@ -34,7 +35,7 @@ export const STATE_WORDS: Record<DocumentState, string> = {
 // 12 × 12, a 1.5px stroke inset by half its width so the square's outer
 // edge is exactly the box.
 export function StateGlyph({ glyph, className }: { glyph: Glyph; className?: string }) {
-  const signal = glyph === "signal";
+  const signal = glyph === "signal" || glyph === "signal-outline";
   return (
     <svg
       viewBox="0 0 12 12"
@@ -50,7 +51,7 @@ export function StateGlyph({ glyph, className }: { glyph: Glyph; className?: str
         y="0.75"
         width="10.5"
         height="10.5"
-        fill={glyph === "full" || signal ? "currentColor" : "none"}
+        fill={glyph === "full" || glyph === "signal" ? "currentColor" : "none"}
         stroke="currentColor"
         strokeWidth="1.5"
         strokeDasharray={glyph === "dashed" ? "2 2" : undefined}
