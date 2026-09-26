@@ -425,6 +425,91 @@ begin
   insert into checks (step, result) values ('a finish clamps absurd token counts, in the run and the ledger', v_run.cost_usd::text || ' USD');
 end $t$;
 
+-- 6c. The caller is checked before any row is locked (20260925000004) -------
+
+-- A member (not an admin) of organization 11, and a run of its document 12
+-- opened by the owner through the old path. A refused caller must leave no
+-- lock behind on the document or the run: a row lock, even one taken in a
+-- subtransaction that was then rolled back, sets the row's xmax to the
+-- locker, so an xmax unchanged across the refused calls means none of them
+-- locked the row. (The organization row is already key-share locked by this
+-- transaction's own membership inserts, so its xmax can't tell.)
+insert into auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
+  created_at, updated_at, raw_app_meta_data, raw_user_meta_data, is_sso_user, is_anonymous)
+values ('e1e1e1e1-0000-4000-8000-000000000002', '00000000-0000-0000-0000-000000000000', 'authenticated',
+  'authenticated', 'queue-test-member@example.invalid', 'x', now(), now(), now(), '{}', '{}', false, false);
+insert into public.tenants (id, name, slug)
+values ('e2e2e2e2-0000-4000-8000-000000000011', 'Queue test 11', 'queue-test-11');
+insert into public.memberships (tenant_id, user_id, role) values
+  ('e2e2e2e2-0000-4000-8000-000000000011', 'e1e1e1e1-0000-4000-8000-000000000001', 'owner'),
+  ('e2e2e2e2-0000-4000-8000-000000000011', 'e1e1e1e1-0000-4000-8000-000000000002', 'member');
+insert into public.documents (id, tenant_id, filename, uploaded_by, status, mime_type, size_bytes) values
+  ('e3e3e3e3-0000-4000-8000-000000000011', 'e2e2e2e2-0000-4000-8000-000000000011', 'queue-11.pdf',
+   'e1e1e1e1-0000-4000-8000-000000000001', 'pending', 'application/pdf', 3141),
+  ('e3e3e3e3-0000-4000-8000-000000000012', 'e2e2e2e2-0000-4000-8000-000000000011', 'queue-12.pdf',
+   'e1e1e1e1-0000-4000-8000-000000000001', 'pending', 'application/pdf', 3141);
+
+do $t$
+declare
+  v_open    record;
+  v_refused text;
+  v_doc     text := 'e3e3e3e3-0000-4000-8000-000000000011';
+  v_before  jsonb;
+  v_after   jsonb;
+  v_xmax    text := $q$
+    select jsonb_build_object(
+      'document 11', (select d.xmax::text from public.documents d where d.id = 'e3e3e3e3-0000-4000-8000-000000000011'),
+      'document 12', (select d.xmax::text from public.documents d where d.id = 'e3e3e3e3-0000-4000-8000-000000000012'),
+      'run of 12', (select r.xmax::text from public.extraction_runs r where r.document_id = 'e3e3e3e3-0000-4000-8000-000000000012'))
+  $q$;
+begin
+  -- the owner opens a run of document 12 (old path), for the close cases
+  select * into v_open from public.open_extraction_run('e3e3e3e3-0000-4000-8000-000000000012', 1);
+  execute v_xmax into v_before;
+
+  -- as the member
+  perform set_config('request.jwt.claims',
+    '{"sub":"e1e1e1e1-0000-4000-8000-000000000002","role":"authenticated"}', true);
+  foreach v_refused in array array['enqueue', 'open'] loop
+    begin
+      if v_refused = 'enqueue' then
+        perform public.enqueue_extraction_run(v_doc::uuid, 1);
+      else
+        perform * from public.open_extraction_run(v_doc::uuid, 1);
+      end if;
+      raise exception '% by a member was accepted', v_refused;
+    exception when sqlstate '42501' then
+      null;
+    end;
+  end loop;
+  begin
+    -- the right token, the wrong user
+    perform public.close_extraction_run(v_open.run_id, v_open.close_token, 'failed', null, null, 0, 0, 1, 0, 'x');
+    raise exception 'a close by another user was accepted';
+  exception when sqlstate '42501' then
+    null;
+  end;
+
+  -- as the owner, with a wrong token
+  perform set_config('request.jwt.claims',
+    '{"sub":"e1e1e1e1-0000-4000-8000-000000000001","role":"authenticated"}', true);
+  begin
+    perform public.close_extraction_run(v_open.run_id, gen_random_uuid(), 'failed', null, null, 0, 0, 1, 0, 'x');
+    raise exception 'a close with a wrong token was accepted';
+  exception when sqlstate '42501' then
+    null;
+  end;
+
+  execute v_xmax into v_after;
+  if v_after <> v_before then
+    raise exception 'a refused caller locked rows: xmax % before, % after', v_before, v_after;
+  end if;
+  insert into checks (step, result) values
+    ('a member''s enqueue and open, another user''s close and a wrong-token close are refused before any row is locked', 'ok');
+
+  perform private.reap_extraction_run(v_open.run_id, 'test');
+end $t$;
+
 -- 7. Ceilings from the ledger ------------------------------------------------
 
 do $t$

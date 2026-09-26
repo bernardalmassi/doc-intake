@@ -8,6 +8,7 @@
 --
 --   cleanup.sql   removes anything a killed earlier run left
 --   setup.sql     this file: a claimed run, committed
+--   (setup-second.sql, the claim case only: a second run, queued)
 --   finish.sql    session F   } at the same time, each on its own
 --   sweep.sql or  session S/C } connection (a separate db query)
 --   claim.sql
@@ -51,6 +52,10 @@ insert into public.memberships (tenant_id, user_id, role)
 values ('f2f2f2f2-0000-4000-8000-000000000001', 'f1f1f1f1-0000-4000-8000-000000000001', 'owner');
 insert into public.documents (id, tenant_id, filename, uploaded_by, status, mime_type, size_bytes)
 values ('f3f3f3f3-0000-4000-8000-000000000001', 'f2f2f2f2-0000-4000-8000-000000000001', 'lock-order.pdf',
+  'f1f1f1f1-0000-4000-8000-000000000001', 'pending', 'application/pdf', 3141);
+-- a second document, enqueued only by the claim case (setup-second.sql)
+insert into public.documents (id, tenant_id, filename, uploaded_by, status, mime_type, size_bytes)
+values ('f3f3f3f3-0000-4000-8000-000000000002', 'f2f2f2f2-0000-4000-8000-000000000001', 'lock-order-2.pdf',
   'f1f1f1f1-0000-4000-8000-000000000001', 'pending', 'application/pdf', 3141);
 
 -- enqueue as the owner, then claim as the worker

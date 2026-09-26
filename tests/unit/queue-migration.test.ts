@@ -12,6 +12,9 @@
 //   - the live check_extraction_limits reads each ceiling's ledger sum and
 //     in-flight sum in one statement, one snapshot (20260925000004; the
 //     two-session case in supabase/tests/sessions races one against a finish)
+//   - the live claim locks a run's document and the run before it reads the
+//     run's message, and skips at most 5 runs it can't lock (the two-session
+//     claim case exercises it)
 //
 // Needs no database.
 
@@ -95,5 +98,23 @@ describe("the live ceiling check", () => {
     }
     // nothing else sums the runs in flight on its own
     expect(statements.filter((statement) => statement.includes("abandoned_estimate"))).toEqual(ledger);
+  });
+});
+
+describe("the live claim", () => {
+  const body = parseMigrations(migrations).liveBodies.get("claim_extraction_run") ?? "";
+
+  it("locks the document and the run, without waiting, before it reads their message", () => {
+    const lock = body.indexOf("private.lock_extraction_run(v_candidate.run_id, true)");
+    const read = body.indexOf("pgmq.read(");
+    expect(lock).toBeGreaterThan(0);
+    expect(read).toBeGreaterThan(lock);
+    // the message read is the candidate's own
+    expect(body).toContain("jsonb_build_object('run_id', v_candidate.run_id)");
+  });
+
+  it("skips a run it can't lock and tries the next, at most 5 times", () => {
+    expect(body).toMatch(/exception when lock_not_available then[\s\S]*?v_skipped := v_skipped \|\| v_candidate\.msg_id;[\s\S]*?cardinality\(v_skipped\) >= 5/);
+    expect(body).toContain("q.msg_id <> all (v_skipped)");
   });
 });

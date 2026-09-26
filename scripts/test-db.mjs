@@ -118,15 +118,16 @@ const CASES = [
     ],
   },
   {
-    name: "a claim reads the expired message while a finish holds its run",
+    name: "a claim skips the expired message of a run a finish holds, and claims the next run",
+    setup: "setup-second.sql",
     session: "claim.sql",
     expect: (r) => [
       [r.candidate === true, "the message was not visible to the claim"],
       [r.finish_held_locks === true, "session F no longer held the run when the claim returned"],
-      [r.xmax_before === "0" && typeof r.xmax_after === "string" && r.xmax_after !== "0", "the claim never read the message"],
-      [Number(r.claimed) === 0, "the claim returned a run"],
-      [Number(r.read_ct_before) === 1 && Number(r.read_ct_after) === 1, "the claim's read was not rolled back (read_ct)"],
-      [r.vt_unchanged === true, "the claim's read was not rolled back (vt)"],
+      [r.xmax_before === "0" && r.xmax_after === "0", "the claim locked the message of the run it couldn't lock"],
+      [Number(r.read_ct_before) === 1 && Number(r.read_ct_after) === 1, "the claim read the message of the run it couldn't lock (read_ct)"],
+      [r.vt_unchanged === true, "the claim read the message of the run it couldn't lock (vt)"],
+      [Number(r.claimed) === 1 && r.claimed_document === "f3f3f3f3-0000-4000-8000-000000000002", "the claim did not go on to the next run"],
       [Number(r.claim_ms) < 1000, "the claim waited (it took longer than deadlock_timeout)"],
       [r.run_after_claim === "running", "the claim ended the run the finish held"],
     ],
@@ -160,8 +161,11 @@ async function runCase(testCase) {
   try {
     const setup = await query("setup.sql");
     const claimed = setup.rows?.[0];
+    const second = testCase.setup ? await query(testCase.setup) : null;
     if (!claimed || claimed.status !== "running" || Number(claimed.read_ct) !== 1 || claimed.hidden !== true) {
       problems.push(setup.rows ? `setup.sql did not leave one claimed run: ${JSON.stringify(setup.rows)}` : failure(setup));
+    } else if (second && (second.rows?.[0]?.status !== "queued" || Number(second.rows[0].read_ct) !== 0)) {
+      problems.push(second.rows ? `${testCase.setup} did not leave a queued run: ${JSON.stringify(second.rows)}` : failure(second));
     } else {
       let sent;
       const finishSent = new Promise((resolve) => (sent = resolve));
