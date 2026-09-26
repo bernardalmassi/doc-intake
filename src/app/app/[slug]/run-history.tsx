@@ -1,17 +1,19 @@
 import { Fragment } from "react";
-import { badgeClass, errorClass } from "@/app/ui";
 import { userFacingError } from "@/lib/errors";
 import { formatCount, formatSeconds, formatUsd, formatUtc } from "./format";
-import { AlertIcon } from "./icons";
+import { type Glyph, StateGlyph } from "./state-glyph";
 import type { RunRow } from "./types";
 
 const PROVIDER_LABELS: Record<string, string> = { anthropic: "Anthropic", openai: "OpenAI" };
 
-const RUN_STATUS_LABELS: Record<string, string> = {
-  running: "Running",
-  succeeded: "Succeeded",
-  failed: "Failed",
+// A run's result as a word and the state glyph it amounts to: succeeded is
+// full, running half, failed and stalled crossed.
+const RUN_STATUS: Record<string, { word: string; glyph: Glyph }> = {
+  running: { word: "Running", glyph: "half" },
+  succeeded: { word: "Succeeded", glyph: "full" },
+  failed: { word: "Failed", glyph: "cross" },
 };
+const STALLED = { word: "Stalled", glyph: "cross" as Glyph };
 
 // What the Cost cell can say about a run:
 //   recorded   the database priced it
@@ -37,205 +39,240 @@ function costState(run: RunRow): CostState {
 function runTotals(runs: RunRow[]) {
   const total = runs.reduce((sum, run) => sum + (run.cost_usd === null ? 0 : Number(run.cost_usd)), 0);
   const states = runs.map(costState);
+  // What the rows add up to as printed, each rounded to four decimals.
+  const printed = runs.reduce(
+    (sum, run) => sum + (run.cost_usd === null ? 0 : Math.round(Number(run.cost_usd) * 10_000)),
+    0,
+  );
   return {
     total,
+    // how far the total is from that, in dollars (0 when they agree)
+    rounding: Math.abs(printed - Math.round(total * 10_000)) / 10_000,
     estimated: states.filter((state) => state === "estimated").length,
     unknown: states.filter((state) => state === "unknown").length,
   };
 }
 
-// The closed disclosure's summary: "3 runs · $0.0231 total", and says so
-// when a cost is an estimate or isn't known rather than counting it as zero.
+// The history's summary line, on the control that opens it and at the
+// head of the history: "Runs 3 · 2 failed · $0.0394 · 1 estimated". Counts
+// are printed at zero ("0 failed"), and a cost that is an estimate or isn't
+// known is said, never counted as zero. Set in the label face, so it reads
+// in capitals.
 export function runHistoryMeta(runs: RunRow[]): string {
   const { total, estimated, unknown } = runTotals(runs);
-  const count = `${runs.length} ${runs.length === 1 ? "run" : "runs"}`;
-  if (unknown === runs.length) return `${count} · cost not known yet`;
+  const failed = runs.filter((run) => run.status === "failed").length;
+  const head = `Runs ${runs.length} · ${failed} failed`;
+  // "yet" only while a run is still going; a finished run's cost that
+  // wasn't recorded won't arrive later. The table's total says the same.
+  if (unknown === runs.length)
+    return `${head} · cost not known${runs.some((run) => run.status === "running") ? " yet" : ""}`;
   const notes = [
     estimated > 0 ? `${estimated} estimated` : null,
     unknown > 0 ? `${unknown} not known` : null,
   ].filter(Boolean);
-  return `${count} · ${formatUsd(total)} total${notes.map((note) => ` · ${note}`).join("")}`;
+  return `${head} · ${formatUsd(total)}${notes.map((note) => ` · ${note}`).join("")}`;
 }
 
-// Header and body cells. From md up this is a table with right-aligned
-// numbers; below md each run reflows into a two-column block, and every cell
-// shows its column name from data-label (the header row is visually
-// hidden there but stays in the accessibility tree). The explicit table
-// roles keep it a table for screen readers there too: some browsers stop
-// exposing table semantics once CSS changes a table's display.
-const th = "whitespace-nowrap py-2 pr-4 align-bottom font-medium text-muted last:pr-0";
+// The register's columns, continued: the first is the state column (the
+// result, as a glyph and a word), then the numbers, right-aligned in
+// tabular figures, one unit and one number of decimals per column. Below
+// xl (80rem), where the register is too narrow for seven columns, each run
+// reflows into a block of label/value pairs in two columns;
+// every cell shows its column name from data-label (the header row is
+// visually hidden there but stays in the accessibility tree). The explicit
+// table roles keep it a table for screen readers when CSS changes its
+// display.
+const th = "label whitespace-nowrap pt-4 pb-2 pr-4 align-bottom font-medium text-ink last:pr-0";
 const td =
-  "py-2 pr-4 align-top last:pr-0 max-md:block max-md:p-0 max-md:before:block max-md:before:text-muted max-md:before:content-[attr(data-label)]";
-const num = "tabular-nums md:text-right";
+  "py-3 pr-4 align-top last:pr-0 max-xl:block max-xl:p-0 max-xl:before:label max-xl:before:block max-xl:before:content-[attr(data-label)]";
+const num = "xl:text-right";
 
-// Every run for one document, newest first: when it started (UTC, rendered
-// on the server), how it ended and after how many model calls, which model
-// answered, tokens in and out, cost and time taken, and why a failed run
-// failed, as the catalog's sentence for its code (the stored text never
-// gets this far). The total is the sum of the recorded costs.
+// Every run for one document, newest first: how it ended and after how
+// many model calls, when it started (UTC, rendered on the server), which
+// model answered, tokens in and out, cost and time taken, and why a failed
+// run failed, as the catalog's sentence for its code (the stored text
+// never gets this far). The total is the sum of the recorded costs, and
+// agrees with the summary line.
 export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filename: string; staleRun: boolean }) {
-  const { total, estimated, unknown } = runTotals(runs);
+  const { total, rounding, estimated, unknown } = runTotals(runs);
+  // No cost known for any run: the total says so in words, as the summary
+  // line does, rather than printing $0.0000 beside "cost not known yet".
+  const totalText =
+    runs.length > 0 && unknown === runs.length
+      ? runs.some((run) => run.status === "running")
+        ? "Not known yet"
+        : "Not known"
+      : formatUsd(total);
 
   return (
-    <div className="mt-3">
-      <table role="table" className="w-full text-left text-sm max-md:block">
-        <caption className="sr-only">Extraction runs for {filename}, newest first</caption>
-        <thead role="rowgroup" className="max-md:sr-only">
-          <tr role="row">
-            <th scope="col" role="columnheader" className={th}>
-              Started (UTC)
-            </th>
-            <th scope="col" role="columnheader" className={th}>
-              Result
-            </th>
-            <th scope="col" role="columnheader" className={th}>
-              Model
-            </th>
-            <th scope="col" role="columnheader" className={`${th} text-right`}>
-              Tokens in
-            </th>
-            <th scope="col" role="columnheader" className={`${th} text-right`}>
-              Tokens out
-            </th>
-            <th scope="col" role="columnheader" className={`${th} text-right`}>
-              Cost
-            </th>
-            <th scope="col" role="columnheader" className={`${th} text-right`}>
-              Time taken
-            </th>
-          </tr>
-        </thead>
-        <tbody role="rowgroup" className="max-md:block">
-          {runs.map((run, index) => {
-            const stalled = index === 0 && staleRun && run.status === "running";
-            return (
-              <Fragment key={run.id}>
-                <tr role="row" className="border-t border-line max-md:grid max-md:grid-cols-2 max-md:gap-x-4 max-md:gap-y-2 max-md:py-3">
-                  <td role="cell" data-label="Started (UTC)" className={`${td} whitespace-nowrap tabular-nums max-md:col-span-2`}>
-                    <time dateTime={run.started_at}>{formatUtc(run.started_at, { zone: false })}</time>
-                  </td>
-                  <td role="cell" data-label="Result" className={td}>
-                    <span className={badgeClass}>
-                      {stalled ? "Stalled" : (RUN_STATUS_LABELS[run.status] ?? run.status)}
-                    </span>
-                    <span className="mt-1 block text-muted tabular-nums">{describeAttempts(run, stalled)}</span>
-                  </td>
-                  <td role="cell" data-label="Model" className={td}>
-                    {run.cost_estimated && run.model ? (
-                      <>
-                        Not on the price list
-                        <span className="block text-muted [overflow-wrap:anywhere]">charged at {run.model} rates</span>
-                      </>
-                    ) : run.provider ? (
-                      <>
-                        {PROVIDER_LABELS[run.provider] ?? run.provider}
-                        <span className="block text-muted [overflow-wrap:anywhere]">{run.model}</span>
-                      </>
-                    ) : (
-                      <Missing label={run.status === "running" ? "Not known yet" : "No model answered"} />
-                    )}
-                  </td>
-                  <td role="cell" data-label="Tokens in" className={`${td} ${num}`}>
-                    <Tokens run={run} count={run.input_tokens} />
-                  </td>
-                  <td role="cell" data-label="Tokens out" className={`${td} ${num}`}>
-                    <Tokens run={run} count={run.output_tokens} />
-                  </td>
-                  <td role="cell" data-label="Cost" className={`${td} ${num}`}>
-                    <Cost run={run} />
-                  </td>
-                  <td role="cell" data-label="Time taken" className={`${td} ${num}`}>
-                    {run.latency_ms !== null ? formatSeconds(run.latency_ms) : <Missing label="Not recorded" />}
+    <table role="table" className="w-full text-left text-small max-xl:block">
+      <caption className="sr-only">Extraction runs for {filename}, newest first</caption>
+      <thead role="rowgroup" className="max-xl:sr-only">
+        {/* Two rows, so the token columns share one head and their own
+            heads stay short: In, Out. */}
+        <tr role="row">
+          <td role="cell" colSpan={3} />
+          <th scope="colgroup" role="columnheader" colSpan={2} className={`${th} pb-0 text-right`}>
+            Tokens
+          </th>
+          <td role="cell" colSpan={2} />
+        </tr>
+        <tr role="row">
+          <th scope="col" role="columnheader" className={`${th} pt-1 xl:w-48`}>
+            Result
+          </th>
+          <th scope="col" role="columnheader" className={`${th} pt-1`}>
+            Started (UTC)
+          </th>
+          <th scope="col" role="columnheader" className={`${th} pt-1`}>
+            Model
+          </th>
+          <th scope="col" role="columnheader" className={`${th} pt-1 text-right`}>
+            <span className="sr-only">Tokens </span>In
+          </th>
+          <th scope="col" role="columnheader" className={`${th} pt-1 text-right`}>
+            <span className="sr-only">Tokens </span>Out
+          </th>
+          <th scope="col" role="columnheader" className={`${th} pt-1 text-right`}>
+            Cost
+          </th>
+          <th scope="col" role="columnheader" className={`${th} pt-1 text-right`}>
+            Time
+          </th>
+        </tr>
+      </thead>
+      <tbody role="rowgroup" className="max-xl:block">
+        {runs.map((run, index) => {
+          const stalled = index === 0 && staleRun && run.status === "running";
+          const status = stalled ? STALLED : (RUN_STATUS[run.status] ?? { word: run.status, glyph: "empty" as Glyph });
+          return (
+            <Fragment key={run.id}>
+              <tr
+                role="row"
+                className="border-t border-ink max-xl:grid max-xl:grid-cols-2 max-xl:gap-x-4 max-xl:gap-y-3 max-xl:py-3"
+              >
+                <td role="cell" data-label="Result" className={td}>
+                  <span className="label inline-flex items-center gap-2 whitespace-nowrap">
+                    <StateGlyph glyph={status.glyph} />
+                    {status.word}
+                  </span>
+                  <span className="block">{describeAttempts(run, stalled)}</span>
+                </td>
+                <td role="cell" data-label="Started (UTC)" className={`${td} whitespace-nowrap`}>
+                  <time dateTime={run.started_at}>{formatUtc(run.started_at, { zone: false })}</time>
+                </td>
+                <td role="cell" data-label="Model" className={`${td} max-xl:col-span-2`}>
+                  {run.provider || run.model ? (
+                    <>
+                      {run.provider && <span className="block">{PROVIDER_LABELS[run.provider] ?? run.provider}</span>}
+                      {run.model && <span className="block [overflow-wrap:break-word] xl:whitespace-nowrap">{run.model}</span>}
+                    </>
+                  ) : (
+                    <span>{run.status === "running" ? "Not known yet" : "No model answered"}</span>
+                  )}
+                </td>
+                <td role="cell" data-label="Tokens in" className={`${td} ${num}`}>
+                  <Tokens run={run} count={run.input_tokens} />
+                </td>
+                <td role="cell" data-label="Tokens out" className={`${td} ${num}`}>
+                  <Tokens run={run} count={run.output_tokens} />
+                </td>
+                <td role="cell" data-label="Cost" className={`${td} ${num}`}>
+                  <Cost run={run} />
+                </td>
+                <td role="cell" data-label="Time" className={`${td} ${num} whitespace-nowrap`}>
+                  {run.latency_ms !== null
+                    ? formatSeconds(run.latency_ms)
+                    : run.status === "running" && !stalled
+                      ? "Not known yet"
+                      : "Not recorded"}
+                </td>
+              </tr>
+              {run.error_code && (
+                // Belongs to the run above it: no rule between them.
+                <tr role="row" className="max-xl:block">
+                  <td role="cell" colSpan={7} className="pb-3 max-xl:block xl:pl-48">
+                    <p className="max-w-prose">{userFacingError(run.error_code).message}</p>
                   </td>
                 </tr>
-                {run.error_code && (
-                  // Belongs to the run above it: no divider between them.
-                  <tr role="row" className="max-md:block">
-                    <td role="cell" colSpan={7} className="pb-3 max-md:block">
-                      <p className={`flex items-start gap-1.5 ${errorClass}`}>
-                        <AlertIcon className="mt-0.5" />
-                        <span className="min-w-0">{userFacingError(run.error_code).message}</span>
-                      </p>
-                    </td>
-                  </tr>
-                )}
-              </Fragment>
-            );
-          })}
-        </tbody>
-        {runs.length > 1 && (
-          <tfoot role="rowgroup" className="max-md:block">
-            <tr role="row" className="border-t border-line-strong max-md:flex max-md:items-baseline max-md:justify-between max-md:gap-4 max-md:py-3">
-              <th scope="row" role="rowheader" colSpan={5} className="py-2 pr-4 font-medium max-md:p-0">
-                Total for {runs.length} runs
-                {estimated > 0 && (
-                  <span className="block font-normal text-muted">
-                    Includes {estimated} estimated {estimated === 1 ? "cost" : "costs"}.
-                  </span>
-                )}
-                {unknown > 0 && (
-                  <span className="block font-normal text-muted">
-                    Leaves out {unknown} {unknown === 1 ? "run" : "runs"} whose cost isn&apos;t known.
-                  </span>
-                )}
-              </th>
-              <td role="cell" className="py-2 pr-4 text-right font-medium tabular-nums max-md:p-0">{formatUsd(total)}</td>
-              <td role="cell" className="max-md:hidden" />
-            </tr>
-          </tfoot>
-        )}
-      </table>
-    </div>
+              )}
+            </Fragment>
+          );
+        })}
+      </tbody>
+      <tfoot role="rowgroup" className="max-xl:block">
+        <tr
+          role="row"
+          className="border-t border-ink max-xl:flex max-xl:flex-wrap max-xl:items-baseline max-xl:justify-between max-xl:gap-x-4 max-xl:py-3"
+        >
+          <th scope="row" role="rowheader" colSpan={5} className="py-3 pr-4 text-left align-top font-normal max-xl:p-0">
+            <span className="label">
+              Total, {runs.length} {runs.length === 1 ? "run" : "runs"}
+              <span className="xl:hidden"> · {totalText}</span>
+            </span>
+            {estimated > 0 && (
+              <span className="mt-1 block max-w-prose">
+                Est. marks an estimate: a run whose cost couldn&apos;t be recorded is charged at the dearest
+                price on file, and one that stopped responding is charged for its pages at the default model&apos;s
+                price.
+              </span>
+            )}
+            {rounding > 0 && (
+              <span className="mt-1 block max-w-prose">
+                Added up from the unrounded costs, so it differs by {formatUsd(rounding)} from the rows as printed.
+              </span>
+            )}
+            {unknown > 0 && unknown < runs.length && (
+              <span className="mt-1 block max-w-prose">
+                Leaves out {unknown} {unknown === 1 ? "run" : "runs"} whose cost isn&apos;t known.
+              </span>
+            )}
+          </th>
+          <td role="cell" className="py-3 pr-4 text-right align-top max-xl:hidden">
+            {totalText}
+          </td>
+          <td role="cell" className="max-xl:hidden" />
+        </tr>
+      </tfoot>
+    </table>
   );
 }
 
 function describeAttempts(run: RunRow, stalled: boolean): string {
-  if (stalled) return "Stopped responding";
+  if (stalled || run.error_code === "extraction.abandoned") return "Stopped responding";
   if (run.attempts === 0) return run.status === "running" ? "In progress" : "No model call";
-  return `${run.attempts} model ${run.attempts === 1 ? "call" : "calls"}`;
+  return `${run.attempts} ${run.attempts === 1 ? "call" : "calls"}`;
 }
 
 // A paid run never reads as free: an estimate (a run whose model had no
-// price, or an abandoned run) says so, and a cost that
-// wasn't recorded says it isn't known, in words, not a dash.
+// price, or an abandoned run) says EST. under the figure, so the digits
+// keep their column, and a cost that wasn't recorded says it isn't known.
 function Cost({ run }: { run: RunRow }) {
   const state = costState(run);
-  if (state === "recorded") return <span title={`${Number(run.cost_usd)} USD`}>{formatUsd(Number(run.cost_usd))}</span>;
+  if (state === "recorded") return <>{formatUsd(Number(run.cost_usd))}</>;
   if (state === "estimated") {
     return (
       <>
-        <span title={`About ${Number(run.cost_usd)} USD, charged at the dearest price on file`}>
-          <span aria-hidden="true">≈ </span>
-          <span className="sr-only">About </span>
-          {formatUsd(Number(run.cost_usd))}
+        {formatUsd(Number(run.cost_usd))}
+        <span className="label block">
+          <span className="sr-only">(</span>Est.<span className="sr-only">imated)</span>
         </span>
-        <span className="block text-muted">Estimated</span>
       </>
     );
   }
-  if (state === "unknown") return <span className="text-muted">Not known</span>;
-  return <Missing label="Nothing spent" />;
+  // "yet" while it runs, as every other cell of a running run says.
+  if (state === "unknown") return <>{run.status === "running" ? "Not known yet" : "Not known"}</>;
+  return <>Nothing spent</>;
 }
 
 // Token counts. A run that made model calls but was closed without a model
 // (the Extract action did that before it charged estimates) stored 0 for
 // tokens that were never recorded, and an abandoned run recorded none, so
-// both read as not known, not as 0 or a dash.
+// both read as not known, not as 0.
 function Tokens({ run, count }: { run: RunRow; count: number | null }) {
   if (run.error_code === "extraction.abandoned" || (run.model === null && run.attempts > 0 && run.status !== "running")) {
-    return <span className="text-muted">Not known</span>;
+    return <>Not known</>;
   }
-  return count !== null ? formatCount(count) : <Missing label="None recorded" />;
-}
-
-// An empty cell: a dash to see, words to hear.
-function Missing({ label }: { label: string }) {
-  return (
-    <>
-      <span aria-hidden="true" className="text-muted">
-        —
-      </span>
-      <span className="sr-only">{label}</span>
-    </>
-  );
+  if (count !== null) return <>{formatCount(count)}</>;
+  return <>{run.status === "running" ? "Not known yet" : "None"}</>;
 }

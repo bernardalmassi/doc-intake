@@ -7,11 +7,11 @@ import {
   buttonClass,
   dangerButtonClass,
   errorClass,
+  errorInkRuleClass,
   linkClass,
   secondaryButtonClass,
   textTargetClass,
 } from "@/app/ui";
-import { AlertIcon, CheckIcon, SpinnerIcon } from "./icons";
 import { classifyThrown, type ErrorCode, userFacingError } from "@/lib/errors";
 import { DOCUMENTS_HEADING_ID, describeExtractResult, type Explained } from "./messages";
 import { useOperations } from "./operations";
@@ -33,14 +33,18 @@ type Props = {
   extract: { mode: ExtractMode; primary: boolean } | null;
 };
 
-type Notice = (Explained & { tone: "progress" | "done" | "error" }) | null;
+// quiet: said to screen readers only, because the button beside it
+// already says it (Deleting…).
+type Notice = (Explained & { tone: "progress" | "done" | "error"; quiet?: boolean }) | null;
 
 // The buttons never move. Labels that swap keep one width (min-w-28 fits
 // Extract, Extract again and Extracting…; min-w-24 fits Delete, Yes, delete
-// and Deleting…, measured in Geist at text-sm), and
-// every message (progress, result, error, the delete confirmation) appears
-// beside the buttons from sm up and below them on a phone, never before
-// them.
+// and Deleting…, in the label face). The root is display: contents, so its
+// two parts, the buttons (data-part="buttons") and every message beside
+// them (data-part="notice": progress, result, error, the delete
+// confirmation), are placed by the row that holds them: the register line
+// puts the buttons in its action column and the message on a line of its
+// own under the detail (globals.css, "The register").
 export function DocumentActions({ id, slug, filename, storagePath, canDownload, canDelete, extract }: Props) {
   const operations = useOperations();
   const questionId = useId();
@@ -134,7 +138,7 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
     if (extracting) notice = { tone: "progress", text: "Extracting. This can take up to a minute." };
     else if (result) notice = { tone: result.ok ? "done" : "error", text: result.text };
   } else if (last === "delete") {
-    if (deleting) notice = { tone: "progress", text: "Deleting…" };
+    if (deleting) notice = { tone: "progress", text: "Deleting…", quiet: true };
     else if (deleteState.error) notice = { tone: "error", text: userFacingError(deleteState.error).message };
   } else if (last === "download" && downloadError) {
     notice = { tone: "error", text: userFacingError(downloadError).message };
@@ -146,8 +150,8 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
     extracting || extract?.mode === "running" ? "Extracting…" : extract?.mode === "again" ? "Extract again" : "Extract";
 
   return (
-    <div className="mt-4 flex flex-wrap items-start gap-x-4 gap-y-2">
-      <div className="flex flex-wrap gap-2">
+    <div data-actions className="contents">
+      <div data-part="buttons" className="flex flex-wrap gap-2">
         {extract && (
           <form
             action={extractAction}
@@ -161,16 +165,19 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
             <button
               ref={extractButton}
               type="submit"
+              data-action="extract"
               disabled={busy || extract.mode === "running"}
               className={`${extract.primary ? buttonClass : secondaryButtonClass} min-w-28`}
             >
               {extractLabel}
+              <FileName filename={filename} />
             </button>
           </form>
         )}
         {canDownload && (
-          <button type="button" onClick={download} className={secondaryButtonClass}>
+          <button type="button" data-action="download" onClick={download} className={secondaryButtonClass}>
             Download
+            <FileName filename={filename} />
           </button>
         )}
         {canDelete && (
@@ -180,6 +187,7 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
             <button
               ref={deleteButton}
               type="submit"
+              data-action="delete"
               disabled={busy}
               onClick={onDeleteClick}
               onKeyDown={onEscape}
@@ -190,15 +198,14 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
               className={`${confirming ? armedDangerButtonClass : dangerButtonClass} min-w-24`}
             >
               {deleting ? "Deleting…" : confirming ? "Yes, delete" : "Delete"}
+              <FileName filename={filename} />
             </button>
           </form>
         )}
       </div>
 
-      {/* basis-64: the message sits beside the buttons when there is room,
-          below them when not, whatever it says. */}
-      <div className="flex min-w-0 flex-1 basis-64 items-center text-sm sm:min-h-9">
-        <div className="min-w-0 flex-1">
+      <div data-part="notice" className="min-w-0 text-small">
+        <div className="min-w-0">
           {/* Two regions, always rendered so what appears in them is
               announced, and side by side rather than nested so nothing is
               announced twice: polite for the question, progress and
@@ -206,7 +213,7 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
               sentence for a code, never a call's own text. */}
           <div aria-live="polite">
             {confirming ? (
-              <p>
+              <p className="mt-2">
                 <span id={questionId}>
                   Delete this document and everything extracted from it? This can&apos;t be undone.
                 </span>{" "}
@@ -235,19 +242,26 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
   );
 }
 
+// A message about what the user just did. An error or a refusal stands
+// against a 2px ink rule; progress and results are plain words. No glyph:
+// the state glyphs mean a document's state, and a refused Extract on a
+// ready document leaves it ready. No spinner: the words say it is under
+// way.
 function NoticeLine({ notice }: { notice: NonNullable<Notice> }) {
-  if (notice.tone === "error") {
-    return (
-      <p className={`flex items-start gap-1.5 ${errorClass}`}>
-        <AlertIcon className="mt-0.5" />
-        <span className="min-w-0">{notice.text}</span>
-      </p>
-    );
-  }
   return (
-    <p className={`flex items-start gap-1.5 ${notice.tone === "progress" ? "text-muted" : "text-fg"}`}>
-      {notice.tone === "progress" ? <SpinnerIcon className="mt-0.5" /> : <CheckIcon className="mt-0.5" />}
-      <span className="min-w-0">{notice.text}</span>
+    <p
+      className={
+        notice.quiet ? "sr-only" : `mt-2 min-w-0 ${errorClass} ${notice.tone === "error" ? errorInkRuleClass : ""}`
+      }
+    >
+      {notice.text}
     </p>
   );
+}
+
+// The file a button acts on, for a screen reader's list of buttons, where
+// "Extract again" twice and "Download" three times can't be told apart.
+// Hidden from sight: on the page the button sits in its document's line.
+function FileName({ filename }: { filename: string }) {
+  return <span className="sr-only normal-case"> {filename}</span>;
 }

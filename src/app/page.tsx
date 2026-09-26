@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { Archivo } from "next/font/google";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Detail } from "@/app/_landing/detail";
@@ -10,14 +9,9 @@ import { ThemeToggle } from "@/app/components/theme-toggle";
 import { getCurrentUser } from "@/lib/auth";
 import { HOME_TITLE, REPO_URL, repoLinkLabel, SITE_NAME, SITE_SUMMARY } from "./site";
 
-// The landing page has its own look (DESIGN.md, and DESIGN-NOTES.md,
-// "Landing (/)"): the display face loads here and nowhere else, and every
-// style is in the CSS module, so none of it reaches /app.
-const archivo = Archivo({
-  variable: "--font-archivo",
-  subsets: ["latin"],
-  axes: ["wdth"],
-});
+// The landing page's layout is in its CSS module (DESIGN.md, and
+// DESIGN-NOTES.md, "Landing (/)"); its tokens and both faces are the root
+// layout's and globals.css's, shared with /app.
 
 // A whole title of its own, which the root layout's template ("%s ·
 // doc-intake") would otherwise wrap. The description is the root layout's:
@@ -95,7 +89,7 @@ export default async function Home() {
   if (await getCurrentUser()) redirect("/app");
 
   return (
-    <div className={`${styles.page} ${archivo.variable}`}>
+    <div className={styles.page}>
       {/* The two ways in sit in the header, where /app keeps its account
           controls, so the first screen holds the headline and one object. */}
       <header className={`${styles.frame} ${styles.header}`}>

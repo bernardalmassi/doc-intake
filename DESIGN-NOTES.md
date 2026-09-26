@@ -1,73 +1,54 @@
 # Design notes
 
-How the interface looks and why. The tokens live in `src/app/globals.css`, the shared class strings in `src/app/ui.ts`, and `/design-preview` (local only, see below) renders all of them in either theme.
+How the interface looks and why. The rules are in `DESIGN.md`, whose /app section says how /app reads since the September 2026 redesign. The tokens live in `src/app/globals.css`, the shared class strings in `src/app/ui.ts`, and `/dev/states` (development only; a 404 in production builds) renders every screen and state from static data.
 
 ## Tokens
 
 ### Color
 
-Components use only these, as Tailwind utilities (`bg-canvas`, `text-muted`, `border-line-strong`, `bg-accent`, `text-danger`…). Each theme swaps the raw values on `<html data-theme>`, so no component needs `dark:`.
+One set for the landing page and /app, defined in `globals.css` and nowhere else. Components use only these, as Tailwind utilities (`bg-paper`, `text-ink`, `border-ink`, `bg-signal`, `text-on-signal`). Each theme swaps the raw values on `<html data-theme>`, so no component needs `dark:`.
 
-| Token | Dark | Light | Purpose | Reason |
-| --- | --- | --- | --- | --- |
-| `canvas` | `#0c0c0b` | `#fafaf8` | Page background | Near-black and off-white with a trace of warmth, so the orange belongs to the palette. Pure black under off-white text vibrates; pure white glares. |
-| `surface` | `#171716` | `#ffffff` | Panels, inputs | One step off the canvas. Panels also get a `line` border, so the step never has to carry the edge alone. |
-| `line` | `#282826` | `#e6e6e1` | Dividers, panel borders, hover fill of quiet controls | Decorative and deliberately faint. Never the only thing that identifies a control. |
-| `line-strong` | `#6b6b66` | `#8c8c86` | Borders of inputs, secondary buttons, the file picker, badges | WCAG 1.4.11: a control's boundary needs 3:1 against its surroundings. `line` can't do that without making every divider heavy. |
-| `fg` | `#ededea` | `#141413` | Text | The off-white and near-black that carry the UI. |
-| `muted` | `#9e9e98` | `#5e5e59` | Hints, meta, table headers, placeholders, disabled labels | At least 6:1 on both backgrounds, so "secondary" never means "hard to read". |
-| `accent` | `#ff8f40` | `#b54a00` | Primary action fill, focus ring, needs review | One orange, same hue (24.5°) in both themes: lighter in dark, burnt in light, so it clears 4.5:1 even as text. |
-| `accent-hover` | `#ffa968` | `#9a3f00` | Primary action, hovered | A step further from the canvas in each theme, so hover reads as "more". A token rather than opacity or a filter. |
-| `accent-fg` | `#0c0c0b` | `#fafaf8` | Text on the accent | The canvas color of each theme. No third neutral. |
-| `danger` | `#ff6b6b` | `#b91c1c` | Error text, destructive button, rejected field border | The one exception to "one accent", below. |
+| Token | Dark | Light | Purpose |
+| --- | --- | --- | --- |
+| `paper` | `#141413` | `#f2f1ec` | The one background: pages, inputs, buttons at rest. |
+| `ink` | `#f2f1ec` | `#141413` | All text, every rule and border, icon strokes, hover fills. |
+| `signal` | `#e8560f` | `#e8560f` | Fills (Low tags, the needs-review glyph, the one primary action) and lines (the focus ring, the underline under a Low value's deciding characters). Never text. |
+| `on-signal` | `#141413` | `#141413` | Text on signal, the dark one in both themes. |
+| `stage`, `stage-edge` | paper, ink | ink, paper | Aliases, only behind the landing's scan (DESIGN.md's exception). |
 
-**The danger exception.** The palette is two neutrals and one orange, with a single exception: one red, `danger`, for error text (`errorClass`, a failed run's error), the destructive button and a rejected field's border. An error must not read as "needs review", and with only the orange available it would. Red sits at hue 0°, the accent at 24.5°, and they take different forms (red as text and outline, orange as fill, ring and badge). There is no green for success and no amber for warnings: success is plain text.
+**One ink.** `canvas`, `surface`, `line`, `line-strong`, `fg`, `muted`, `accent`, `accent-hover`, `accent-fg` and `danger` are gone. Secondary text is told by size and position, dividers and control borders are 1px ink, and an error is ink words against a 2px ink rule. Hovering a button fills it with ink and sets its label in paper, the primary included; there is no hover shade of signal. Disabled and pending are a dotted ink border.
 
-**What doesn't exist.** `globals.css` resets Tailwind's palette (`--color-*: initial`), type scale (`--text-*: initial`), font stacks (`--font-*: initial`) and blur scale (`--blur-*: initial`). A stray `neutral-800`, `text-xs`, `font-mono` or `backdrop-blur-md` compiles to nothing. `transparent`, `current` and `inherit` are keywords rather than theme values, so they still work; this was checked in compiled output. Gradients (`bg-linear-*`, `from-*`) and opacity modifiers (`bg-accent/50`) still compile, because no theme reset can remove them. They are banned by convention, so check for them in review. Disabled states use tokens (`line` fill, `muted` text), not opacity.
+**What doesn't exist.** `globals.css` resets Tailwind's palette (`--color-*: initial`), type scale, font stacks, radii, shadows, blurs and animations. A stray `neutral-800`, `text-xs`, `font-mono`, `rounded-lg`, `shadow-md`, `backdrop-blur-md` or `animate-spin` compiles to nothing. `transparent`, `current` and `inherit` are keywords rather than theme values, so they still work. Gradients (`bg-linear-*`, `from-*`) and opacity modifiers (`bg-signal/50`) still compile, because no theme reset can remove them. They are banned by convention, so check for them in review.
 
-**Hand-written CSS** reads the raw variables (`var(--accent)`), not `var(--color-accent)`. Tailwind resolves the `--color-*` aliases once on `:root`, so they would ignore a `data-theme` set below `<html>`. The utilities themselves use the raw variables.
+**Hand-written CSS** reads the raw variables (`var(--signal)`), not `var(--color-signal)`. Tailwind resolves the `--color-*` aliases once on `:root`, so they would ignore a `data-theme` set below `<html>`.
 
 ### Contrast
 
-WCAG 2.x relative luminance. The values are read straight from the two theme blocks in `globals.css`. Text needs 4.5:1; focus rings and control borders are non-text and need 3:1.
+WCAG 2.x relative luminance, from the two theme blocks in `globals.css`. Text needs 4.5:1; focus rings and control borders need 3:1.
 
 | Pair | Used for | Target | Dark | Light |
 | --- | --- | --- | --- | --- |
-| `fg` on `canvas` | Body text | 4.5:1 | 16.68 | 17.64 |
-| `fg` on `surface` | Text in panels and inputs | 4.5:1 | 15.29 | 18.43 |
-| `muted` on `canvas` | Hints, meta, table headers | 4.5:1 | 7.27 | 6.24 |
-| `muted` on `surface` | Hints inside panels, placeholders | 4.5:1 | 6.66 | 6.52 |
-| `accent-fg` on `accent` | Primary button label | 4.5:1 | 8.62 | 5.09 |
-| `accent-fg` on `accent-hover` | Primary button label, hovered | 4.5:1 | 10.37 | 6.51 |
-| `accent` on `canvas` | Focus ring, input focus border (non-text) | 3:1 | 8.62 | 5.09 |
-| `accent` on `surface` | Focus ring on a panel (non-text) | 3:1 | 7.91 | 5.32 |
-| `accent` on `canvas` | Accent as text: needs review | 4.5:1 | 8.62 | 5.09 |
-| `accent` on `surface` | Accent as text inside a panel | 4.5:1 | 7.91 | 5.32 |
-| `danger` on `canvas` | Error text, destructive button label | 4.5:1 | 7.05 | 6.19 |
-| `danger` on `surface` | Error text inside a panel | 4.5:1 | 6.46 | 6.47 |
-| `canvas` on `danger` | Destructive button label, hovered | 4.5:1 | 7.05 | 6.19 |
-| `line-strong` on `canvas` | Input and button borders (non-text) | 3:1 | 3.65 | 3.24 |
-| `line-strong` on `surface` | Input border on its own fill (non-text) | 3:1 | 3.35 | 3.38 |
-| `fg` on `line` | Quiet button label, hovered | 4.5:1 | 12.59 | 14.72 |
-| `muted` on `line` | Disabled button label (exempt, kept readable) | 4.5:1 | 5.48 | 5.21 |
-| `canvas` on `fg` | Selected text | 4.5:1 | 16.68 | 17.64 |
+| `ink` on `paper` | All text, rules, control borders | 4.5:1 | 16.30 | 16.30 |
+| `paper` on `ink` | A hovered button's label, an armed Delete, selected text | 4.5:1 | 16.30 | 16.30 |
+| `on-signal` on `signal` | Primary button label, Low tags | 4.5:1 | 5.06 | 5.06 |
+| `signal` on `paper` | Focus ring, quote underlines (non-text) | 3:1 | 5.06 | 3.22 |
 
-Every pairing passes in both themes. The tightest is the light theme's control border at 3.24:1.
+Signal on the light paper is 3.22:1, which is why it is never text.
 
 ## Type
 
-One family: Geist Sans, self-hosted through `next/font`. Geist Mono is gone, and `code`, `kbd`, `samp` and `pre` inherit the sans. Numbers use the same family. The landing page is the one exception (DESIGN.md): it adds a display face, below under Landing, and none of it reaches the other pages.
+Two faces, self-hosted through `next/font`: Archivo, with its width axis, for page titles, labels and the wordmark, as on the landing; Geist for everything read. `code`, `kbd`, `samp` and `pre` inherit Geist. There is no mono.
 
-| Class | Size | Line height | Tracking | For |
+| Size | Utility | Set | Face | For |
 | --- | --- | --- | --- | --- |
-| `text-2xl` | 30px | 36px | -0.02em | Page titles |
-| `text-lg` | 20px | 28px | -0.01em | Section headings |
-| `text-base` | 15px | 24px | | Body (set on `<body>`) |
-| `text-sm` | 13px | 20px | | Labels, meta, table cells, buttons, badges |
+| label | `label` | 12/16, uppercase, 0.08em | Archivo, width 125, 500 | State words, tags, column heads, section and form labels, buttons |
+| small | `text-small` | 15/22 | Geist | Meta, quotes, questions, hints, table cells, errors |
+| body | `text-body` | 18/28 | Geist | Values, sentences, inputs; the body default |
+| display | `display` | 32 to 48px, 1.05, -0.02em | Archivo, width 100, 500 | The page title |
 
-**Why four.** Each size has one job, so hierarchy comes from weight (400 body, 500 labels, buttons and table headers, 600 headings) and from `fg` against `muted`, not from yet another size. A fifth size would need a reason good enough to write down here. Body text is 15px, not 16, because this is a dense tool of tables and forms. The floor is 13px, not 12, because meta text is also muted, and muted 12px gets hard to read.
+The wordmark (`wordmark`) is Archivo at width 125 and the body size, so it adds no fifth size. Nothing is set below 12px.
 
-**Numbers.** Money, token counts, latency, file sizes and timestamps use `tabular-nums`, right-aligned in table columns, so digits line up and values don't jitter as they change. Geist has tabular figures; `/design-preview` shows the same column both ways.
+**Numbers.** `tabular-nums` is set on `<body>`, as on the landing, so digits line up everywhere and values don't jitter as they change. Numbers in table columns are right-aligned.
 
 ## Theme
 
@@ -98,34 +79,32 @@ Checked in a production build: the script sits before `<body>`, the choice survi
 
 `src/app/ui.ts`, all built on the tokens:
 
-- **Layout:** `containerClass` (max-w-5xl, 16px gutters on a phone, 24px from `sm`), shared by the header and pages; `pageClass`, the container for `<main>`; `panelClass`.
-- **Type:** `pageTitleClass`, `sectionTitleClass`, `hintClass`, `labelClass`, `errorClass`, `linkClass`. Links are underlined so they don't rely on color.
-- **Buttons:** `buttonClass` (primary, the only accent fill), `secondaryButtonClass`, `dangerButtonClass`, `ghostButtonClass`, `iconButtonClass`. Every variant is 36px tall with a 1px border (transparent where unseen), so the same label gives the same box in any variant or state. `disabled:` beats `hover:`.
-- **Fields:** `inputClass` and `fileInputClass`, 36px to line up with buttons. The accent border on focus plus the global ring pulled in makes one 2px accent edge. `aria-invalid="true"` turns the border danger, and it stays danger while focused.
-- **Tables:** `tableClass`, `thClass`, `tdClass`.
-- **Badges:** `badgeClass` for any status; `reviewBadgeClass` for needs review only.
-- **Added by the pages:** `submitButtonClass`, the primary button of a form that submits through a Server Action (pending is `aria-disabled`, so focus stays on it); `armedDangerButtonClass`, Delete once armed, filled red.
+- **Layout:** `containerClass` (the landing's frame: 82rem at most, 16px gutters on a phone, 40px from 48rem), shared by the header and pages; `pageClass`, the container for `<main>`.
+- **Type:** `pageTitleClass` (display), `sectionTitleClass` (label), `hintClass`, `errorClass`, `errorInkRuleClass` (the 2px ink rule every error stands against), `linkClass`. Links are underlined so they don't rely on color.
+- **Buttons:** the landing's action. `buttonClass` (primary, the only signal fill), `secondaryButtonClass`, `dangerButtonClass`, `ghostButtonClass`, `iconButtonClass`. Every variant is 40px tall with a 1px border, in the label face; hover fills ink with a paper label; disabled is a dotted ink border. `disabled:` beats `hover:`.
+- **Fields:** `inputClass`, 40px, a 1px ink box on paper, Geist at the body size. `formRowClass` and `formRowLabelClass` set a form as ruled register rows.
+- **Added by the pages:** `submitButtonClass`, the primary button of a form that submits through a Server Action (pending is `aria-disabled` and dotted, so focus stays on it); `armedDangerButtonClass`, Delete once armed, filled ink.
 
-Focus is one global `:focus-visible` rule: a 2px accent outline at a 2px offset.
+Focus is one global `:focus-visible` rule: a 2px signal outline at a 2px offset.
 
 The site header (`src/app/components/site-header.tsx`) holds the skip link, the wordmark, a slot, and the toggle, and exports `MAIN_ID` for every page's `<main>`. `textTargetClass` gives a standalone text link a 24px target without moving the layout. `AccountControls` is the slot for signed-in pages.
 
 ## Pages
 
-What each page does beyond the primitives, and why.
+What each page does beyond the primitives, and why. Written before the September 2026 redesign: the behaviour below still holds, but where it describes a look (badges, panels, orange text, a spinner), DESIGN.md's /app section and the code are current.
 
 ### Landing (/)
 
-Built to DESIGN.md from a brief approved on 19 Sep 2026, and reworked on 20 Sep 2026 for scale, composition and stage, to Bernard's written instructions (references: Milkinside and Animos, for scale contrast, dark as a stage with one lit object, and a composed grid of panels; nothing else from them). It has its own look, and all of it lives in `src/app/_landing/landing.module.css`, so /app keeps its tokens, family and four sizes.
+Built to DESIGN.md from a brief approved on 19 Sep 2026, and reworked on 20 Sep 2026 for scale, composition and stage, to Bernard's written instructions (references: Milkinside and Animos, for scale contrast, dark as a stage with one lit object, and a composed grid of panels; nothing else from them). Its layout and its own four sizes live in `src/app/_landing/landing.module.css`. Its colours and both faces are the app's: the /app redesign took the landing's tokens and Archivo, and since the two branches were merged they are defined once, in `globals.css` and the root layout.
 
 **Where the rework departs from the 19 Sep brief.** The palette, the two faces, the radius and the no-shadow rule are unchanged. Three things moved: the headline is Archivo at its normal width, not wide (below, and measured); the scan always sits on the dark one of the two colours, in light as well; and opacity is used once, as the from-state of the arrival.
 
 - **Reference.** Braun product manuals and Teenage Engineering: a figure with leaders, a Technical data table, section labels in a margin, signal orange used the way a key colour is.
-- **Three tokens, both themes.** `paper` `#f2f1ec`, `ink` `#141413`, `signal` `#e8560f`. Dark is the default (the server renders `data-theme="dark"` and nothing reads the OS); it swaps paper and ink, and signal stays. Ink on paper is 16.30:1. Text on signal is always `#141413` (`--on-signal`, an alias, not a fourth colour): 5.06:1. Signal against the light paper is 3.22:1, so it is a fill, a line or a focus ring, never text. No grey text: hierarchy comes from face, size and position. One radius (0), no shadows. The tokens sit on `<html>` through `:has(.page)` while the page is mounted, so the body behind it is paper too.
+- **Three tokens, both themes.** `paper` `#f2f1ec`, `ink` `#141413`, `signal` `#e8560f`. Dark is the default (the server renders `data-theme="dark"` and nothing reads the OS); it swaps paper and ink, and signal stays. Ink on paper is 16.30:1. Text on signal is always `#141413` (`--on-signal`, an alias, not a fourth colour): 5.06:1. Signal against the light paper is 3.22:1, so it is a fill, a line or a focus ring, never text. No grey text: hierarchy comes from face, size and position. One radius (0), no shadows. The tokens are `globals.css`'s, on `<html>`, so the body behind the page is paper too.
 - **The stage.** A scan always sits on `#141413` with a 1px `#f2f1ec` edge and generous dark around it (64px at 1280 and up, 48px from 768, 16px on a phone): paper on a dark ground, with no shadow, tilt or glow. `--stage` and `--stage-edge` are aliases of the two neutrals, not new colours: in dark the stage is the page itself, in light it is a plate of ink, which is a second background in light and is recorded in DESIGN.md as a documented exception to the one-background rule, with the measurements behind it (the scan's paper is 1.18:1 against the light ground and 13.85:1 against the stage; its scanner-bed corners are 9.73:1 and 1.67:1). The edge against the stage is 16.30:1.
 - **Low badge, checked 20 Sep 2026.** Computed in the browser in both themes: `#141413` text on `#e8560f`, 5.06:1, which passes WCAG AA for text (4.5:1). The fill against the light paper is 3.22:1 and against the dark 5.06:1, both over the 3:1 a non-text boundary needs. It never was orange on orange in the CSS: `--on-signal` resolves to the dark neutral in both themes. Nothing was changed.
-- **Signal and the app's accent are different oranges.** Sign in and sign up use /app's `--accent`: `#ff8f40` in dark, `#b54a00` in light (`buttonClass`, the focus ring, the input focus border). The landing page uses `--signal` `#e8560f` in both. Matching them means `--accent: #e8560f` in both theme blocks of `globals.css`, and then, in light only: `--accent-fg` becomes `#141413` (the current `#fafaf8` on it is 3.48:1; `#141413` is 5.06:1), `--accent-hover` is re-derived, and the three places that use the accent as text (`reviewBadgeClass`, `extraction-panel.tsx`, `document-list.tsx`) need another treatment, because `#e8560f` on `#fafaf8` is 3.48:1 and fails as text; a filled badge like the landing's would do. In dark it is a straight swap (5.38:1 as text and under text). The tokens are global, so this can't be done for the two auth pages alone. Not done: /app is unchanged.
-- **Two faces, four sizes.** Archivo at 500, loaded by `next/font` in `page.tsx` only: the headline at 64px on a 375px phone to 140px at 1440 (`clamp(4rem, 2.3275rem + 7.136vw, 8.75rem)`, line height 0.95, tracking -0.035em), 12px uppercase labels, and the wordmark at 18. Labels and the wordmark are set wide (`wdth` 125); the headline is at the normal width (`wdth` 100), because measured in the browser "documents." is 413px wide at 64px and `wdth` 125, and a phone's column is 343px. At `wdth` 100 it is 324px, and at 140px "Reads documents," (1,111px) and "marks unsure fields." (1,167px) each take one line of the 1,232px grid, and still do at 1024, where the headline is 110px and the grid 944px. The distance from 140px to the 12px labels is the point. Geist, the app's family, for reading at 18/28 and 15/22. Both carry tabular figures (checked in the files Google serves), and `tabular-nums` is set on the page root.
+- **One orange.** Until the /app redesign, sign in and sign up used /app's `--accent` (`#ff8f40` in dark, `#b54a00` in light) beside the landing's `--signal`. The redesign renamed `--accent` to `--signal` and put /app on the landing's three colours, with signal never set as text (the Low tags and the needs-review glyph are fills), so every page has the same `#e8560f` in both themes.
+- **Two faces, four sizes.** Archivo at 500, loaded once by `next/font` in the root layout (the landing loaded its own copy until the merge): the headline at 64px on a 375px phone to 140px at 1440 (`clamp(4rem, 2.3275rem + 7.136vw, 8.75rem)`, line height 0.95, tracking -0.035em), 12px uppercase labels, and the wordmark at 18. Labels and the wordmark are set wide (`wdth` 125); the headline is at the normal width (`wdth` 100), because measured in the browser "documents." is 413px wide at 64px and `wdth` 125, and a phone's column is 343px. At `wdth` 100 it is 324px, and at 140px "Reads documents," (1,111px) and "marks unsure fields." (1,167px) each take one line of the 1,232px grid, and still do at 1024, where the headline is 110px and the grid 944px. The distance from 140px to the 12px labels is the point. Geist, the app's family, for reading at 18/28 and 15/22. Both carry tabular figures (checked in the files Google serves), and `tabular-nums` is set on the page root.
 - **Layout.** Twelve columns. The headline, the detail and Fig. 1 hang from the left edge; the other sections put their label in the first three columns and their rows in the next eight, and the last column stays empty. The two ways in sit in the header, where /app keeps its account controls. On a phone they drop to a second header row.
 - **The first screen** (`detail.tsx`). The headline, "Reads documents, marks unsure fields.", is `SITE_SUMMARY` cut to what can be set at 140px, one plain sentence in the long one's own words (an earlier "Reads documents. Marks its doubts." was two clipped fragments that read as a slogan, and described itself rather than what it does; DESIGN.md: labels, not slogans); the whole sentence stays, at reading size, in the last three columns, and is still the meta description. Under the headline is an object: a detail of Fig. 1's scan, 600 × 210 of its 1654 × 2339 pixels (`DETAIL` in `fig-1.ts`: the Date, Due and Terms lines and the handwritten "ext. to 04/06 per DK"), on the stage, shown larger than life (641px wide at 1440). It is the same file cropped by CSS, and both images are served `unoptimized`, so they are one URL, one download, and the file itself; the hero preloads it. Beside it is the one field the detail was chosen for: Due date, Low 59%, 2026-06-04, the first sentence of the gating's question, and a link to Fig. 1. The three lines under what that field quoted are on the detail, and a leader runs from the first to the field. From 64rem the hero is at least one screen tall, so Fig. 1 starts below it. Checked at 375, 768, 1024, 1280 and 1440: no sideways scroll, and the badge is inside the first screen at each. On a phone the headline takes five lines, which puts the badge's lower edge 645px down: inside a 375 × 812 screen, and inside 375 × 667 by 22px, before any browser bar. A test checks the detail is on the page, holds a Low field and all of its marks, and that the sentence is the gating's own.
 - **Fig. 1** (`figure.tsx`, data in `fig-1.ts`). A live run on the deployed app on 19 Sep 2026, of a fictional two-page test scan, as reported by the person who ran it: all eleven fields with their values, confidences and quotes, nine High and two Low at 59%, claude-sonnet-5, one call, 7,972 tokens in, 822 out, 8.9 s, 0.0242 USD. The image is page 1 whole: the uploaded PDF's own image of it, taken out of the file byte for byte and never re-encoded (sha256 `8c3398be…1762`, 271,278 bytes), not cropped or retouched. `test-invoice-messy-scan.pdf` was written by Pillow's PDF driver and is nothing but two JPEGs, one to an A4 page, each 1654 × 2339, which is 200 dpi; it has no fonts and no vector text, so no sharper source exists, and zoomed past one CSS pixel to one of its own it is soft on a dense screen. The caption says what it is ("the uploaded file's own image of page 1: A4 at 200 dpi, JPEG") and doesn't say the model read these pixels: the app uploads the PDF and the provider makes its own image of each page. Until 20 Sep 2026 the image was a re-rendering of the PDF made on this Mac with PDFKit, a second-generation JPEG (48.6 dB against the original, 407 KB against 271) that embedded Exif, a Photoshop block and the ICC profile of the monitor it was made on. Both images are `unoptimized`: Next's optimizer would otherwise serve a copy sized for the layout box and re-encoded (WebP at quality 75), so a zoomed step could be magnifying fewer pixels than the file has, and the test would be guarding bytes no browser receives. Measured in Chrome at 1440 × 900, 1024 × 768 and 375 × 812 (device pixel ratio 1): the browser receives 1654 × 2339 at each, 271,278 bytes with the test's sha256, no `srcset`; the most the scan is ever magnified is 1.1 CSS pixels to one of its own at each size, which is `MAX_ZOOM` in `walk.ts` (the hero's detail is 1.07, 0.79 and 0.52). On a screen of ratio 2 that is 2.2 device pixels to one of the scan's, which is where it is soft. The file now carries a JFIF header and nothing else, and `tests/unit/landing-fig-1.test.ts` fails on any other segment, on other bytes, or on other dimensions. The older file is still in this branch's history. The swap moved nothing: searched ±3px, the old and new files match best at (0, 0) at all 20 marks (18 places) and over the hero's detail. It is three panels of three sizes on the grid, asymmetric on purpose. From 80rem: the scan on its stage in the first eight columns, under a ruled head ("Fig. 1", "Page 1 of 2"); one empty column, where the leaders run; the eleven fields as a dense column in the last three (tight rows, only the value at reading size). Under the scan, the caption's sentence takes three columns and the run's numbers sit in a small ruled box in the other four. From 64rem it is seven, one and four. Below that they are plain blocks: figure, fields, caption. The scan and its head are a `<figure>` whose `<figcaption>` is the head; the field list sits beside it, and the sentence and the run's box are a block of their own under it, so that the figure can pin (below). The hero preloads the scan (`preload`, Next 16's name for `priority`), and the figure's image is the same URL. The rows are in schema order, values shown as the app shows them (only the document type capitalized); Low is the only band in signal. The date question appears once, under Due date, since it is the same for both. `tests/unit/landing-fig-1.test.ts` puts the eleven values through the real `validateExtraction` and `gateFields` and checks each band, percentage and the question against what the figure shows, that every quoted field has a mark on the page (ten fields quote the scan, with 20 marks at 18 places: Document type and Title share the underline under INVOICE, Due date and Payment terms the one under the terms line; Summary quotes nothing), and that the cost is what the database's formula gives the tokens.
@@ -218,15 +197,15 @@ Built to DESIGN.md from a brief approved on 19 Sep 2026, and reworked on 20 Sep 
 
 Every page and fixture state was checked at 320, 375, 768 and 1280 pixels wide in dark, and at 320 and 1280 in light.
 
-- **Width.** No page scrolls wider than the viewport. Long filenames, emails and organization names wrap. The run history reflows into labelled blocks below 768px and keeps its table roles, so a screen reader still hears a table.
+- **Width.** No page scrolls wider than the viewport. Long filenames, emails and organization names wrap. The run history reflows into labelled blocks below 80rem and keeps its table roles, so a screen reader still hears a table.
 - **Targets.** Every control is at least 24 by 24 pixels (WCAG 2.5.8). Standalone text links and disclosure summaries get it from `textTargetClass`, which adds padding and cancels it with a negative margin, so the layout doesn't move. Links inside running text don't, so they can still wrap.
 - **Keyboard.** A "Skip to content" link is the first stop on every page. It sits above the header until focused and jumps to `<main>`, which every page gives the shared id. `<main>` gets no `tabIndex`, which would draw a ring around the page and take focus on clicks. Tab order follows reading order. An armed Delete disarms on Escape, Cancel or leaving it.
-- **Focus.** One global `:focus-visible` ring, the accent at 2px with a 2px offset; inputs pull it onto their border. No `outline-none` anywhere without a visible replacement, and no ancestor clips a ring. When an action removes the focused element, focus moves somewhere that says what happened: the Documents heading after a delete, the field in error after a rejected submit, "Check your email" after sign-up, the retry button after a failed upload.
+- **Focus.** One global `:focus-visible` ring, signal at 2px with a 2px offset, outside every border. No `outline-none` anywhere without a visible replacement, and no ancestor clips a ring. When an action removes the focused element, focus moves somewhere that says what happened: the Documents heading after a delete, the field in error after a rejected submit, "Check your email" after sign-up, the retry button after a failed upload.
 - **Announcements.** Each status message comes from a region that is already in the page before its text changes, and is announced once. Progress and results are polite; errors that block the user are alerts. Polite and alert regions are siblings, never nested. An error on the field the user pressed Enter in is echoed in the alert region, because focus can't move to the field it's already on. The delete announcer clears before writing, so a second "Deleted" is read again.
 - **Theme toggle.** No live region: its accessible name changes, which NVDA reads on the focused control. VoiceOver users hear the new name on refocus. `aria-pressed` with a fixed label would contradict the name saying what clicking does.
-- **Contrast.** Every text node measured at least 4.5:1, including armed, error and disabled states, and control borders at least 3.24:1. No opacity modifier, gradient, shadow or blur is used anywhere.
+- **Contrast.** Every text node is ink on paper (16.30:1), paper on ink (16.30:1) or on-signal on signal (5.06:1), in both themes, including armed, error, pending and disabled states. No opacity modifier, gradient, shadow or blur is used anywhere.
 - **Semantics.** One h1 per page, no skipped levels, header, nav for the breadcrumb and main landmarks, a label on every input, names on icon-only buttons, decorative SVGs hidden. Every page has its own title through the root layout's template (`%s · doc-intake`); the organization page's title is the organization's name.
-- **Motion.** The only animation is the pending spinner, and it turns only under `prefers-reduced-motion: no-preference`.
+- **Motion.** One: an opened line's contents arrive in 160ms, ease-out, once per opening. Nothing moves under `prefers-reduced-motion: reduce`. There is no spinner; pending is said in words.
 - **Known limits.** The header email truncates on a phone; screen readers get the full address. During an upload the Upload button is disabled, so focus sits on the page body for the few seconds it takes, then returns to "Choose a file" or "Try again". Nothing was checked with a real screen reader, or in Safari or Firefox: "announced once" comes from logging each region's changes and each focus move.
 
 ### Error page
@@ -236,6 +215,8 @@ A page that throws while rendering gets `src/app/error.tsx` instead of Next's ge
 There is deliberately no loading state for the organization page. A `loading.tsx` starts streaming before the page runs, and once streaming has started the status code is fixed at 200. A missing or non-member organization would then return 200 with the not-found content, and a signed-out visitor a streamed redirect instead of a real one.
 
 ## The design preview
+
+`/dev/states` (committed, development only, a 404 in production builds) has replaced these pages: it renders every screen and state of /app and the auth pages from static data. What follows describes the older local pages.
 
 The signed-in pages can't be seen without an account, so every state is rendered from fixture data on local pages under `src/app/design-preview/`. They are listed in `.git/info/exclude` and never committed, and no real page imports them. The proxy only refreshes sessions, so they load without signing in.
 
@@ -251,26 +232,26 @@ The real components render there because each page keeps fetching in `page.tsx` 
 
 The rule was: take the simpler option, record it, keep going. Decisions about a single page are under Pages; these are the cross-cutting ones.
 
-- **Two border tokens.** `line` and `line-strong`, not one: a single border color either fails 3:1 on inputs or makes every divider heavy.
-- **accent-fg is the canvas color** of each theme, not pure white or black.
-- **The accent passes 4.5:1 as text**, not just 3:1, so needs review can be orange text as well as a fill or ring.
-- **Accent and danger stay apart** by hue (24.5° against 0°) and by form (fill, ring and badge against text and outline).
-- **Disabled buttons use tokens:** a `line` fill or border with `muted` text. A disabled danger button looks like a disabled secondary one.
-- **The destructive button fills red on hover**, so the click is deliberate.
-- **Selection is inverted** (`fg` background, `canvas` text) instead of the browser's blue.
-- **Placeholders are `muted`.** Tailwind's default, 50% of the text color, fails contrast.
+- **One ink for text and borders.** Every divider and control border is 1px ink (16.30:1), so no second border token is needed.
+- **Text on signal is `#141413` in both themes** (5.06:1), not the theme's paper, which on signal would fail in light.
+- **Signal is never text.** On the light paper it is 3.22:1, so anything that must stand out is a signal fill with dark text.
+- **No danger colour.** An error is ink words against a 2px ink rule; signal stays for what needs a person.
+- **Disabled and pending buttons are a dotted ink border** on paper, the landing's. A disabled danger button looks like a disabled secondary one.
+- **An armed Delete fills ink**, so the second click is deliberate.
+- **Selection is inverted** (`ink` background, `paper` text) instead of the browser's blue.
+- **Placeholders are `ink`.** Tailwind's default, 50% of the text color, is translucent and fails contrast.
 - **No glass is enforced for blur only.** `--blur-*` is reset. Gradients and opacity modifiers can't be reset, so they're a review rule.
-- **`font-mono` and `font-serif` don't exist.** Code-like elements inherit the sans.
+- **`font-mono` and `font-serif` don't exist.** Code-like elements inherit Geist.
 - **Colors are hex, not oklch**, so the CSS, the contrast script and this table all show the same values.
 - **Label swaps and width.** Buttons have a fixed height; width follows the label. A button whose label swaps (Extract / Extracting…) needs a `min-w-*` at the call site. A global minimum width would pad short labels like "Sign out".
 - **Primary buttons are earned.** Upload turns primary only once a file is chosen. Extract is primary only until a document has results, then it becomes a secondary "Extract again". A page never shows a row of orange buttons.
-- **Wordmark is text only** ("doc-intake", semibold), with no logo mark, because the accent is reserved.
+- **Wordmark is text only** ("doc-intake", Archivo wide at the body size, as on the landing), with no logo mark, and links to `/`.
 - **Header height is h-14.** It shares `containerClass` with page content.
 - **Signed-in slot.** `AccountControls` lives in `site-header.tsx`, so `/app` and `/app/[slug]` don't each keep a copy. "Signed in as" is hidden below `sm` and the email truncates.
 - **not-found gets the header without account controls.** Reading the session there would make the 404 auth-aware.
-- **Extraction bands.** Low is `accent` with an icon and "Check this", because a low field is what puts a document in needs review. Medium is plain `fg` with its clarifying question under the value. High is `muted`: it needs nothing from the reader.
-- **Table headers are `font-medium`** (they were normal weight) in `thClass`.
-- **A failed document or run gets a neutral badge.** Failure is a state; `danger` is for the error text that explains it.
+- **Extraction bands.** Low is a signal-filled tag ("Low 59%"), because a low field is what puts a document in needs review. Medium and High are the same words in ink with no fill; Medium adds its question.
+- **Column heads are labels:** Archivo, wide, uppercase, 12px.
+- **A failed document or run is a crossed glyph and the word Failed**, in ink. The catalogue's sentence explains it.
 - **Theme icon.** It shows the theme clicking switches to (sun in dark, moon in light), matching the accessible name.
 - **No color transitions**, so a theme switch changes everything at once instead of some buttons fading.
 - **No cross-tab sync.** Another open tab picks up the choice on its next load.

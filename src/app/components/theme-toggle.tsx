@@ -27,7 +27,7 @@ function getServerSnapshot(): Theme {
 }
 
 // className replaces the button's look; the landing page passes its own,
-// since it has its own tokens.
+// from its CSS module.
 export function ThemeToggle({ className = iconButtonClass }: { className?: string }) {
   const theme = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const next: Theme = theme === "dark" ? "light" : "dark";

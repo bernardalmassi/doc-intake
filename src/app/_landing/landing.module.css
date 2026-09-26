@@ -1,53 +1,29 @@
 /*
-  The landing page, and only the landing page. DESIGN.md has the rules;
+  The landing page's layout and its own sizes. DESIGN.md has the rules;
   the brief they were built from is in DESIGN-NOTES.md, "Landing (/)".
 
-  Three colours, named for their job, in both themes: paper (the ground),
-  ink (all text and rules), signal (the one accent: the main action, the
-  fields to check, the lines under what they quote, the leader). Dark is
-  the default; light swaps paper and ink, and signal stays. Text on signal
-  is always the darker of the two (5.06:1, in both themes). Signal is
-  never text on paper: 3.22:1 on the light ground.
+  The colours are the app's, from globals.css, in both themes: paper (the
+  ground), ink (all text and rules), signal (the one accent: the main
+  action, the fields to check, the lines under what they quote, the
+  leader). Dark is the default; light swaps paper and ink, and signal
+  stays. Text on signal is always the darker of the two (5.06:1, in both
+  themes). Signal is never text on paper: 3.22:1 on the light ground. The
+  focus ring and the selection are globals.css's too.
 
   The stage is where a scan sits: always the dark one of the two, so the
   scan reads as paper on a dark ground in either theme. In dark it is the
   page itself; in light it is a plate of ink. Its edge colour is the light
-  one. Both are aliases, not new colours.
+  one. Both are aliases in globals.css, not new colours.
 
   One radius: none. No shadows, no gradients, no translucent colour.
   Opacity appears once, as the arrival's from-state.
 
-  Two faces: Archivo for the headline (normal width, so a nine-letter word
-  fits a phone at 64px), and set wide for labels, keys and the wordmark;
-  Geist (the app's own family) for reading. Four sizes: display (64 to
-  140px), body 18/28, small 15/22, label 12/16. The distance from the
-  first to the last is the point.
-
-  The tokens sit on <html> while this page is mounted, so the body behind
-  it (overscroll, the gap under a short page) is paper too.
+  Two faces, both loaded once by the root layout: Archivo for the headline
+  (normal width, so a nine-letter word fits a phone at 64px), and set wide
+  for labels, keys and the wordmark; Geist for reading. Four sizes:
+  display (64 to 140px), body 18/28, small 15/22, label 12/16. The
+  distance from the first to the last is the point.
 */
-:global(html):has(.page) {
-  --paper: #141413;
-  --ink: #f2f1ec;
-  --signal: #e8560f;
-  --on-signal: var(--paper);
-  --stage: var(--paper);
-  --stage-edge: var(--ink);
-}
-
-:global(html[data-theme="light"]):has(.page) {
-  --paper: #f2f1ec;
-  --ink: #141413;
-  --on-signal: var(--ink);
-  --stage: var(--ink);
-  --stage-edge: var(--paper);
-}
-
-:global(body):has(.page) {
-  background-color: var(--paper);
-  color: var(--ink);
-}
-
 .page {
   display: flex;
   flex: 1;
@@ -56,16 +32,6 @@
   font-size: 1.125rem;
   line-height: 1.75rem;
   font-variant-numeric: tabular-nums;
-}
-
-.page :focus-visible {
-  outline: 2px solid var(--signal);
-  outline-offset: 2px;
-}
-
-.page ::selection {
-  background-color: var(--ink);
-  color: var(--paper);
 }
 
 /* ------------------------------------------------------------ type */
