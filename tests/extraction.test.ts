@@ -81,7 +81,6 @@ type RunRow = {
   error: string | null;
   raw_response: string | null;
   page_count: number | null;
-  queue_msg_id: number | null;
   started_at: string;
   claimed_at: string | null;
   finished_at: string | null;
@@ -97,8 +96,9 @@ type FieldRow = {
   clarifying_question: string | null;
 };
 
+// every column a member may read: all but queue_msg_id (20260925000004)
 const RUN_COLUMNS =
-  "id, tenant_id, document_id, status, provider, model, attempts, input_tokens, output_tokens, cost_usd, latency_ms, error, raw_response, page_count, queue_msg_id, started_at, claimed_at, finished_at";
+  "id, tenant_id, document_id, status, provider, model, attempts, input_tokens, output_tokens, cost_usd, latency_ms, error, raw_response, page_count, started_at, claimed_at, finished_at";
 const FIELD_COLUMNS = "document_id, run_id, name, value, confidence, band, source_text, clarifying_question";
 
 function newClient() {
@@ -365,7 +365,6 @@ describe("enqueue", () => {
     expect((await readDocument(x(), docP.id))?.status).toBe("processing");
     const run = await readRun(x(), queued);
     expect(run).toMatchObject({ status: "queued", document_id: docP.id, page_count: 1, claimed_at: null, finished_at: null, cost_usd: null });
-    expect(run?.queue_msg_id).not.toBeNull();
 
     const again = await enqueue(x(), docP.id);
     expect(again.error?.code).toBe("55000");
@@ -690,6 +689,23 @@ describe("guards", () => {
     expect(run.kind).toBe("claim_failed");
     expect(run.requests).toBeGreaterThan(0);
     expect(run.providerCalls).toBe(0);
+  });
+
+  it("neither a member nor the owner can read a run's queue message id, or every column at once", async () => {
+    for (const [label, user] of [
+      ["the owner", x()],
+      ["a member", y()],
+    ] as const) {
+      const msg = await user.client.from("extraction_runs").select("id, queue_msg_id").eq("tenant_id", tenantP);
+      expect(msg.data, label).toBeNull();
+      expect(msg.error?.code, label).toBe("42501");
+      const star = await user.client.from("extraction_runs").select("*").eq("tenant_id", tenantP);
+      expect(star.error?.code, label).toBe("42501");
+      // every other column is still theirs to read
+      const rest = await user.client.from("extraction_runs").select(RUN_COLUMNS).eq("tenant_id", tenantP);
+      expect(rest.error, label).toBeNull();
+      expect(rest.data?.length, label).toBeGreaterThan(0);
+    }
   });
 
   it("a member reads only their tenant's runs and fields; other tenants' come back empty", async () => {

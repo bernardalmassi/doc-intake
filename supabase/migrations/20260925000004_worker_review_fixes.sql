@@ -730,3 +730,17 @@ begin
     timeout_milliseconds := 5000);
 end;
 $$;
+
+-- 11. The queue's message id is the worker's, not the members' ---------------
+
+-- Members read their organization's runs (RLS), and until now every column,
+-- queue_msg_id included: the id of the run's pgmq message, which says
+-- nothing a member needs and indexes the project-wide queue (how many runs
+-- every organization has enqueued). The table grant becomes a grant of
+-- every other column. A column added later is not readable by members until
+-- a migration grants it.
+revoke select on public.extraction_runs from authenticated;
+grant select (id, tenant_id, document_id, started_by, status, provider, model, attempts,
+              input_tokens, output_tokens, cost_usd, latency_ms, error, raw_response,
+              previous_document_status, started_at, finished_at, page_count, claimed_at)
+  on public.extraction_runs to authenticated;

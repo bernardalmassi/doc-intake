@@ -696,8 +696,13 @@ begin
     end loop;
   end loop;
 
-  -- runs: members read them under RLS, nobody writes them
-  if not has_table_privilege('authenticated', 'public.extraction_runs', 'select')
+  -- runs: members read every column but the queue's message id
+  -- (20260925000004) under RLS, nobody writes them
+  if has_table_privilege('authenticated', 'public.extraction_runs', 'select')
+     or has_column_privilege('authenticated', 'public.extraction_runs', 'queue_msg_id', 'select')
+     or exists (select 1 from information_schema.columns c
+                where c.table_schema = 'public' and c.table_name = 'extraction_runs' and c.column_name <> 'queue_msg_id'
+                  and not has_column_privilege('authenticated', 'public.extraction_runs', c.column_name, 'select'))
      or has_table_privilege('authenticated', 'public.extraction_runs', 'insert')
      or has_table_privilege('authenticated', 'public.extraction_runs', 'update')
      or has_table_privilege('authenticated', 'public.extraction_runs', 'delete')
@@ -709,6 +714,7 @@ begin
     raise exception 'an API role has usage on pgmq, or anon on private';
   end if;
   insert into checks (step, result) values ('the grants match section 5 for the queue''s functions and tables, the ledger, the tokens and the runs', 'ok');
+  insert into checks (step, result) values ('members read every column of a run but queue_msg_id', 'ok');
 
   -- pg_net's own grants belong to supabase_admin, and postgres can't revoke
   -- them (20260925000002, section 1): recorded, not asserted
