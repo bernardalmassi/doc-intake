@@ -62,10 +62,12 @@ describe("the queue's migrations", () => {
 
   it("only read Vault, and only the two worker secrets, by name", () => {
     const references = [...all.matchAll(/\bvault\.(\w+)/gi)];
-    expect(references.length).toBe(2);
+    // the wake of 20260925000002, and its replacement in 20260925000004
+    expect(references.length).toBe(4);
     for (const reference of references) expect(reference[1]).toBe("decrypted_secrets");
     const names = [...all.matchAll(/vault\.decrypted_secrets\s+s\s+where\s+s\.name\s*=\s*'([^']+)'/gi)].map((m) => m[1]);
-    expect(names.sort()).toEqual(["extraction_worker_secret", "extraction_worker_url"]);
+    expect([...new Set(names)].sort()).toEqual(["extraction_worker_secret", "extraction_worker_url"]);
+    expect(names).toHaveLength(4);
     expect(all).not.toMatch(/create_secret|update_secret|insert\s+into\s+vault|decrypted_secret\s*=/i);
   });
 
@@ -76,9 +78,24 @@ describe("the queue's migrations", () => {
         expect(pricingHosts.has(match[1]), `${name}: ${match[0]}`).toBe(true);
       }
     }
-    // the wake accepts only an https URL ending in the worker's path, read
-    // from Vault
-    expect(all).toContain("'^https://[^/]+/api/extraction-worker$'");
+  });
+
+  it("have the live wake refuse a malformed URL out loud: a warning, no request", () => {
+    const parsed = parseMigrations(migrations);
+    const wake = parsed.liveBodies.get("wake_extraction_worker") ?? "";
+    // the strict check (supabase/tests/extraction_wakes.sql drives it with
+    // good and malformed URLs), then a warning naming only the problem
+    const check = wake.indexOf("private.extraction_worker_url_problem(v_url)");
+    const warning = wake.indexOf("raise warning 'extraction worker not woken: the extraction_worker_url in Vault %', v_problem;");
+    const post = wake.indexOf("net.http_post(");
+    expect(check).toBeGreaterThan(0);
+    expect(warning).toBeGreaterThan(check);
+    expect(post).toBeGreaterThan(warning);
+    // the old pattern is gone from the live function
+    expect(wake).not.toContain("'^https://[^/]+/api/extraction-worker$'");
+    // and the sweep's step (b) survives a wake that raises
+    const sweep = parsed.liveBodies.get("sweep_extraction_queue") ?? "";
+    expect(sweep).toMatch(/perform private\.wake_extraction_worker\(\);\s*exception when others then\s*raise warning 'extraction worker not woken \(SQLSTATE %\)', sqlstate;/);
   });
 });
 

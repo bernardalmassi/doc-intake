@@ -645,3 +645,88 @@ begin
   end loop;
 end;
 $$;
+
+-- 9. The wake's URL, checked strictly --------------------------------------------
+
+-- What is wrong with a worker URL, or null if nothing is. It must be exactly
+-- https://<host>/api/extraction-worker: https; a plain host name (lowercase
+-- labels of letters, digits and inner hyphens, at least two, the last
+-- starting with a letter, so no IP address, no localhost, no trailing dot);
+-- no user name or password, no port, no query, no fragment, no whitespace or
+-- control character anywhere; and that path, exactly. The pattern it
+-- replaces, ^https://[^/]+/api/extraction-worker$, let through credentials,
+-- a port, an address, whitespace or a question mark in the authority.
+create function private.extraction_worker_url_problem(p_url text)
+returns text language plpgsql immutable set search_path = '' as $$
+declare
+  v_authority text;
+begin
+  if p_url is null then
+    return 'is missing';
+  end if;
+  if p_url ~ '[[:space:][:cntrl:]]' then
+    return 'contains whitespace or a control character';
+  end if;
+  if p_url !~ '^https://' then
+    return 'is not https';
+  end if;
+  v_authority := substring(p_url from '^https://([^/?#]*)');
+  if v_authority ~ '@' then
+    return 'has a user name or password';
+  end if;
+  if v_authority ~ '^\[' then
+    -- an IPv6 address
+    return 'has no plain host name';
+  end if;
+  if v_authority ~ ':' then
+    return 'has a port';
+  end if;
+  if v_authority !~ '^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$' then
+    return 'has no plain host name';
+  end if;
+  if p_url ~ '\?' then
+    return 'has a query';
+  end if;
+  if p_url ~ '#' then
+    return 'has a fragment';
+  end if;
+  if substring(p_url from '^https://[^/?#]*(.*)$') is distinct from '/api/extraction-worker' then
+    return 'has a path other than /api/extraction-worker';
+  end if;
+  return null;
+end;
+$$;
+
+revoke execute on function private.extraction_worker_url_problem(text) from public, anon, authenticated;
+
+-- As in 20260925000002, except for the URL: without the Vault pair (the test
+-- project, which must never hold one) it still does nothing, silently; with
+-- a URL that extraction_worker_url_problem refuses it raises a warning
+-- saying what is wrong (never the URL) and sends nothing. The enqueue's wake
+-- and the sweep's step (b) both reach it, so a misconfigured URL is in the
+-- database's log every minute a run waits, instead of nowhere.
+create or replace function private.wake_extraction_worker()
+returns bigint language plpgsql security definer set search_path = '' as $$
+declare
+  v_url     text;
+  v_secret  text;
+  v_problem text;
+begin
+  select s.decrypted_secret into v_url from vault.decrypted_secrets s where s.name = 'extraction_worker_url';
+  select s.decrypted_secret into v_secret from vault.decrypted_secrets s where s.name = 'extraction_worker_secret';
+  if v_url is null or v_secret is null then
+    return null;
+  end if;
+  v_problem := private.extraction_worker_url_problem(v_url);
+  if v_problem is not null then
+    raise warning 'extraction worker not woken: the extraction_worker_url in Vault %', v_problem;
+    return null;
+  end if;
+  return net.http_post(
+    url                  := v_url,
+    body                 := '{}'::jsonb,
+    headers              := jsonb_build_object('Content-Type', 'application/json',
+                                               'Authorization', 'Bearer ' || v_secret),
+    timeout_milliseconds := 5000);
+end;
+$$;
