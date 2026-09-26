@@ -17,6 +17,7 @@ const usage = {
   inputTokens: 1200,
   outputTokens: 300,
   latencyMs: 4200,
+  costEstimated: false,
 };
 
 const succeeded = {

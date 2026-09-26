@@ -2,7 +2,11 @@
 // database. It proves what the Extract action relies on:
 //
 //   - a timeout or 5xx on the primary falls back to the other provider, once
-//     per run, and the run is recorded as the fallback's
+//     per run
+//   - a call that was sent and got no answer (a timeout, anything thrown
+//     without an HTTP status) counts at its measured input plus the output
+//     cap, never at 0, and marks the cost as estimated; a run with tokens
+//     from two models is priced at the dearer of the two
 //   - a 4xx, a refusal or a truncated answer on the primary does not fall back
 //   - when the fallback fails too, the run's error names both failures; when
 //     there is no fallback to try, the error says so
@@ -11,8 +15,7 @@
 //     invalid too the run fails cleanly with the last raw answer kept, and
 //     no third call. The retry never switches provider, even on a timeout
 //   - every billed call's tokens are summed: valid answers, invalid ones, and
-//     refused or truncated ones, whose errors carry their usage; all of them
-//     come from one model, the one the database prices the run at
+//     refused or truncated ones, whose errors carry their usage
 //   - over every combination of answers, a run makes at most three calls
 //     (the database accepts four) and its error fits the 2000-character column
 //   - no call is sent until its input has been counted and fits the per-call
@@ -25,10 +28,18 @@
 
 import { describe, expect, it } from "vitest";
 import { classifyRunError, userFacingError } from "@/lib/errors";
-import { CONFIDENCE_THRESHOLDS, EXTRACTION_LIMITS, inputTokensPerCall, MAX_OUTPUT_TOKENS, type ProviderName } from "@/lib/extraction/config";
+import {
+  CONFIDENCE_THRESHOLDS,
+  dearestModelFor,
+  EXTRACTION_LIMITS,
+  inputTokensPerCall,
+  MAX_OUTPUT_TOKENS,
+  PRICING,
+  type ProviderName,
+} from "@/lib/extraction/config";
 import { describeError, ProviderError } from "@/lib/extraction/providers/types";
 import { runExtraction } from "@/lib/extraction/run";
-import { answer, fakeProvider, pdfBytes, validJson } from "../helpers/fake-provider";
+import { answer, FAKE_COUNT, fakeProvider, pdfBytes, validJson } from "../helpers/fake-provider";
 import { BAD_DATE, HAIKU, MAX_CALLS, NANO, NANO_SNAPSHOT, SERVED, scripted, scripts, STEPS } from "../helpers/scripted-providers";
 
 
@@ -103,12 +114,23 @@ describe("orchestrator (fake providers)", () => {
 
     expect(primary.requests).toHaveLength(1);
     expect(fallback.requests).toHaveLength(1);
-    expect(outcome).toMatchObject({ status: "succeeded", provider: "openai", attempts: 2, inputTokens: 700 });
+    // the timed-out call counts at its measured input and the output cap,
+    // and both models' tokens at the dearer one's rates
+    expect(outcome).toMatchObject({
+      status: "succeeded",
+      provider: "anthropic",
+      model: "claude-haiku-4-5-20251001",
+      attempts: 2,
+      inputTokens: FAKE_COUNT + 700,
+      outputTokens: MAX_OUTPUT_TOKENS + 60,
+      costEstimated: true,
+    });
 
+    // a 5xx was refused, not processed: nothing counted for it
     const server = fakeProvider("openai", "gpt-5-nano", [new ProviderError("openai", "server", "bad gateway", 502)]);
     const second = fakeProvider("anthropic", "claude-haiku-4-5-20251001", [answer(validJson())]);
     const outcome2 = await runExtraction({ ...input, primary: server, fallback: second });
-    expect(outcome2).toMatchObject({ status: "succeeded", provider: "anthropic", attempts: 2 });
+    expect(outcome2).toMatchObject({ status: "succeeded", provider: "anthropic", attempts: 2, inputTokens: 1000, costEstimated: false });
   });
 
   it("a 4xx or a refusal fails without falling back", async () => {
@@ -247,8 +269,65 @@ describe("measuring before every call", () => {
   });
 });
 
+describe("a call that was sent and got no answer", () => {
+  it.each([
+    ["timed out", timedOut("anthropic")],
+    ["lost its connection", new ProviderError("anthropic", "transport", "connection failed")],
+    ["threw with no HTTP status", new TypeError("terminated")],
+    ["came back with no usage", new ProviderError("anthropic", "client", "the response carried no usage, so its cost is unknown")],
+  ])("%s: counts at its measured input plus the output cap, never at 0", async (_, failure) => {
+    const primary = fakeProvider("anthropic", HAIKU, [failure], [5321]);
+    const outcome = await runExtraction({ ...input, primary, fallback: null });
+
+    expect(primary.requests).toHaveLength(1);
+    expect(outcome).toMatchObject({
+      status: "failed",
+      provider: "anthropic",
+      // the model it was sent to: no answer said which served it
+      model: HAIKU,
+      attempts: 1,
+      inputTokens: 5321,
+      outputTokens: MAX_OUTPUT_TOKENS,
+      costEstimated: true,
+    });
+  });
+
+  it.each([
+    ["a 5xx", serverError("anthropic", 503, "service unavailable")],
+    ["a 4xx", new ProviderError("anthropic", "client", "invalid request", 400)],
+    ["a 429", new ProviderError("anthropic", "client", "rate limited", 429)],
+  ])("%s was refused, not processed: it counts nothing", async (_, failure) => {
+    const primary = fakeProvider("anthropic", HAIKU, [failure], [5321]);
+    const outcome = await runExtraction({ ...input, primary, fallback: null });
+    expect(outcome).toMatchObject({ status: "failed", attempts: 1, inputTokens: 0, outputTokens: 0, costEstimated: false });
+  });
+
+  it("prices a run with two models' tokens at the dearer one, whichever went first", async () => {
+    // the cheap primary times out, the dear fallback answers
+    const primary = fakeProvider("openai", NANO, [timedOut("openai")], [2700]);
+    const fallback = fakeProvider("anthropic", HAIKU, [answer(validJson(), HAIKU, 6000, 500)], [6000]);
+    const outcome = await runExtraction({ ...input, primary, fallback });
+    expect(outcome).toMatchObject({
+      status: "succeeded",
+      provider: "anthropic",
+      model: HAIKU,
+      inputTokens: 2700 + 6000,
+      outputTokens: MAX_OUTPUT_TOKENS + 500,
+      costEstimated: true,
+    });
+  });
+
+  it("prices two models' tokens at the dearest on file when one of them has no price here", async () => {
+    const primary = fakeProvider("anthropic", HAIKU, [timedOut("anthropic")]);
+    const fallback = fakeProvider("openai", NANO, [answer(validJson(), "gpt-9-unpriced", 700, 60)]);
+    const outcome = await runExtraction({ ...input, primary, fallback });
+    const dearest = dearestModelFor(FAKE_COUNT + 700, MAX_OUTPUT_TOKENS + 60);
+    expect(outcome).toMatchObject({ status: "succeeded", provider: PRICING[dearest].provider, model: dearest, costEstimated: true });
+  });
+});
+
 describe("fallback", () => {
-  it("a timeout on the primary is answered by the fallback, and the run is the fallback's", async () => {
+  it("a timeout on the primary is answered by the fallback; the timed-out call counts at its most, priced at the dearer model", async () => {
     const primary = fakeProvider("anthropic", HAIKU, [timedOut("anthropic")]);
     const fallback = fakeProvider("openai", NANO, [
       answer(validJson({ title: { value: "Invoice 7", confidence: 0.95 } }), NANO_SNAPSHOT, 700, 60),
@@ -261,15 +340,19 @@ describe("fallback", () => {
     expect(fallback.requests[0]).toEqual(primary.requests[0]);
     expect(fallback.requests[0].previousAttempt).toBeUndefined();
 
-    // the provider and served model that answered, and only its tokens: the
-    // timed-out call reported none
+    // The timed-out call reported nothing, but may have been billed: it
+    // counts at its measured input and the output cap, at Haiku's rates.
+    // Every token of the run is then priced at the dearer of the two
+    // models, Haiku, so the cost is never less than what was spent, and it
+    // is marked as an estimate.
     expect(outcome).toMatchObject({
       status: "succeeded",
-      provider: "openai",
-      model: NANO_SNAPSHOT,
+      provider: "anthropic",
+      model: HAIKU,
       attempts: 2,
-      inputTokens: 700,
-      outputTokens: 60,
+      inputTokens: FAKE_COUNT + 700,
+      outputTokens: MAX_OUTPUT_TOKENS + 60,
+      costEstimated: true,
     });
     if (outcome.status === "succeeded") {
       expect(outcome.fields.find((f) => f.name === "title")?.value).toBe("Invoice 7");
@@ -285,7 +368,8 @@ describe("fallback", () => {
 
     expect(primary.requests).toHaveLength(1);
     expect(fallback.requests).toHaveLength(1);
-    expect(outcome).toMatchObject({ status: "succeeded", provider: "openai", attempts: 2, inputTokens: 700 });
+    // the 5xx counted nothing: the fallback's answer alone
+    expect(outcome).toMatchObject({ status: "succeeded", provider: "openai", attempts: 2, inputTokens: 700, costEstimated: false });
   });
 
   it.each([
@@ -297,29 +381,46 @@ describe("fallback", () => {
 
     expect(primary.requests).toHaveLength(1);
     expect(outcome).toMatchObject({ status: "failed", provider: "anthropic", model: HAIKU, attempts: 1, rawResponse: null });
+    // a timeout may have been billed, a 503 was not
+    const timedOutCall = failure.kind === "transport";
+    expect(outcome.inputTokens).toBe(timedOutCall ? FAKE_COUNT : 0);
+    expect(outcome.outputTokens).toBe(timedOutCall ? MAX_OUTPUT_TOKENS : 0);
+    expect(outcome.costEstimated).toBe(timedOutCall);
     if (outcome.status === "failed") {
       expect(outcome.error).toBe(`${described}; no fallback provider is configured`);
     }
   });
 
   it.each([
-    ["times out", timedOut("openai"), "openai transport: request timed out"],
-    ["returns a 502", serverError("openai", 502, "bad gateway"), "openai server 502: bad gateway"],
-    ["rejects the request", new ProviderError("openai", "client", "invalid request", 400), "openai client 400: invalid request"],
+    // a timeout, and a refusal that carries no usage, count at their most
+    ["times out", timedOut("openai"), "openai transport: request timed out", true],
+    ["returns a 502", serverError("openai", 502, "bad gateway"), "openai server 502: bad gateway", false],
+    ["rejects the request", new ProviderError("openai", "client", "invalid request", 400), "openai client 400: invalid request", false],
     [
       "refuses the document",
       new ProviderError("openai", "refusal", "the model declined to process this document"),
       "openai refusal: the model declined to process this document",
+      true,
     ],
-  ])("when the fallback %s too, the error names both failures", async (_, failure, described) => {
+  ])("when the fallback %s too, the error names both failures", async (_, failure, described, fallbackCounts) => {
     const primary = fakeProvider("anthropic", HAIKU, [timedOut("anthropic")]);
     const fallback = fakeProvider("openai", NANO, [failure]);
     const outcome = await runExtraction({ ...input, primary, fallback });
 
     expect(primary.requests).toHaveLength(1);
     expect(fallback.requests).toHaveLength(1);
-    // recorded as the fallback's run, the last provider called
-    expect(outcome).toMatchObject({ status: "failed", provider: "openai", model: NANO, attempts: 2, rawResponse: null });
+    // the primary's timed-out call counts at its most, and with the
+    // fallback's the run is priced at the dearer model, Haiku
+    expect(outcome).toMatchObject({
+      status: "failed",
+      provider: "anthropic",
+      model: HAIKU,
+      attempts: 2,
+      inputTokens: FAKE_COUNT * (fallbackCounts ? 2 : 1),
+      outputTokens: MAX_OUTPUT_TOKENS * (fallbackCounts ? 2 : 1),
+      costEstimated: true,
+      rawResponse: null,
+    });
     if (outcome.status === "failed") {
       expect(outcome.error).toBe(`anthropic transport: request timed out; fallback ${described}`);
     }
@@ -333,30 +434,50 @@ describe("fallback", () => {
 
     expect(primary.requests).toHaveLength(1);
     expect(fallback.requests).toHaveLength(1);
-    expect(outcome).toMatchObject({ status: "failed", provider: "openai", attempts: 2 });
+    // two calls with no answer, each at its most, priced at Haiku's rates
+    expect(outcome).toMatchObject({
+      status: "failed",
+      provider: "anthropic",
+      model: HAIKU,
+      attempts: 2,
+      inputTokens: 2 * FAKE_COUNT,
+      outputTokens: 2 * MAX_OUTPUT_TOKENS,
+      costEstimated: true,
+    });
     if (outcome.status === "failed") {
       expect(outcome.error).toBe("anthropic transport: request timed out; fallback openai transport: request timed out");
     }
   });
 
   it.each([
-    ["a 400", new ProviderError("anthropic", "client", "invalid request", 400)],
-    ["a 401", new ProviderError("anthropic", "client", "invalid x-api-key", 401)],
+    // refused with an HTTP status: not processed, nothing counted
+    ["a 400", new ProviderError("anthropic", "client", "invalid request", 400), false],
+    ["a 401", new ProviderError("anthropic", "client", "invalid x-api-key", 401), false],
     // A 429 means our account is over its rate limit or out of quota:
     // something to wait out or fix, not an outage for the other provider to
     // absorb. provider-errors.test.ts has the reasoning in full.
-    ["a 429", new ProviderError("anthropic", "client", "rate limited", 429)],
-    ["a refusal", new ProviderError("anthropic", "refusal", "the model declined to process this document")],
-    ["a truncated answer", new ProviderError("anthropic", "truncated", "the answer exceeded the 2048 output token cap")],
-    ["a bug in the provider", new TypeError("Cannot read properties of undefined (reading 'content')")],
-  ])("%s on the primary fails the run without trying the fallback", async (_, failure) => {
+    ["a 429", new ProviderError("anthropic", "client", "rate limited", 429), false],
+    // no HTTP status and no usage: it may have been billed, so it counts at
+    // its most (interpret.ts attaches usage to a real refusal or truncation)
+    ["a refusal", new ProviderError("anthropic", "refusal", "the model declined to process this document"), true],
+    ["a truncated answer", new ProviderError("anthropic", "truncated", "the answer exceeded the 2048 output token cap"), true],
+    ["a bug in the provider", new TypeError("Cannot read properties of undefined (reading 'content')"), true],
+  ])("%s on the primary fails the run without trying the fallback", async (_, failure, countedAtMost) => {
     const primary = fakeProvider("anthropic", HAIKU, [failure]);
     const fallback = fakeProvider("openai", NANO, [answer(validJson(), NANO_SNAPSHOT)]);
     const outcome = await runExtraction({ ...input, primary, fallback });
 
     expect(primary.requests).toHaveLength(1);
     expect(fallback.requests).toHaveLength(0);
-    expect(outcome).toMatchObject({ status: "failed", provider: "anthropic", attempts: 1, inputTokens: 0, rawResponse: null });
+    expect(outcome).toMatchObject({
+      status: "failed",
+      provider: "anthropic",
+      attempts: 1,
+      inputTokens: countedAtMost ? FAKE_COUNT : 0,
+      outputTokens: countedAtMost ? MAX_OUTPUT_TOKENS : 0,
+      costEstimated: countedAtMost,
+      rawResponse: null,
+    });
     if (outcome.status === "failed") {
       expect(outcome.error).toBe(describeError(failure));
       expect(outcome.error).not.toMatch(/fallback/);
@@ -426,6 +547,7 @@ describe("validation retry", () => {
     ["times out", timedOut("anthropic"), "anthropic transport: request timed out"],
     ["returns a 503", serverError("anthropic", 503, "service unavailable"), "anthropic server 503: service unavailable"],
   ])("a retry that %s fails the run: once a provider has answered, the run never switches", async (_, failure, described) => {
+    const timedOutRetry = failure.kind === "transport";
     // the fallback has a good answer ready and is never asked
     const primary = fakeProvider("anthropic", HAIKU, [answer("{ nope", HAIKU, 1000, 100), failure]);
     const fallback = fakeProvider("openai", NANO, [answer(validJson(), NANO_SNAPSHOT, 700, 60)]);
@@ -433,16 +555,16 @@ describe("validation retry", () => {
 
     expect(primary.requests).toHaveLength(2);
     expect(fallback.requests).toHaveLength(0);
-    // Every token counted is the primary's model's, which is the model
-    // close_extraction_run prices the whole run at. Had the retry gone to
-    // the fallback, these Haiku tokens would have been priced as gpt-5-nano.
+    // Every token counted is the primary's model's. A retry that timed out
+    // counts at its most on top of the first answer; a 503 counts nothing.
     expect(outcome).toMatchObject({
       status: "failed",
       provider: "anthropic",
       model: HAIKU,
       attempts: 2,
-      inputTokens: 1000,
-      outputTokens: 100,
+      inputTokens: 1000 + (timedOutRetry ? FAKE_COUNT : 0),
+      outputTokens: 100 + (timedOutRetry ? MAX_OUTPUT_TOKENS : 0),
+      costEstimated: timedOutRetry,
       rawResponse: "{ nope",
     });
     if (outcome.status === "failed") {
@@ -463,7 +585,17 @@ describe("validation retry", () => {
     expect(primary.requests).toHaveLength(1);
     expect(fallback.requests).toHaveLength(2);
     expect(fallback.requests[1].previousAttempt?.rawResponse).toBe("{ nope");
-    expect(outcome).toMatchObject({ status: "succeeded", provider: "openai", attempts: 3, inputTokens: 1500, outputTokens: 130 });
+    // the fallback's two answers and the primary's timed-out call at its
+    // most, priced at Haiku's rates
+    expect(outcome).toMatchObject({
+      status: "succeeded",
+      provider: "anthropic",
+      model: HAIKU,
+      attempts: 3,
+      inputTokens: FAKE_COUNT + 1500,
+      outputTokens: MAX_OUTPUT_TOKENS + 130,
+      costEstimated: true,
+    });
   });
 
   it("a timeout on the retry with no fallback configured fails the same way, keeping the invalid answer", async () => {
@@ -471,7 +603,15 @@ describe("validation retry", () => {
     const outcome = await runExtraction({ ...input, primary, fallback: null });
 
     expect(primary.requests).toHaveLength(2);
-    expect(outcome).toMatchObject({ status: "failed", provider: "anthropic", attempts: 2, inputTokens: 1000, rawResponse: "{ nope" });
+    expect(outcome).toMatchObject({
+      status: "failed",
+      provider: "anthropic",
+      attempts: 2,
+      inputTokens: 1000 + FAKE_COUNT,
+      outputTokens: 100 + MAX_OUTPUT_TOKENS,
+      costEstimated: true,
+      rawResponse: "{ nope",
+    });
     if (outcome.status === "failed") {
       // a fallback wouldn't have been used here, so the error doesn't say
       // one was missing
@@ -488,7 +628,18 @@ describe("validation retry", () => {
 
     expect(primary.requests).toHaveLength(1);
     expect(fallback.requests).toHaveLength(2);
-    expect(outcome).toMatchObject({ status: "failed", provider: "openai", attempts: 3, inputTokens: 700, rawResponse: "{ nope" });
+    // both timed-out calls at their most, the invalid answer as billed, all
+    // at Haiku's rates
+    expect(outcome).toMatchObject({
+      status: "failed",
+      provider: "anthropic",
+      model: HAIKU,
+      attempts: 3,
+      inputTokens: FAKE_COUNT + 700 + FAKE_COUNT,
+      outputTokens: MAX_OUTPUT_TOKENS + 60 + MAX_OUTPUT_TOKENS,
+      costEstimated: true,
+      rawResponse: "{ nope",
+    });
     if (outcome.status === "failed") {
       // the retry went only to the fallback; the primary's timeout is in the
       // log (extraction.fallback), not presented as part of this failure
@@ -549,7 +700,7 @@ describe("unusable answers", () => {
     expect(outcome).toMatchObject({ status: "failed", attempts: 2, inputTokens: 2100, outputTokens: 2148, rawResponse: "{ nope" });
   });
 
-  it("after a switch, the fallback's unusable answer is counted, and the served model recorded", async () => {
+  it("after a switch, the fallback's unusable answer is counted, with the primary's timed-out call at its most", async () => {
     const primary = fakeProvider("anthropic", HAIKU, [timedOut("anthropic")]);
     const fallback = fakeProvider("openai", NANO, [
       new ProviderError("openai", "truncated", "the answer exceeded the 2048 output token cap", undefined, billed(NANO_SNAPSHOT, 40_000, 2048)),
@@ -558,11 +709,12 @@ describe("unusable answers", () => {
 
     expect(outcome).toMatchObject({
       status: "failed",
-      provider: "openai",
-      model: NANO_SNAPSHOT,
+      provider: "anthropic",
+      model: HAIKU,
       attempts: 2,
-      inputTokens: 40_000,
-      outputTokens: 2048,
+      inputTokens: FAKE_COUNT + 40_000,
+      outputTokens: MAX_OUTPUT_TOKENS + 2048,
+      costEstimated: true,
     });
     if (outcome.status === "failed") {
       expect(outcome.error).toBe(
@@ -573,7 +725,7 @@ describe("unusable answers", () => {
 });
 
 describe("bounds", () => {
-  it("over every combination of answers, a run makes at most three calls, switches only before an answer and counts every token against one model", async () => {
+  it("over every combination of answers, a run makes at most three calls, switches only before an answer and counts every call that may have been billed", async () => {
     let runs = 0;
     let longest = 0;
     for (const withFallback of [true, false]) {
@@ -599,17 +751,31 @@ describe("bounds", () => {
         }
         if (!withFallback) expect(calls.every((c) => c.provider === "anthropic"), label).toBe(true);
 
-        // every billed call is counted, valid, invalid or unusable, and all
-        // of them come from one provider, whose served model is recorded
-        expect(outcome.inputTokens, label).toBe(calls.reduce((sum, c) => sum + c.inputTokens, 0));
-        expect(outcome.outputTokens, label).toBe(calls.reduce((sum, c) => sum + c.outputTokens, 0));
-        const billedBy = new Set(calls.filter((c) => c.inputTokens > 0).map((c) => c.provider));
-        expect(billedBy.size, label).toBeLessThanOrEqual(1);
-        for (const name of billedBy) {
+        // Every billed call is counted, valid, invalid or unusable, as the
+        // provider reported it; a call that timed out counts at its
+        // measured input (the scripted count is 1000 + its index) plus the
+        // output cap; a 5xx or 4xx counts nothing.
+        const charged = calls.map((c, i) =>
+          c.step === "timeout" ? { input: 1000 + i, output: MAX_OUTPUT_TOKENS } : { input: c.inputTokens, output: c.outputTokens },
+        );
+        expect(outcome.inputTokens, label).toBe(charged.reduce((sum, c) => sum + c.input, 0));
+        expect(outcome.outputTokens, label).toBe(charged.reduce((sum, c) => sum + c.output, 0));
+        const timedOut = calls.some((c) => c.step === "timeout");
+        expect(outcome.costEstimated, label).toBe(timedOut);
+        const chargedBy = new Set(calls.filter((_, i) => charged[i].input > 0).map((c) => c.provider));
+        if (chargedBy.size === 0) {
+          // nothing counted: the provider last called
+          expect(outcome.provider, label).toBe(calls[calls.length - 1].provider);
+        } else if (chargedBy.size === 1) {
+          const [name] = chargedBy;
           expect(outcome.provider, label).toBe(name);
-          expect(outcome.model, label).toBe(SERVED[name]);
+          expect([SERVED[name], name === "anthropic" ? HAIKU : NANO], label).toContain(outcome.model);
+        } else {
+          // tokens from two models only when the primary's first call got
+          // no answer and the fallback took over: all at the dearer's rates
+          expect(steps[0], label).toBe("timeout");
+          expect(outcome, label).toMatchObject({ provider: "anthropic", model: HAIKU, costEstimated: true });
         }
-        expect(outcome.provider, label).toBe(calls[calls.length - 1].provider);
 
         // a run succeeds exactly when its last call answered validly
         const last = calls[calls.length - 1];

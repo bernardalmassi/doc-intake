@@ -133,7 +133,7 @@ describe("validateExtraction is strict about shape and format", () => {
 });
 
 describe("toCloseParams: the last line before Postgres", () => {
-  const usage = { provider: "anthropic" as const, model: "claude-haiku-4-5-20251001", attempts: 1, inputTokens: 1, outputTokens: 1, latencyMs: 1 };
+  const usage = { provider: "anthropic" as const, model: "claude-haiku-4-5-20251001", attempts: 1, inputTokens: 1, outputTokens: 1, latencyMs: 1, costEstimated: false };
 
   it("a failed run's error and raw answer are NUL-free, well formed and within their columns", () => {
     const outcome: RunOutcome = {

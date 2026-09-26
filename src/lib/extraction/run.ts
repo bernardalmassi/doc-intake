@@ -21,19 +21,28 @@
 // be measured, or measures over the bound, isn't used. A retry over the
 // bound isn't sent, and the run fails with the invalid answer.
 //
-// Never switching after an answer means every token a run counts comes from
-// one model, the one finish_extraction_run prices the whole run at. It also
-// bounds a run at three calls (primary times out, fallback answers invalid,
-// fallback retried); tests/unit/orchestrator.test.ts checks every
-// combination. The database's bounds on a run, its attempts check and token
-// clamp, allow four.
+// Never switching after an answer bounds a run at three calls (primary
+// gets no answer, fallback answers invalid, fallback retried);
+// tests/unit/orchestrator.test.ts checks every combination. The database's
+// bounds on a run, its attempts check and token clamp, allow four.
 //
 // Every answer's tokens are counted: valid ones, invalid ones that were
 // retried, and unusable ones (a refusal, an answer cut off at the output
 // cap), which arrive as a ProviderError carrying the call's usage, because
-// every answer is billed. A call that gets no answer (a timeout, a 5xx)
-// reports no usage and adds nothing. The cost itself is computed by the
-// database at close from these counts and its price table.
+// every answer is billed. A call that was sent and got no answer back (a
+// timeout, a dropped connection, anything thrown without an HTTP status)
+// may still have been processed and billed, so it counts at the most it
+// could have cost: its measured input and the output cap, at the model it
+// was sent to. A call the provider refused with an HTTP status (a 4xx, a
+// 5xx) was not processed and adds nothing.
+//
+// finish_extraction_run prices a run at one model. When every token comes
+// from one model, that is the model. When a run has tokens from two (a
+// primary that got no answer, then the fallback), all of them are priced at
+// whichever of the two makes them cost the most, and the run is marked as
+// estimated, as it is whenever a call was counted at its maximum. The cost
+// itself is computed by the database at close from these counts and its
+// price table.
 //
 // Each call, fallback, retry and the finish writes one log line of ids,
 // counts and error kinds (src/lib/log.ts). Never a field value, the file
@@ -47,6 +56,7 @@ import {
   inputTokensPerCall,
   MAX_OUTPUT_TOKENS,
   MAX_VALIDATION_RETRIES,
+  priceForModel,
   PRICING,
   type ProviderName,
 } from "./config";
@@ -79,6 +89,11 @@ type Usage = {
   inputTokens: number;
   outputTokens: number;
   latencyMs: number;
+  // the cost the database will compute from these counts is an estimate,
+  // never less than the real one: a call counted at its maximum, or tokens
+  // from two models priced at the dearer's rates. The ledger records it as
+  // kind 'estimate' (finish_extraction_run's p_cost_estimated).
+  costEstimated: boolean;
 };
 
 export type RunOutcome =
@@ -107,19 +122,33 @@ type CallFailure = Pick<LogFields, "error_kind" | "error_name" | "http_status">;
 
 export async function runExtraction(input: RunInput): Promise<RunOutcome> {
   const startedAt = Date.now();
-  const usage: Usage = {
-    provider: null,
-    model: null,
-    attempts: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    latencyMs: 0,
+  // the provider last called and the model it was asked for, recorded if
+  // no call billed anything
+  let attempted: { provider: ProviderName | null; model: string | null } = { provider: null, model: null };
+  let attempts = 0;
+  // the tokens each model billed: under the id the provider reported, or,
+  // for a call that got no answer, the id it was sent to
+  const billed = new Map<string, { provider: ProviderName; inputTokens: number; outputTokens: number }>();
+  // a call counted at its maximum
+  let countedAtMost = false;
+  const bill = (provider: ProviderName, model: string, inputTokens: number, outputTokens: number) => {
+    const entry = billed.get(model) ?? { provider, inputTokens: 0, outputTokens: 0 };
+    entry.inputTokens += inputTokens;
+    entry.outputTokens += outputTokens;
+    billed.set(model, entry);
   };
   const runLog = log.with(input.logContext ?? {});
   // the last call's failure, for the finish line; null once a call succeeds
   let lastFailure: CallFailure | null = null;
   const finish = (ending: Ending): RunOutcome => {
-    const outcome: RunOutcome = { ...usage, latencyMs: Date.now() - startedAt, ...ending };
+    const recorded = recordedUsage(billed, attempted);
+    const outcome: RunOutcome = {
+      ...recorded,
+      attempts,
+      costEstimated: recorded.costEstimated || countedAtMost,
+      latencyMs: Date.now() - startedAt,
+      ...ending,
+    };
     logFinished(runLog, outcome, fallbackUsed, lastFailure);
     return outcome;
   };
@@ -148,7 +177,9 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
 
   // Measures a call's input with the current provider's token counting
   // endpoint. A number that fits the limit, or why the call can't be sent.
-  async function measure(request: ExtractionRequest): Promise<{ ok: true } | { ok: false; error: unknown } | { ok: false; over: number }> {
+  async function measure(
+    request: ExtractionRequest,
+  ): Promise<{ ok: true; tokens: number } | { ok: false; error: unknown } | { ok: false; over: number }> {
     let measured: number;
     try {
       measured = await provider.countInputTokens(request);
@@ -174,7 +205,7 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
       input_tokens: measured,
       input_limit: inputLimit,
     });
-    return { ok: true };
+    return { ok: true, tokens: measured };
   }
 
   // One call, switching to the fallback provider if the current one times
@@ -215,24 +246,19 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
         return { ok: false, error: `${RUN_ERROR_MARKERS.inputNotMeasured}${failure}` };
       }
 
-      usage.attempts += 1;
-      usage.provider = provider.name;
-      // once a provider has answered, keep the model it said served the
-      // tokens counted so far
-      if (!answered) usage.model = provider.model;
+      attempts += 1;
+      attempted = { provider: provider.name, model: provider.model };
       const callStartedAt = Date.now();
       try {
         const response = await provider.extract(request);
         answered = true;
         primaryFailure = null;
-        usage.model = response.model;
-        usage.inputTokens += response.inputTokens;
-        usage.outputTokens += response.outputTokens;
+        bill(provider.name, response.model, response.inputTokens, response.outputTokens);
         lastFailure = null;
         runLog.info("extraction.call_succeeded", {
           provider: provider.name,
           model: response.model,
-          attempt: usage.attempts,
+          attempt: attempts,
           input_tokens: response.inputTokens,
           output_tokens: response.outputTokens,
           latency_ms: Date.now() - callStartedAt,
@@ -240,20 +266,25 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
         return { ok: true, text: response.text };
       } catch (error) {
         // an unusable answer (a refusal, a truncated answer) was billed too
-        const billed = error instanceof ProviderError ? error.usage : undefined;
-        if (billed) {
+        let charged = error instanceof ProviderError ? error.usage : undefined;
+        if (charged) {
           answered = true;
-          usage.model = billed.model;
-          usage.inputTokens += billed.inputTokens;
-          usage.outputTokens += billed.outputTokens;
+        } else if (!(error instanceof ProviderError && error.status !== undefined)) {
+          // Sent, and no answer came back: the provider may have processed
+          // it and billed it, so it counts at the most it could have cost.
+          // An HTTP status means the provider refused it instead.
+          charged = { model: provider.model, inputTokens: measured.tokens, outputTokens: request.maxOutputTokens };
+          countedAtMost = true;
         }
+        if (charged) bill(provider.name, charged.model, charged.inputTokens, charged.outputTokens);
         lastFailure = callFailure(error);
         runLog.warn("extraction.call_failed", {
           provider: provider.name,
-          model: billed?.model ?? provider.model,
-          attempt: usage.attempts,
+          model: charged?.model ?? provider.model,
+          attempt: attempts,
           latency_ms: Date.now() - callStartedAt,
-          ...(billed ? { input_tokens: billed.inputTokens, output_tokens: billed.outputTokens } : {}),
+          ...(charged ? { input_tokens: charged.inputTokens, output_tokens: charged.outputTokens } : {}),
+          ...(charged && !answered ? { cost_estimated: true } : {}),
           ...lastFailure,
         });
         const failure = clip(describeError(error));
@@ -310,6 +341,42 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
   return finish({ status: "succeeded", fields: gated.fields, documentStatus: gated.documentStatus });
 }
 
+// What finish_extraction_run is sent for the tokens the run billed: the
+// one model that billed them, or, with tokens from more than one, all of
+// them at whichever priced model makes them cost the most (the dearest on
+// file if one of them has no price here), marked as an estimate. With none,
+// the provider last called and the model it was asked for, at 0 tokens.
+function recordedUsage(
+  billed: ReadonlyMap<string, { provider: ProviderName; inputTokens: number; outputTokens: number }>,
+  attempted: { provider: ProviderName | null; model: string | null },
+): Pick<Usage, "provider" | "model" | "inputTokens" | "outputTokens" | "costEstimated"> {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  for (const entry of billed.values()) {
+    inputTokens += entry.inputTokens;
+    outputTokens += entry.outputTokens;
+  }
+  const models = [...billed.entries()];
+  if (models.length === 0) return { ...attempted, inputTokens: 0, outputTokens: 0, costEstimated: false };
+  if (models.length === 1) {
+    const [[model, entry]] = models;
+    return { provider: entry.provider, model, inputTokens, outputTokens, costEstimated: false };
+  }
+  let dearest: { model: string; provider: ProviderName; cost: number } | null = null;
+  for (const [model] of models) {
+    let price;
+    try {
+      price = priceForModel(model);
+    } catch {
+      const fallback = dearestModelFor(inputTokens, outputTokens);
+      return { provider: PRICING[fallback].provider, model: fallback, inputTokens, outputTokens, costEstimated: true };
+    }
+    const cost = inputTokens * price.inputUsdPerMillion + outputTokens * price.outputUsdPerMillion;
+    if (dearest === null || cost > dearest.cost) dearest = { model, provider: price.provider, cost };
+  }
+  return { provider: dearest!.provider, model: dearest!.model, inputTokens, outputTokens, costEstimated: true };
+}
+
 function pagesLabel(pages: number): string {
   return pages === 1 ? "1 page" : `${pages} pages`;
 }
@@ -331,6 +398,7 @@ function logFinished(logger: Logger, outcome: RunOutcome, fallbackUsed: boolean,
     output_tokens: outcome.outputTokens,
     latency_ms: outcome.latencyMs,
     fallback_used: fallbackUsed,
+    cost_estimated: outcome.costEstimated,
   };
   if (outcome.status === "succeeded") {
     const bands = { high: 0, medium: 0, low: 0 };
@@ -457,6 +525,7 @@ export function failedCloseAttempts(outcome: RunOutcome, sqlState: string | null
     inputTokens: outcome.inputTokens,
     outputTokens: outcome.outputTokens,
     latencyMs: outcome.latencyMs,
+    costEstimated: outcome.costEstimated,
   };
   const withUsage: RunOutcome = { ...usage, status: "failed", error, rawResponse: null };
   if (usage.model === null && usage.inputTokens === 0 && usage.outputTokens === 0) return [withUsage];
@@ -466,6 +535,7 @@ export function failedCloseAttempts(outcome: RunOutcome, sqlState: string | null
     ...withUsage,
     provider: PRICING[dearest].provider,
     model: dearest,
+    costEstimated: true,
     error: `${RUN_ERROR_MARKERS.costEstimated} the dearest price on file (${identifier(sqlState, "no answer")}; served by ${identifier(usage.model, "no model")}): ${error}`,
   };
   return [withUsage, estimated];

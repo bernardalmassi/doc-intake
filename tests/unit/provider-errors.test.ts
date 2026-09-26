@@ -284,7 +284,17 @@ describe("through the orchestrator, with real SDK errors", () => {
 
     expect(primaryFetch.requests).toHaveLength(1);
     expect(fallback.requests).toHaveLength(1);
-    expect(outcome).toMatchObject({ status: "succeeded", provider: "openai", attempts: 2, inputTokens: 700 });
+    // the timed-out call counts at its measured input (1000 here) and the
+    // output cap, and the run at the dearer model's rates (run.ts)
+    expect(outcome).toMatchObject({
+      status: "succeeded",
+      provider: "anthropic",
+      model: DEFAULT_MODELS.anthropic,
+      attempts: 2,
+      inputTokens: 1000 + 700,
+      outputTokens: 2048 + 60,
+      costEstimated: true,
+    });
   });
 
   it("a real 529 on the primary is answered by the fallback", async () => {
@@ -316,7 +326,17 @@ describe("through the orchestrator, with real SDK errors", () => {
 
     expect(primaryFetch.requests).toHaveLength(1);
     expect(fallbackFetch.requests).toHaveLength(1);
-    expect(outcome).toMatchObject({ status: "failed", provider: "openai", attempts: 2, inputTokens: 0, rawResponse: null });
+    // the primary's timeout counts at its most; the fallback's 502 counts nothing
+    expect(outcome).toMatchObject({
+      status: "failed",
+      provider: "anthropic",
+      model: DEFAULT_MODELS.anthropic,
+      attempts: 2,
+      inputTokens: 1000,
+      outputTokens: 2048,
+      costEstimated: true,
+      rawResponse: null,
+    });
     if (outcome.status === "failed") {
       expect(outcome.error).toBe("anthropic transport: request timed out; fallback openai server 502: 502 Bad gateway");
     }

@@ -238,6 +238,8 @@ const LOG_FIELDS = {
   mime_type: oneOf(SUPPORTED_MIME_TYPES),
   detected_mime_type: oneOf(SUPPORTED_MIME_TYPES),
   fallback_used: flag,
+  // the run's cost is an estimate that errs high (run.ts)
+  cost_estimated: flag,
 
   // errors: what kind, which class, which code; never the message
   error_kind: oneOf(keysOf(ERROR_KINDS)),

@@ -16,7 +16,7 @@
 import { describe, expect, it } from "vitest";
 import { buildPdf } from "../../evals/pdf";
 import { classifyRunError, isCostEstimated } from "@/lib/errors";
-import { dearestModelFor, EXTRACTION_LIMITS, inputTokensPerCall, PRICING } from "@/lib/extraction/config";
+import { dearestModelFor, EXTRACTION_LIMITS, inputTokensPerCall, MAX_OUTPUT_TOKENS, PRICING } from "@/lib/extraction/config";
 import { deliver, preflight, type ClaimedRun, type DownloadedFile, type Finish, type ProviderPair } from "@/lib/extraction/delivery";
 import { ProviderError } from "@/lib/extraction/providers/types";
 import { runExtraction, toFinishParams } from "@/lib/extraction/run";
@@ -161,6 +161,27 @@ describe("the per-call input limit", () => {
     expect(dense.requests).toHaveLength(0);
     expect(result.outcome.status === "failed" && classifyRunError(result.outcome.error)).toBe("extraction.too_dense");
     expect(refused.calls[0]).toMatchObject({ p_status: "failed", p_provider: null, p_model: null, p_attempts: 0, p_input_tokens: 0, p_output_tokens: 0 });
+  });
+});
+
+describe("a call that got no answer", () => {
+  it("is finished at its measured input plus the output cap, marked estimated, and stays so if the finish is refused", async () => {
+    const primary = fakeProvider("anthropic", "claude-sonnet-5", [new ProviderError("anthropic", "transport", "request timed out")], [4321]);
+    const { calls, finish } = finisher([{ code: "22023" }]);
+    await deliver({ run: RUN, download: file(onePage), providers: () => ({ primary, fallback: null }), finish, log });
+
+    const expected = {
+      p_status: "failed",
+      p_provider: "anthropic",
+      p_model: "claude-sonnet-5",
+      p_attempts: 1,
+      p_input_tokens: 4321,
+      p_output_tokens: MAX_OUTPUT_TOKENS,
+      p_cost_estimated: true,
+    };
+    expect(calls[0]).toMatchObject(expected);
+    // the refused finish is repeated with the same usage, still an estimate
+    expect(calls[1]).toMatchObject(expected);
   });
 });
 

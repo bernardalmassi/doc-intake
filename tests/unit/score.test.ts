@@ -98,6 +98,7 @@ describe("scoring a run", () => {
       inputTokens: 0,
       outputTokens: 0,
       latencyMs: 0,
+      costEstimated: false,
     };
     const scored = scoreRun(fixture, "openai", outcome);
     expect(scored).toHaveLength(FIELD_NAMES.length);

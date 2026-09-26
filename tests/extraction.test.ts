@@ -39,7 +39,7 @@ import { FIXTURES } from "../evals/fixtures";
 import { committedPdf, loadRecording } from "../evals/harness";
 import { replayProvider } from "../evals/recording";
 import { classifyRunError, isCostEstimated } from "@/lib/errors";
-import { computeCostUsd, dearestModelFor, EXTRACTION_LIMITS, PRICING } from "@/lib/extraction/config";
+import { computeCostUsd, dearestModelFor, EXTRACTION_LIMITS, MAX_OUTPUT_TOKENS, PRICING } from "@/lib/extraction/config";
 import type { ProviderPair } from "@/lib/extraction/delivery";
 import { countPages } from "@/lib/extraction/pages";
 import { ProviderError, type ExtractionProvider } from "@/lib/extraction/providers/types";
@@ -524,16 +524,24 @@ describe("runs the worker delivers", () => {
     expect(await readFields(x(), docF.id)).toEqual([]);
   });
 
-  it("a timeout falls back once: two calls, recorded as the fallback's", async () => {
+  it("a timeout falls back once: two calls, the timed-out one charged its measured input and the output cap", async () => {
     const id = await mustEnqueue(x(), docF.id);
-    const primary = fakeProvider("anthropic", "claude-sonnet-5", [new ProviderError("anthropic", "transport", "request timed out")]);
+    // both at gpt-5-nano's price, to keep the suite under its budget: a
+    // timed-out call counts at its most (run.ts), 2 048 tokens out
+    const primary = fakeProvider("openai", NANO, [new ProviderError("openai", "transport", "request timed out")], [1200]);
     const fallback = valid();
     await deliver(id, { primary, fallback });
     expect(primary.requests).toHaveLength(1);
     expect(fallback.requests).toHaveLength(1);
     const run = await readRun(x(), id);
-    expect(run).toMatchObject({ status: "succeeded", provider: "openai", model: NANO_SNAPSHOT, attempts: 2 });
-    expect(Number(run?.cost_usd)).toBe(computeCostUsd(NANO, 1000, 100));
+    expect(run).toMatchObject({
+      status: "succeeded",
+      provider: "openai",
+      attempts: 2,
+      input_tokens: 1200 + 1000,
+      output_tokens: MAX_OUTPUT_TOKENS + 100,
+    });
+    expect(Number(run?.cost_usd)).toBe(computeCostUsd(NANO, 1200 + 1000, MAX_OUTPUT_TOKENS + 100));
     expect((await readDocument(x(), docF.id))?.status).toBe("extracted");
   });
 

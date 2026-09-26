@@ -247,6 +247,7 @@ const VALID: { [K in LogFieldName]-?: NonNullable<LogFields[K]> } = {
   mime_type: "application/pdf",
   detected_mime_type: "image/png",
   fallback_used: true,
+  cost_estimated: true,
   error_kind: "transport",
   error_name: "APIConnectionTimeoutError",
   error_code: "primary_key_missing",

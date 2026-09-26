@@ -26,7 +26,7 @@
 // One log line per step, under the run's ids (src/lib/log.ts).
 
 import { failureFields } from "@/app/log-fields";
-import { classifyRunError, isCostEstimated, RUN_ERROR_MARKERS } from "../errors";
+import { classifyRunError, RUN_ERROR_MARKERS } from "../errors";
 import type { Logger, LogFields } from "../log";
 import { EXTRACTION_LIMITS } from "./config";
 import { countPages } from "./pages";
@@ -143,6 +143,7 @@ export async function deliver(input: {
     inputTokens: 0,
     outputTokens: 0,
     latencyMs: Date.now() - startedAt,
+    costEstimated: false,
   });
 
   let outcome: RunOutcome;
@@ -189,7 +190,7 @@ export async function deliver(input: {
     }
   };
 
-  const refused = await finish(outcome, false);
+  const refused = await finish(outcome, outcome.costEstimated);
   if (!refused) {
     if (outcome.status === "failed") {
       runLog.warn("worker.finished", { run_status: "failed", error_code: classifyRunError(outcome.error), ...usage });
@@ -214,8 +215,7 @@ export async function deliver(input: {
   });
   for (const [index, attempt] of failedCloseAttempts(outcome, refusal.db_code ?? null).entries()) {
     const retry = index + 1;
-    const costEstimated = attempt.status === "failed" && isCostEstimated(attempt.error);
-    const again = await finish(attempt, costEstimated);
+    const again = await finish(attempt, attempt.costEstimated);
     if (!again) {
       runLog.warn("worker.finish_retried", {
         retry,
