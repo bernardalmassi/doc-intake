@@ -9,7 +9,23 @@
 --
 -- Refuses if the job is already paused: a killed test:db run can leave it
 -- so, and then someone has to look before anything turns it back on.
+--
+-- Refuses, first, on any project whose Vault holds extraction_worker_url:
+-- only the app project may hold it (docs/worker-design.md, D2), so that is
+-- the app project, or one set up like it, and nothing here may pause its
+-- sweep or commit fixtures there. scripts/test-db.mjs runs the guard, the
+-- block between the markers, against a pair made inside a rolled-back
+-- transaction before every pause, and fails unless it refuses.
 begin;
+
+-- guard: begin
+do $t$
+begin
+  if exists (select 1 from vault.secrets s where s.name = 'extraction_worker_url') then
+    raise exception 'this project''s Vault holds extraction_worker_url: it is the app project, or set up like it, and the two-session tests never run there';
+  end if;
+end $t$;
+-- guard: end
 
 do $t$
 declare

@@ -22,8 +22,9 @@
 // active again and no tick started meanwhile.
 
 import { spawn, spawnSync } from "node:child_process";
-import { readdirSync } from "node:fs";
-import { join } from "node:path";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { supabaseTestTarget } from "./supabase-test-target.mjs";
 
@@ -68,7 +69,8 @@ const DEBUG_LINE = /^(\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2} HTTP |Using |Supabas
 // call has ended without sending it, with false).
 function query(file, onSent) {
   return new Promise((resolve) => {
-    const args = ["db", "query", "--linked", "--project-ref", target.ref, "--output-format", "json", "-f", `${SESSIONS}/${file}`];
+    const path = isAbsolute(file) ? file : `${SESSIONS}/${file}`;
+    const args = ["db", "query", "--linked", "--project-ref", target.ref, "--output-format", "json", "-f", path];
     if (onSent) args.push("--debug");
     const child = spawn(supabase, args, { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
@@ -237,6 +239,33 @@ async function resumeSweep(pausedAt) {
   return false;
 }
 
+// sweep-pause.sql's guard must refuse a project whose Vault holds the
+// worker's URL: run it, the block between its markers, after making such a
+// pair inside a transaction that is rolled back. It must fail with the
+// guard's refusal; nothing is paused or committed either way.
+const pauseSql = readFileSync(join(root, SESSIONS, "sweep-pause.sql"), "utf8");
+const guard = /^-- guard: begin\n([\s\S]*?)^-- guard: end$/m.exec(pauseSql)?.[1];
+if (!guard) {
+  console.error("sweep-pause.sql has no guard between its markers");
+  process.exit(1);
+}
+const scratch = mkdtempSync(join(tmpdir(), "test-db-"));
+try {
+  const probe = join(scratch, "pause-guard.sql");
+  writeFileSync(
+    probe,
+    `begin;\nselect vault.create_secret('https://worker.invalid/api/extraction-worker', 'extraction_worker_url');\n${guard}\nrollback;\n`,
+  );
+  const refused = await query(probe);
+  if (refused.status === 0 || !/holds extraction_worker_url/.test(refused.text)) {
+    console.error(`  FAILED: sweep-pause.sql's guard did not refuse a project whose Vault holds extraction_worker_url: ${refused.text.slice(0, 500)}`);
+    process.exit(1);
+  }
+  console.error(`test:db ${SESSIONS}: sweep-pause.sql refuses a project whose Vault holds extraction_worker_url`);
+} finally {
+  rmSync(scratch, { recursive: true, force: true });
+}
+
 // The live sweep stays off the fixtures while the cases run
 // (sweep-pause.sql says why), and is turned back on whatever happens.
 console.error(`test:db ${SESSIONS}: pausing the extraction-sweep cron job on project ${target.ref}`);
@@ -246,8 +275,9 @@ const paused = pause.rows?.[0]?.active === false;
 if (!paused) {
   failed = true;
   console.error(`  FAILED: ${pause.rows ? `sweep-pause.sql did not pause the job: ${JSON.stringify(pause.rows)}` : failure(pause)}`);
-  // it was paused before this run: leave it for someone to look at
-  if (/already paused/.test(pause.text)) process.exit(1);
+  // it was paused before this run, or this is a project with the worker's
+  // URL (the app's): leave the job alone, don't run sweep-resume.sql
+  if (/already paused|holds extraction_worker_url/.test(pause.text)) process.exit(1);
 }
 try {
   if (paused) for (const testCase of CASES) if (!(await runCase(testCase))) failed = true;
