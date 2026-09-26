@@ -14,7 +14,9 @@
 // No call is sent until its input has been measured with the provider's
 // token counting endpoint and fits inputTokensPerCall for the document's
 // pages (config.ts), the per-call input the run's estimate assumes while it
-// is in flight (private.abandoned_estimate). A first call over it sends
+// is in flight (private.abandoned_estimate), and until the run's measured
+// input with it fits maxInputTokensPerRun, the estimate's cap on a whole
+// run (which binds from 88 pages). A first call over it sends
 // nothing and fails the run as too dense, at 0 USD. A count that fails
 // sends nothing either: on the primary's first call a timeout or 5xx
 // switches to the fallback like a failed call, and a fallback that can't
@@ -53,6 +55,7 @@ import { log, type Logger, type LogFields } from "../log";
 import { redact } from "../redact";
 import {
   dearestModelFor,
+  EXTRACTION_LIMITS,
   inputTokensPerCall,
   MAX_OUTPUT_TOKENS,
   MAX_VALIDATION_RETRIES,
@@ -172,14 +175,17 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
   // fallback fails too the error says why both did; cleared once an answer
   // arrives, so a later failed retry isn't reported as a double failure
   let primaryFailure: string | null = null;
-  // what the estimate assumes one call reads
+  // what the estimate assumes one call reads, and a whole run
   const inputLimit = inputTokensPerCall(input.pages);
+  const runInputLimit = EXTRACTION_LIMITS.maxInputTokensPerRun;
+  // the measured input of every call sent so far
+  let inputSent = 0;
 
   // Measures a call's input with the current provider's token counting
   // endpoint. A number that fits the limit, or why the call can't be sent.
   async function measure(
     request: ExtractionRequest,
-  ): Promise<{ ok: true; tokens: number } | { ok: false; error: unknown } | { ok: false; over: number }> {
+  ): Promise<{ ok: true; tokens: number } | { ok: false; error: unknown } | { ok: false; over: number; why: string }> {
     let measured: number;
     try {
       measured = await provider.countInputTokens(request);
@@ -188,7 +194,15 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
       runLog.warn("extraction.count_failed", { provider: provider.name, model: provider.model, ...lastFailure });
       return { ok: false, error };
     }
-    if (measured > inputLimit) {
+    // the call's own limit, then the run's: at 88 pages or more three calls
+    // at the call's limit would read more than the run's
+    const why =
+      measured > inputLimit
+        ? `its input (${measured} tokens) is over the ${inputLimit} a call may read for ${pagesLabel(input.pages)}`
+        : inputSent + measured > runInputLimit
+          ? `its input (${measured} tokens) would take the run's to ${inputSent + measured}, over the ${runInputLimit} a run may read`
+          : null;
+    if (why) {
       lastFailure = { error_kind: "over_limit" };
       runLog.warn("extraction.call_not_sent", {
         provider: provider.name,
@@ -197,7 +211,7 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
         input_limit: inputLimit,
         error_code: "extraction.too_dense",
       });
-      return { ok: false, over: measured };
+      return { ok: false, over: measured, why };
     }
     runLog.info("extraction.input_counted", {
       provider: provider.name,
@@ -216,10 +230,7 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
       const measured = await measure(request);
       if (!measured.ok) {
         // nothing was sent, so nothing was billed
-        const why =
-          "over" in measured
-            ? `its input (${measured.over} tokens) is over the ${inputLimit} a call may read for ${pagesLabel(input.pages)}`
-            : `its input could not be measured (${clip(describeError(measured.error))})`;
+        const why = "over" in measured ? measured.why : `its input could not be measured (${clip(describeError(measured.error))})`;
         if (primaryFailure) {
           // the fallback, after the primary's first call failed
           return { ok: false, error: `${primaryFailure}${RUN_ERROR_MARKERS.fallbackNotUsed}${why}` };
@@ -247,6 +258,7 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
       }
 
       attempts += 1;
+      inputSent += measured.tokens;
       attempted = { provider: provider.name, model: provider.model };
       const callStartedAt = Date.now();
       try {
