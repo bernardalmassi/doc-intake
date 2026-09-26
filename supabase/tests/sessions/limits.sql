@@ -11,11 +11,17 @@
 -- 53400. Counted in neither sum, the check passes. The row is never
 -- committed: the subtransaction ends in an exception either way.
 --
+-- It reads nothing from extraction_runs before the check, since F's table
+-- lock would make that read wait and F would commit before the check began:
+-- the only thing that can wait on F is the check's read of the runs. So
+-- that F committed while the check ran is read from the ledger, which F's
+-- lock doesn't block: the organization's ledger rows before the check and
+-- after it, F's finish being the one in between.
+--
 -- It holds (20260925, 2) from its start until F's transaction has ended,
--- and takes (20260925, 3) when it is done. It reports the run's status
--- before and after the check (running, then succeeded: F committed while
--- the check ran), what the check said, and whether its ledger row was left
--- behind (it must not be).
+-- and takes (20260925, 3) when it is done. It reports the ledger rows
+-- before and after, the run's status after the check, what the check said,
+-- and whether its own ledger row was left behind (it must not be).
 select pg_advisory_lock(20260925, 2);
 commit;
 
@@ -35,7 +41,8 @@ end $t$;
 commit;
 
 create temp table report (
-  run_before_check text,
+  ledger_before    integer,
+  ledger_after     integer,
   run_after_check  text,
   result           text,
   check_started    timestamptz,
@@ -49,7 +56,7 @@ declare
   v_limits   public.extraction_limits;
   v_existing numeric;
   v_charge   numeric;
-  v_before   text;
+  v_rows     integer;
   v_result   text;
   v_started  timestamptz;
 begin
@@ -58,10 +65,8 @@ begin
   select c.cost_usd into v_charge from private.extraction_charge('gpt-5-nano', 'openai', 10, 1) c;
   -- what the organization's ledger already holds this month (earlier runs of
   -- these cases leave their charges, as every ledger row stays)
-  select coalesce(sum(s.cost_usd), 0) into v_existing from private.extraction_spend s
+  select coalesce(sum(s.cost_usd), 0), count(*) into v_existing, v_rows from private.extraction_spend s
   where s.tenant_id = v_tenant and s.created_at >= date_trunc('month', now(), 'UTC');
-  select r.status::text into v_before from public.extraction_runs r
-  where r.document_id = 'f3f3f3f3-0000-4000-8000-000000000001';
 
   v_started := clock_timestamp();
   begin
@@ -76,7 +81,9 @@ begin
   end;
 
   insert into report values (
-    v_before,
+    v_rows,
+    (select count(*) from private.extraction_spend s
+     where s.tenant_id = v_tenant and s.created_at >= date_trunc('month', now(), 'UTC')),
     (select r.status::text from public.extraction_runs r where r.document_id = 'f3f3f3f3-0000-4000-8000-000000000001'),
     v_result,
     v_started,
@@ -102,7 +109,7 @@ commit;
 select pg_advisory_unlock_all();
 commit;
 
-select run_before_check, run_after_check, result,
+select ledger_before, ledger_after, run_after_check, result,
        round(extract(epoch from check_returned - check_started) * 1000) as check_ms,
        (select count(*) from private.extraction_spend s
         where s.tenant_id = 'f2f2f2f2-0000-4000-8000-000000000001' and s.kind = 'charge'

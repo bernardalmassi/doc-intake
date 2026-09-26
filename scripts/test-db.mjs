@@ -139,7 +139,10 @@ const CASES = [
     finish: "finish-table.sql",
     session: "limits.sql",
     expect: (r) => [
-      [r.run_before_check === "running" && r.run_after_check === "succeeded", "the finish did not commit while the check ran"],
+      [
+        Number(r.ledger_after) === Number(r.ledger_before) + 1 && r.run_after_check === "succeeded",
+        "the finish did not commit while the check ran (the organization's ledger gained no row during it)",
+      ],
       [
         typeof r.result === "string" && r.result.startsWith("refused: this organization has reached its monthly extraction spend ceiling"),
         "the check did not count the finished run (it read the ledger and the runs in flight in two snapshots)",
