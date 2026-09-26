@@ -52,7 +52,7 @@ export const UPLOAD_LIMIT_TEXT = `PDF, PNG or JPEG, up to 10${NBSP}MB and ${EXTR
 // What the browser refuses before anything is sent. Type and size are
 // checkUploadFile's rules (the bucket's, mirrored in src/lib/errors.ts) and
 // use its words; an empty file and several files at once are this form's own.
-export type RejectReason = "type" | "size" | "empty" | "several" | "pages" | "unreadable";
+export type RejectReason = "type" | "size" | "empty" | "several" | "pages" | "unreadable" | "no_pages";
 
 export function describeRejection(
   reason: RejectReason,
@@ -72,6 +72,8 @@ export function describeRejection(
       return `${name} has ${file?.pages ?? "too many"} pages. ${userFacingError("document.too_many_pages").message}`;
     case "unreadable":
       return `${name} can't be uploaded. ${userFacingError("document.pages_unreadable").message}`;
+    case "no_pages":
+      return `${name} can't be uploaded. ${userFacingError("document.no_pages").message}`;
   }
 }
 

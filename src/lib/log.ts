@@ -71,12 +71,11 @@ export const LOG_EVENTS = [
   "extraction.fallback",
   "extraction.validation_retry",
   "extraction.run_finished",
-  // src/app/app/extract-action.ts: the download and page count, then the
-  // enqueue
+  // src/app/app/extract-action.ts: the download and its check, then the
+  // enqueue; extraction/delivery.ts: the worker's download timing out
   "extraction.enqueued",
   "extraction.enqueue_refused",
   "extraction.download_failed",
-  "extraction.type_mismatch",
   // src/app/api/extraction-worker/route.ts and extraction/worker.ts,
   // extraction/delivery.ts: one line per step of a delivery
   "worker.unauthorized",

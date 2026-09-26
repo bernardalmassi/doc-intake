@@ -109,8 +109,8 @@ export function UploadForm({
       setState({ kind: "rejected", reason, file: info });
       return;
     }
-    // A PDF over the page limit, or one whose pages can't be counted, would
-    // be refused at Extract; say so now. The Extract action checks again on
+    // A PDF over the page limit, with no pages, or whose pages can't be
+    // counted would be refused at Extract; say so now. The Extract action checks again on
     // the server, since this check can be skipped.
     if (picked.type === "application/pdf") {
       const pages = await countPdfPagesInBrowser(picked);
@@ -119,7 +119,9 @@ export function UploadForm({
       if (tooMany) {
         file.current = null;
         focusAfterRender.current = "choose";
-        setState({ kind: "rejected", reason: tooMany === "document.too_many_pages" ? "pages" : "unreadable", file: { ...info, pages } });
+        const reason =
+          tooMany === "document.too_many_pages" ? "pages" : tooMany === "document.no_pages" ? "no_pages" : "unreadable";
+        setState({ kind: "rejected", reason, file: { ...info, pages } });
         return;
       }
     }

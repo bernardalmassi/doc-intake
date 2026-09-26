@@ -236,6 +236,10 @@ const CATALOG = {
       "We couldn't count this PDF's pages, so it can't be extracted. Save it again as a standard PDF (for example with Print to PDF) and upload that.",
     retryable: false,
   },
+  "document.no_pages": {
+    message: "This PDF has no pages, so there is nothing to extract. Upload the complete file.",
+    retryable: false,
+  },
 
   // Uploading and downloading
   "upload.no_file": { message: "Choose a file to upload.", retryable: false },
@@ -441,6 +445,7 @@ export const RUN_ERROR_MARKERS = {
   // the worker's preflight (extraction/delivery.ts), after the type check
   pagesUnreadable: "pages unreadable: ",
   tooManyPages: "too many pages: ",
+  noPages: "no pages: ",
   pageCountMismatch: "page count mismatch: ",
   invalidAfterRetry: "response failed validation after",
   retryFailed: "retry after invalid response (",
@@ -532,12 +537,13 @@ export function checkUploadFile(file: { type: string; size: number } | null | un
 }
 
 // A document may have at most EXTRACTION_LIMITS.maxPagesPerDocument pages,
-// and a PDF's pages must be countable (src/lib/extraction/page-count.ts),
+// and at least one, and a PDF's pages must be countable (src/lib/extraction/page-count.ts),
 // so that no run can read more than the stale-run reaper's estimate
 // assumes. Images are one page. `pages` is the count, null when it couldn't
 // be read.
 export function checkPageCount(pages: number | null): ErrorCode | null {
   if (pages === null) return "document.pages_unreadable";
+  if (pages < 1) return "document.no_pages";
   if (pages > EXTRACTION_LIMITS.maxPagesPerDocument) return "document.too_many_pages";
   return null;
 }
@@ -1049,6 +1055,7 @@ function runCode(error: string | null | undefined): ErrorCode {
   if (error.startsWith(RUN_ERROR_MARKERS.typeMismatch)) return "extraction.file_type_mismatch";
   if (error.startsWith(RUN_ERROR_MARKERS.pagesUnreadable)) return "document.pages_unreadable";
   if (error.startsWith(RUN_ERROR_MARKERS.tooManyPages)) return "document.too_many_pages";
+  if (error.startsWith(RUN_ERROR_MARKERS.noPages)) return "document.no_pages";
   if (error.startsWith(RUN_ERROR_MARKERS.pageCountMismatch)) return "extraction.page_count_mismatch";
   if (error.startsWith(RUN_ERROR_MARKERS.tooDense)) return "extraction.too_dense";
   // The validation error is built from the validator's own wording, but a

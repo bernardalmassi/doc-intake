@@ -89,6 +89,17 @@ describe("the preflight", () => {
     ["no declared type", { ok: true, bytes: onePage }, { ...RUN, mimeType: null }, "extraction.file_type_mismatch"],
     ["a PDF whose pages can't be counted", { ok: true, bytes: pdfBytes("no page tree") }, RUN, "document.pages_unreadable"],
     [
+      "a PDF with no pages",
+      {
+        ok: true,
+        bytes: new TextEncoder().encode(
+          "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\ntrailer << /Root 1 0 R >>\n%%EOF\n",
+        ),
+      },
+      RUN,
+      "document.no_pages",
+    ],
+    [
       "more pages than the limit",
       { ok: true, bytes: pages(EXTRACTION_LIMITS.maxPagesPerDocument + 1) },
       { ...RUN, pageCount: EXTRACTION_LIMITS.maxPagesPerDocument },

@@ -9,7 +9,7 @@
 //   - the bytes must download (with the worker's key) within
 //     DOWNLOAD_TIMEOUT_MS; the download is aborted then
 //   - their magic bytes must match the row's type (sniff.ts)
-//   - their pages must be countable, at most maxPagesPerDocument, and the
+//   - their pages must be countable, at least one, at most maxPagesPerDocument, and the
 //     count the run was enqueued with. The enqueue trusts the count the
 //     Extract action sends; this recount means a forged count never reaches
 //     a model, so no run can cost more than the estimate it held against
@@ -140,6 +140,13 @@ export async function preflight(
       ok: false,
       error: `${RUN_ERROR_MARKERS.pagesUnreadable}the file's pages could not be counted`,
       log: { error_code: "document.pages_unreadable", ...counted },
+    };
+  }
+  if (pages < 1) {
+    return {
+      ok: false,
+      error: `${RUN_ERROR_MARKERS.noPages}the file has none`,
+      log: { error_code: "document.no_pages", ...counted },
     };
   }
   if (pages > max) {
