@@ -1,12 +1,117 @@
 "use client";
 
-import { createContext, useContext, useId, useState, useSyncExternalStore } from "react";
+import { createContext, useCallback, useContext, useId, useMemo, useState, useSyncExternalStore } from "react";
+import { DOCUMENT_STATES, type DocumentState } from "./document-state";
 import { ChevronRightIcon } from "./icons";
+import { STATE_GLYPHS, STATE_WORDS, StateGlyph, StateMark } from "./state-glyph";
 
 // The register's moving parts, and only those: whether a line is open,
-// whether its run history is, and the running clock. Everything they show
-// is rendered on the server and passed in, so no field label, schema or
-// catalog text is sent to the browser a second time.
+// whether its run history is, which lines have an Extract request in
+// flight, and the running clock. Everything they show is rendered on the
+// server and passed in, so no field label, schema or catalog text is sent
+// to the browser a second time.
+
+// ------------------------------------------------------ extract in flight
+
+// The state a line shows while its Extract request is in flight. The
+// request runs the whole extraction today, so the document is running;
+// once Extract only enqueues a run (the worker), this is queued.
+export const EXTRACT_REQUESTED: DocumentState = "running";
+
+// Which documents have an Extract request in flight. The page's data
+// still holds each one's state from before the click, so without this its
+// line would say Ready or Failed beside "Extracting…". The line's mark and
+// detail and the key's counts read it; the refreshed data that comes back
+// with the answer takes over.
+const ExtractingContext = createContext<ReadonlySet<string>>(new Set());
+const SetExtractingContext = createContext<((id: string, on: boolean) => void) | null>(null);
+
+export function Register({ children }: { children: React.ReactNode }) {
+  const [extracting, setIds] = useState<ReadonlySet<string>>(() => new Set());
+  const setExtracting = useCallback((id: string, on: boolean) => {
+    setIds((ids) => {
+      if (ids.has(id) === on) return ids;
+      const next = new Set(ids);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+  return (
+    <SetExtractingContext value={setExtracting}>
+      <ExtractingContext value={extracting}>{children}</ExtractingContext>
+    </SetExtractingContext>
+  );
+}
+
+// For DocumentActions: stable, and null outside a register.
+export function useSetExtracting() {
+  return useContext(SetExtractingContext);
+}
+
+// A line's state mark: the data's, or EXTRACT_REQUESTED while the line's
+// Extract request is in flight.
+export function LineStateMark({
+  id,
+  state,
+  count,
+  className,
+}: {
+  id: string;
+  state: DocumentState;
+  count?: number;
+  className?: string;
+}) {
+  const requested = useContext(ExtractingContext).has(id);
+  return (
+    <StateMark state={requested ? EXTRACT_REQUESTED : state} count={requested ? undefined : count} className={className} />
+  );
+}
+
+// A line's one sentence, or what happens next while its Extract request
+// is in flight: the sentence the Extract button's notice would otherwise
+// print under it.
+export function LineDetail({ id, children }: { id: string; children: React.ReactNode }) {
+  const requested = useContext(ExtractingContext).has(id);
+  return requested ? <p>Extracting. This can take up to a minute.</p> : children;
+}
+
+// The register's key: every state's mark and word, and how many lines are
+// in it, zeros included, counting a line with an Extract in flight as
+// EXTRACT_REQUESTED, as its line reads. Needs review's square is filled
+// only when a line needs review: at 0 it is the same square in outline, so
+// the key still teaches the mark without the page's one call for
+// attention pointing at nothing. On a narrow screen there is no margin for
+// the key, and the lines teach it.
+export function RegisterKey({ lines }: { lines: { id: string; state: DocumentState }[] }) {
+  const extracting = useContext(ExtractingContext);
+  const counts = useMemo(() => {
+    const map = new Map<DocumentState, number>();
+    for (const { id, state } of lines) {
+      const shown = extracting.has(id) ? EXTRACT_REQUESTED : state;
+      map.set(shown, (map.get(shown) ?? 0) + 1);
+    }
+    return map;
+  }, [lines, extracting]);
+
+  return (
+    <ul aria-label="Documents by state" className="mt-4 hidden max-w-56 lg:block">
+      {DOCUMENT_STATES.map((state) => {
+        const count = counts.get(state) ?? 0;
+        const glyph = state === "needs-review" && count === 0 ? "signal-outline" : STATE_GLYPHS[state];
+        return (
+          <li key={state} className="label flex h-7 items-center gap-2">
+            <StateGlyph glyph={glyph} />
+            <span className="flex-1">{STATE_WORDS[state]}</span>
+            <span>{count}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+// ---------------------------------------------------------------- lines
 
 const LineContext = createContext<{ open: boolean; setOpen: (open: boolean) => void } | null>(null);
 

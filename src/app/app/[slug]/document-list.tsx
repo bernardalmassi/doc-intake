@@ -2,14 +2,14 @@ import { errorInkRuleClass } from "@/app/ui";
 import { EXTRACTION_LIMITS } from "@/lib/extraction/config";
 import { userFacingError } from "@/lib/errors";
 import { DocumentActions, type ExtractMode } from "./document-actions";
-import { DOCUMENT_STATES, type DocumentState, failedExit, type StatedEntry, stateOf } from "./document-state";
+import { type DocumentState, failedExit, type StatedEntry, stateOf } from "./document-state";
 import { ExtractionPanel } from "./extraction-panel";
 import { extractReads, fieldSummary } from "./fields";
 import { fileKind, formatBytes, formatClock, formatUtc } from "./format";
-import { Elapsed, LedgerLine, RunsToggle } from "./ledger";
+import { Elapsed, LedgerLine, LineDetail, LineStateMark, Register, RegisterKey, RunsToggle } from "./ledger";
 import { DOCUMENTS_HEADING_ID } from "./messages";
 import { RunHistory, runHistoryMeta } from "./run-history";
-import { STATE_GLYPHS, STATE_WORDS, StateGlyph, StateMark } from "./state-glyph";
+import { StateMark } from "./state-glyph";
 import type { DocumentEntry } from "./types";
 
 type ListProps = {
@@ -31,58 +31,40 @@ export function DocumentList({ entries, slug, canManage }: ListProps) {
   const stated = entries.map((entry) => ({ entry, state: stateOf(entry) }));
   // What Extract reads is said once, beside the first Extract on the page.
   const firstReady = stated.find(({ entry, state }) => state === "ready" && entry.document.status !== "uploading");
-  const counts = new Map<DocumentState, number>();
-  for (const { state } of stated) counts.set(state, (counts.get(state) ?? 0) + 1);
 
   return (
-    <div className="grid grid-cols-1 gap-x-8 lg:grid-cols-12">
-      <div className="lg:col-span-3">
-        <h2 id={DOCUMENTS_HEADING_ID} tabIndex={-1} className="label">
-          Documents · {entries.length}
-        </h2>
-        {entries.length > 0 && (
-          // The register's key: every state's mark and word, and how many
-          // lines are in it, zeros included. On a narrow screen there is no
-          // margin for it, and the lines teach it. Needs review's square
-          // is filled only when a line needs review: at 0 it is the same
-          // square in outline, so the key still teaches the mark without
-          // the page's one call for attention pointing at nothing.
-          <ul aria-label="Documents by state" className="mt-4 hidden max-w-56 lg:block">
-            {DOCUMENT_STATES.map((state) => {
-              const count = counts.get(state) ?? 0;
-              const glyph = state === "needs-review" && count === 0 ? "signal-outline" : STATE_GLYPHS[state];
-              return (
-                <li key={state} className="label flex h-7 items-center gap-2">
-                  <StateGlyph glyph={glyph} />
-                  <span className="flex-1">{STATE_WORDS[state]}</span>
-                  <span>{count}</span>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </div>
+    <Register>
+      <div className="grid grid-cols-1 gap-x-8 lg:grid-cols-12">
+        <div className="lg:col-span-3">
+          <h2 id={DOCUMENTS_HEADING_ID} tabIndex={-1} className="label">
+            Documents · {entries.length}
+          </h2>
+          {entries.length > 0 && (
+            <RegisterKey lines={stated.map(({ entry, state }) => ({ id: entry.document.id, state }))} />
+          )}
+        </div>
 
-      <div className="mt-3 min-w-0 lg:col-span-8 lg:col-start-4 lg:mt-0">
-        {entries.length === 0 ? (
-          <EmptyDocuments canManage={canManage} />
-        ) : (
-          <ul className="border-t border-ink">
-            {stated.map(({ entry, state }) => (
-              <li key={entry.document.id}>
-                <DocumentLine
-                  entry={entry}
-                  state={state}
-                  slug={slug}
-                  canManage={canManage}
-                  explainExtract={canManage && entry === firstReady?.entry}
-                />
-              </li>
-            ))}
-          </ul>
-        )}
+        <div className="mt-3 min-w-0 lg:col-span-8 lg:col-start-4 lg:mt-0">
+          {entries.length === 0 ? (
+            <EmptyDocuments canManage={canManage} />
+          ) : (
+            <ul className="border-t border-ink">
+              {stated.map(({ entry, state }) => (
+                <li key={entry.document.id}>
+                  <DocumentLine
+                    entry={entry}
+                    state={state}
+                    slug={slug}
+                    canManage={canManage}
+                    explainExtract={canManage && entry === firstReady?.entry}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
-    </div>
+    </Register>
   );
 }
 
@@ -187,7 +169,12 @@ function DocumentLine({
         cue={hasFields ? "Fields" : undefined}
         head={
           <>
-            <StateMark state={state} count={state === "needs-review" ? low : undefined} className="md:w-44 md:shrink-0" />
+            <LineStateMark
+              id={document.id}
+              state={state}
+              count={state === "needs-review" ? low : undefined}
+              className="md:w-44 md:shrink-0"
+            />
             <span
               id={nameId}
               title={document.filename}
@@ -197,7 +184,11 @@ function DocumentLine({
             </span>
           </>
         }
-        detail={<Detail entry={entry} state={state} canManage={canManage} explainExtract={explainExtract} />}
+        detail={
+          <LineDetail id={document.id}>
+            <Detail entry={entry} state={state} canManage={canManage} explainExtract={explainExtract} />
+          </LineDetail>
+        }
         exit={exit}
       >
         {hasFields && latest?.status === "failed" && latest.error_code && (
