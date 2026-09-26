@@ -1,25 +1,22 @@
 import "server-only";
 
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import { TOKEN_COUNT_TIMEOUT_MS } from "../config";
 import { classifyAnthropicError } from "./classify";
+import { createAnthropicClient } from "./clients";
 import { interpretAnthropicMessage, interpretTokenCount } from "./interpret";
 import { anthropicCountParams, anthropicCreateParams } from "./requests";
 import type { ExtractionProvider, ExtractionRequest, ProviderResponse } from "./types";
 
 // Messages API with a schema-constrained output, and its token counting
-// endpoint (the requests are built in requests.ts). maxRetries is 0 on
-// purpose: the orchestrator decides what to retry and when to fall back.
+// endpoint (the requests are built in requests.ts), through a client whose
+// base URL is fixed in code (clients.ts).
 export function createAnthropicProvider(options: {
   apiKey: string;
   model: string;
   timeoutMs: number;
 }): ExtractionProvider {
-  const client = new Anthropic({
-    apiKey: options.apiKey,
-    timeout: options.timeoutMs,
-    maxRetries: 0,
-  });
+  const client = createAnthropicClient({ apiKey: options.apiKey, timeoutMs: options.timeoutMs });
 
   return {
     name: "anthropic",

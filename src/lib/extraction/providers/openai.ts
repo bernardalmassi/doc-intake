@@ -1,25 +1,22 @@
 import "server-only";
 
-import OpenAI from "openai";
+import type OpenAI from "openai";
 import { TOKEN_COUNT_TIMEOUT_MS } from "../config";
 import { classifyOpenAIError } from "./classify";
+import { createOpenAIClient } from "./clients";
 import { interpretOpenAIResponse, interpretTokenCount } from "./interpret";
 import { openAICountParams, openAICreateParams } from "./requests";
 import type { ExtractionProvider, ExtractionRequest, ProviderResponse } from "./types";
 
 // Responses API with a strict JSON schema, and its input token count (the
-// requests are built in requests.ts). maxRetries is 0 on purpose: the
-// orchestrator decides what to retry and when to fall back.
+// requests are built in requests.ts), through a client whose base URL is
+// fixed in code (clients.ts).
 export function createOpenAIProvider(options: {
   apiKey: string;
   model: string;
   timeoutMs: number;
 }): ExtractionProvider {
-  const client = new OpenAI({
-    apiKey: options.apiKey,
-    timeout: options.timeoutMs,
-    maxRetries: 0,
-  });
+  const client = createOpenAIClient({ apiKey: options.apiKey, timeoutMs: options.timeoutMs });
 
   return {
     name: "openai",
