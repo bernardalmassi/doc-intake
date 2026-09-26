@@ -62,6 +62,15 @@ export function toRunRow({ error, ...run }: RunRecord): RunRow {
   };
 }
 
+// A run the database ended because nothing finished it in time: abandoned
+// (claimed, and its worker never finished) or expired (never claimed). The
+// only way the page calls a run stalled. It never judges by the clock: a
+// run stays queued or running on the page for as long as the database says
+// so, and the queue's sweep gives every run a deadline there.
+export function isStalled(run: Pick<RunRow, "status" | "error_code">): boolean {
+  return run.status === "failed" && (run.error_code === "extraction.abandoned" || run.error_code === "extraction.expired");
+}
+
 export type FieldRow = {
   document_id: string;
   name: string;
@@ -81,11 +90,11 @@ export type DocumentEntry = {
   runs: RunRow[];
   // in the order of FIELDS in src/lib/extraction/schema.ts
   fields: FieldRow[];
-  // processing, but its latest run has been queued (since it was enqueued)
-  // or running (since it was claimed) longer than the database's stale
-  // limit, so the queue's sweep or the next Extract click ends it
-  staleRun: boolean;
-  // while the document is processing and its latest run isn't stale: queued
-  // until a worker claims the run, running after that; otherwise null
+  // its latest run was ended by the database because nothing finished it
+  // in time: abandoned or expired (isStalled in entries.ts). Never decided
+  // by the page's clock.
+  stalled: boolean;
+  // while the document is processing and its latest run is in flight:
+  // queued until a worker claims the run, running after that; otherwise null
   extraction: "queued" | "running" | null;
 };

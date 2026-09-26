@@ -5,7 +5,7 @@ import { AccountControls, MAIN_ID, SiteHeader } from "@/app/components/site-head
 import { pageClass } from "@/app/ui";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { buildEntries, shouldPoll } from "./entries";
+import { buildEntries, extractionsInFlight } from "./entries";
 import { LiveOperations } from "./live-operations";
 import { OrganizationView } from "./organization-view";
 import { RefreshWhileExtracting } from "./refresh-while-extracting";
@@ -15,10 +15,10 @@ function toRole(value: string | undefined): Role {
   return value === "owner" || value === "admin" ? value : "member";
 }
 
-// The time of the request, to tell a stale extraction from a running one.
-// A Server Component renders once per request, so the clock is read once;
-// react-hooks/purity can't tell that from a client re-render, hence the
-// helper.
+// The time of the request, which tells one render of the page from the
+// next (RefreshWhileExtracting counts renders). A Server Component renders
+// once per request, so the clock is read once; react-hooks/purity can't
+// tell that from a client re-render, hence the helper.
 function requestTime(): number {
   return Date.now();
 }
@@ -94,7 +94,6 @@ export default async function OrganizationPage({ params }: PageProps<"/app/[slug
     // reaches a component, or the browser.
     ((runsResult.data ?? []) as RunRecord[]).map(toRunRow),
     (fieldsResult.data ?? []) as FieldRow[],
-    requestTime(),
   );
 
   return (
@@ -103,7 +102,7 @@ export default async function OrganizationPage({ params }: PageProps<"/app/[slug
         <AccountControls email={user.email} />
       </SiteHeader>
       <main id={MAIN_ID} className={pageClass}>
-        <RefreshWhileExtracting active={shouldPoll(entries)} />
+        <RefreshWhileExtracting active={extractionsInFlight(entries)} renderedAt={requestTime()} />
         <LiveOperations>
           <OrganizationView organization={tenant} role={role} entries={entries} />
         </LiveOperations>

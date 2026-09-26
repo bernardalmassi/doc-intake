@@ -1,5 +1,4 @@
 import { badgeClass, errorClass, hintClass, reviewBadgeClass, sectionTitleClass, textTargetClass } from "@/app/ui";
-import { EXTRACTION_LIMITS } from "@/lib/extraction/config";
 import { DocumentActions, type ExtractMode } from "./document-actions";
 import { ExtractionPanel } from "./extraction-panel";
 import { fieldSummary } from "./fields";
@@ -96,7 +95,7 @@ function EmptyDocuments({ canManage }: { canManage: boolean }) {
 }
 
 function DocumentItem({ entry, slug, canManage }: { entry: DocumentEntry; slug: string; canManage: boolean }) {
-  const { document, runs, fields, staleRun } = entry;
+  const { document, runs, fields, stalled } = entry;
   const review = document.status === "needs_review";
   const hasFile = document.status !== "uploading";
   const kind = fileKind(document.mime_type);
@@ -110,7 +109,7 @@ function DocumentItem({ entry, slug, canManage }: { entry: DocumentEntry; slug: 
   let extract: { mode: ExtractMode; primary: boolean } | null = null;
   if (canManage && hasFile) {
     const mode: ExtractMode =
-      document.status === "processing" && !staleRun ? "running" : runs.length > 0 ? "again" : "first";
+      document.status === "processing" ? "running" : runs.length > 0 ? "again" : "first";
     extract = { mode, primary: fields.length === 0 };
   }
 
@@ -126,7 +125,7 @@ function DocumentItem({ entry, slug, canManage }: { entry: DocumentEntry; slug: 
         <h3 id={`document-${document.id}`} className="min-w-0 font-medium [overflow-wrap:anywhere]">
           {document.filename}
         </h3>
-        <StatusBadge status={document.status} stale={staleRun} />
+        <StatusBadge status={document.status} stalled={stalled} />
       </div>
       <p className={`mt-1 ${hintClass} tabular-nums`}>
         {meta.length > 0 && `${meta.join(" · ")} · `}
@@ -154,7 +153,7 @@ function DocumentItem({ entry, slug, canManage }: { entry: DocumentEntry; slug: 
       {runs.length > 0 && (
         <details className="group mt-4 border-t border-line pt-3">
           <Summary meta={runHistoryMeta(runs)}>Run history</Summary>
-          <RunHistory runs={runs} filename={document.filename} staleRun={staleRun} />
+          <RunHistory runs={runs} filename={document.filename} />
         </details>
       )}
     </article>
@@ -175,7 +174,10 @@ function Summary({ children, meta }: { children: React.ReactNode; meta?: string 
   );
 }
 
-function StatusBadge({ status, stale }: { status: string; stale: boolean }) {
+// "Extraction stalled" only once the database has ended the latest run as
+// abandoned or expired; a document the database says is processing is
+// extracting, however long it takes.
+function StatusBadge({ status, stalled }: { status: string; stalled: boolean }) {
   if (status === "needs_review") {
     return (
       <span className={`${reviewBadgeClass} shrink-0 gap-1`}>
@@ -184,7 +186,7 @@ function StatusBadge({ status, stale }: { status: string; stale: boolean }) {
       </span>
     );
   }
-  if (status === "processing" && !stale) {
+  if (status === "processing") {
     return (
       <span className={`${badgeClass} shrink-0 gap-1.5`}>
         <SpinnerIcon />
@@ -192,13 +194,13 @@ function StatusBadge({ status, stale }: { status: string; stale: boolean }) {
       </span>
     );
   }
-  return <span className={`${badgeClass} shrink-0`}>{stale ? "Extraction stalled" : statusLabel(status)}</span>;
+  return <span className={`${badgeClass} shrink-0`}>{stalled ? "Extraction stalled" : statusLabel(status)}</span>;
 }
 
 // One or two sentences under the document's name saying where it stands
 // and what happens next, computed from the document and its runs.
 function StatusLine({ entry, canManage }: { entry: DocumentEntry; canManage: boolean }) {
-  const { document, runs, staleRun } = entry;
+  const { document, runs } = entry;
   const latest = runs[0];
   const latestFailed = latest?.status === "failed";
   const retry = canManage ? "You can try again." : "An admin can try again.";
@@ -222,22 +224,7 @@ function StatusLine({ entry, canManage }: { entry: DocumentEntry; canManage: boo
       );
 
     case "processing":
-      if (staleRun) {
-        return (
-          <p className="mt-3 max-w-prose text-sm">
-            This extraction has been running for more than {EXTRACTION_LIMITS.staleRunMinutes} minutes and has
-            probably stopped.{" "}
-            <span className="text-muted">
-              {canManage ? "Extract again to restart it." : "An admin can restart it."}
-            </span>
-          </p>
-        );
-      }
-      return (
-        <p className={`mt-3 ${hintClass}`}>
-          Extraction is running. Refresh the page in a minute to see the results.
-        </p>
-      );
+      return <p className={`mt-3 ${hintClass}`}>Extraction is running. This page updates when it finishes.</p>;
 
     case "failed":
       if (!latestFailed) return <FailedRun lead="Extraction failed." code={null} next={retry} />;

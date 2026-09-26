@@ -3,7 +3,7 @@ import { badgeClass, errorClass } from "@/app/ui";
 import { userFacingError } from "@/lib/errors";
 import { formatCount, formatSeconds, formatUsd, formatUtc } from "./format";
 import { AlertIcon } from "./icons";
-import type { RunRow } from "./types";
+import { isStalled, type RunRow } from "./types";
 
 const PROVIDER_LABELS: Record<string, string> = { anthropic: "Anthropic", openai: "OpenAI" };
 
@@ -79,7 +79,7 @@ const num = "tabular-nums md:text-right";
 // answered, tokens in and out, cost and time taken, and why a failed run
 // failed, as the catalog's sentence for its code (the stored text never
 // gets this far). The total is the sum of the recorded costs.
-export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filename: string; staleRun: boolean }) {
+export function RunHistory({ runs, filename }: { runs: RunRow[]; filename: string }) {
   const { total, estimated, unknown } = runTotals(runs);
 
   return (
@@ -112,8 +112,9 @@ export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filen
           </tr>
         </thead>
         <tbody role="rowgroup" className="max-md:block">
-          {runs.map((run, index) => {
-            const stalled = index === 0 && staleRun && inFlight(run);
+          {runs.map((run) => {
+            // as the database ended it, never by the clock
+            const stalled = isStalled(run);
             return (
               <Fragment key={run.id}>
                 <tr role="row" className="border-t border-line max-md:grid max-md:grid-cols-2 max-md:gap-x-4 max-md:gap-y-2 max-md:py-3">
@@ -196,7 +197,7 @@ export function RunHistory({ runs, filename, staleRun }: { runs: RunRow[]; filen
 }
 
 function describeAttempts(run: RunRow, stalled: boolean): string {
-  if (stalled) return "Stopped responding";
+  if (stalled) return run.error_code === "extraction.expired" ? "Never started" : "Stopped responding";
   if (run.attempts === 0) return inFlight(run) ? "In progress" : "No model call";
   return `${run.attempts} model ${run.attempts === 1 ? "call" : "calls"}`;
 }

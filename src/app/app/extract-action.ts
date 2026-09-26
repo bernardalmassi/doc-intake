@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { refresh, revalidatePath } from "next/cache";
 import type { FormState } from "@/app/form-state";
 import { failureFields } from "@/app/log-fields";
 import { requireUser } from "@/lib/auth";
@@ -84,6 +84,17 @@ export async function extractDocument(_prev: FormState, formData: FormData): Pro
   runLog.info("extraction.enqueued", { run_id: enqueued.data as string, page_count: checked.pageCount });
 
   revalidatePath(`/app/${slug}`);
+  return {};
+}
+
+// The organization page's poll while an extraction is in flight
+// (RefreshWhileExtracting): re-renders the page for the caller, in this
+// action's response, so a failed poll is a rejected promise the page skips
+// rather than router.refresh()'s full navigation. RLS decides what the
+// render shows; this only asks for it.
+export async function refreshOrganizationPage(): Promise<FormState> {
+  await requireUser();
+  refresh();
   return {};
 }
 
