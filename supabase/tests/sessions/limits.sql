@@ -21,7 +21,11 @@
 -- It holds (20260925, 2) from its start until F's transaction has ended,
 -- and takes (20260925, 3) when it is done. It reports the ledger rows
 -- before and after, the run's status after the check, what the check said,
--- and whether its own ledger row was left behind (it must not be).
+-- and whether its own ledger row was left behind (it must not be). That row
+-- is found by the run id it was given, which is reported, not by when it
+-- was written: until 20260925000005's unit this counted rows written after
+-- the check started, which the row, dated its transaction's start, never
+-- was, so the assertion could never fail (the review's V12).
 select pg_advisory_lock(20260925, 2);
 commit;
 
@@ -41,6 +45,7 @@ end $t$;
 commit;
 
 create temp table report (
+  row_id           uuid,
   ledger_before    integer,
   ledger_after     integer,
   run_after_check  text,
@@ -59,6 +64,8 @@ declare
   v_rows     integer;
   v_result   text;
   v_started  timestamptz;
+  -- the run id of this check's own ledger row, by which rows_left finds it
+  v_row_id   uuid := gen_random_uuid();
 begin
   select l.* into v_limits from public.extraction_limits l;
   -- what the finish will charge the fixture's run
@@ -71,7 +78,7 @@ begin
   v_started := clock_timestamp();
   begin
     insert into private.extraction_spend (kind, tenant_id, run_id, cost_usd)
-    values ('charge', v_tenant, gen_random_uuid(), v_limits.tenant_monthly_ceiling_usd - v_existing - v_charge);
+    values ('charge', v_tenant, v_row_id, v_limits.tenant_monthly_ceiling_usd - v_existing - v_charge);
     perform private.check_extraction_limits(v_tenant);
     -- rolls the row back
     raise exception 'passed' using errcode = 'P0001';
@@ -81,6 +88,7 @@ begin
   end;
 
   insert into report values (
+    v_row_id,
     v_rows,
     (select count(*) from private.extraction_spend s
      where s.tenant_id = v_tenant and s.created_at >= date_trunc('month', now(), 'UTC')),
@@ -111,7 +119,5 @@ commit;
 
 select ledger_before, ledger_after, run_after_check, result,
        round(extract(epoch from check_returned - check_started) * 1000) as check_ms,
-       (select count(*) from private.extraction_spend s
-        where s.tenant_id = 'f2f2f2f2-0000-4000-8000-000000000001' and s.kind = 'charge'
-          and s.created_at >= check_started and s.run_id not in (select r.id from public.extraction_runs r)) as rows_left
+       (select count(*) from private.extraction_spend s where s.run_id = report.row_id) as rows_left
 from report;

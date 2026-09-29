@@ -327,6 +327,41 @@ try {
     process.exit(1);
   }
   console.error(`test:db ${SESSIONS}: sweep-pause.sql refuses a project whose Vault holds extraction_worker_url`);
+
+  // limits.sql's rows_left must catch a ledger row its check leaves behind
+  // (until 20260925000005's unit it counted rows by when they were written,
+  // which the row never matched, so it could never fail). Its expression,
+  // taken from limits.sql as is, runs after a broken check that keeps its
+  // row, inside a transaction that is rolled back: it must count the row.
+  const limitsSql = readFileSync(join(root, SESSIONS, "limits.sql"), "utf8");
+  const rowsLeft = limitsSql.split("\n").find((line) => line.trim().endsWith("as rows_left"))?.trim();
+  if (!rowsLeft) {
+    console.error("limits.sql has no rows_left expression");
+    process.exit(1);
+  }
+  const broken = join(scratch, "limits-broken.sql");
+  writeFileSync(
+    broken,
+    `begin;
+create temp table report (row_id uuid, check_started timestamptz);
+do $t$
+declare
+  v_row_id uuid := gen_random_uuid();
+begin
+  -- a broken check: its row is not rolled back
+  insert into private.extraction_spend (kind, tenant_id, run_id, cost_usd) values ('charge', gen_random_uuid(), v_row_id, 0.5);
+  insert into report values (v_row_id, clock_timestamp());
+end $t$;
+select ${rowsLeft} from report;
+rollback;
+`,
+  );
+  const caught = await query(broken);
+  if (Number(caught.rows?.[0]?.rows_left) !== 1) {
+    console.error(`  FAILED: limits.sql's rows_left did not count the row a broken check left: ${caught.rows ? JSON.stringify(caught.rows) : failure(caught)}`);
+    process.exit(1);
+  }
+  console.error(`test:db ${SESSIONS}: limits.sql's rows_left counts the ledger row a broken check leaves behind`);
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
