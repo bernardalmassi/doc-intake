@@ -7,14 +7,18 @@
 -- visibility timeout, step (a)'s candidate, and runs the sweep. Under
 -- 20260925000002 the sweep locked the message and then waited for the run,
 -- the finish then waited to archive the message, and PostgreSQL aborted one
--- of them. Now the sweep must leave the message alone, skip the run it can't
--- lock and return at once, so the finish archives the message and commits.
+-- of them. Under 20260925000003 and 000004 the sweep skipped the run it
+-- couldn't lock (NOWAIT) and returned at once. Now (20260925000005) it waits
+-- for the document, which F lets go by finishing (F goes on once the sweep
+-- waits on it); the sweep then finds the message archived and the run
+-- finished, and leaves both. Either way the finish must archive the message
+-- and commit with its result (check.sql), with no deadlock.
 --
 -- It holds (20260925, 2) from its start until F's transaction has ended,
 -- and takes (20260925, 3) when it is done. It reports, measured before it
 -- signals F to go on: whether the message was a candidate, its xmax before
--- and after (0: nothing locked it), how long the sweep took, and whether F
--- still held its locks when the sweep returned.
+-- the sweep (0: nothing held it), how long the sweep took, whether F still
+-- held its locks when the sweep returned, and the run as the sweep left it.
 select pg_advisory_lock(20260925, 2);
 commit;
 

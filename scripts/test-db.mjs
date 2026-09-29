@@ -118,10 +118,12 @@ const CASES = [
     session: "sweep.sql",
     expect: (r) => [
       [r.candidate === true, "the message was not a claimed message past its visibility timeout"],
-      [r.finish_held_locks === true, "session F no longer held the run when the sweep returned"],
-      [r.xmax_before === "0" && r.xmax_after === "0", "the sweep locked the message"],
-      [Number(r.sweep_ms) < 1000, "the sweep waited (it took longer than deadlock_timeout)"],
-      [r.run_after_sweep === "running", "the sweep ended the run the finish held"],
+      [r.xmax_before === "0", "the message was held before the sweep ran"],
+      // since 20260925000005 the sweep waits for the run's document (F goes
+      // on and finishes once it does) instead of skipping the run
+      [r.finish_held_locks === false, "the sweep returned while the finish still held the run (it didn't wait)"],
+      [Number(r.sweep_ms) < 5000, "the sweep waited longer than its lock timeout"],
+      [r.run_after_sweep === "succeeded", "the sweep ended the run the finish held, or the finish wasn't kept"],
     ],
   },
   {
@@ -172,6 +174,32 @@ const CASES = [
       [r.run_status === "queued", "the second run is not queued again"],
       [Number(r.read_ct) === 0 && r.visible === true, "the claim's read of the message was not rolled back"],
       [r.has_token === false, "the second run kept a claim token"],
+    ],
+  },
+  {
+    name: "a run past its deadline whose document a rename holds: the sweep waits for the lock, then ends the run",
+    setup: "setup-stale.sql",
+    first: "hold-document.sql",
+    session: "sweep-stale.sql",
+    check: false,
+    ok: "the sweep waited for the held document, in the lock order, and expired the run past its deadline at 0",
+    expect: (r) => [
+      [r.run_status === "failed" && typeof r.run_error === "string" && r.run_error.startsWith("expired: "),
+        "the sweep didn't end the run past its deadline (it skipped the held document)"],
+      [Number(r.sweep_ms) >= 900, "the sweep didn't wait for the held document"],
+      [Number(r.sweep_ms) < 5000, "the sweep waited longer than its lock timeout"],
+    ],
+  },
+  {
+    name: "a document held past the sweep's lock timeout: the sweep gives up at the timeout and leaves the run for its next tick",
+    setup: "setup-stale.sql",
+    first: "hold-document-long.sql",
+    session: "sweep-stale.sql",
+    check: false,
+    ok: "the sweep gave up at its 5 s lock timeout, raised nothing, and left the run queued",
+    expect: (r) => [
+      [r.run_status === "queued", "the run past its deadline was ended though its document was held"],
+      [Number(r.sweep_ms) >= 4500 && Number(r.sweep_ms) < 8000, "the sweep did not give up at its 5 s lock timeout"],
     ],
   },
 ];

@@ -142,6 +142,13 @@ export function largestCountWithin(limit: number): number {
 // worker on it. A mirror; queue-migration.test.ts checks the migration.
 export const CLAIM_TIMEOUT_MS = 5_000;
 
+// How long the queue's sweep waits for each lock of a run past its deadline
+// (sweep_extraction_queue's lock_timeout, 20260925000005): it waits, in the
+// lock order, instead of skipping a run someone holds, and leaves one it
+// can't have in this long for its next tick. A mirror;
+// queue-migration.test.ts checks the migration.
+export const SWEEP_LOCK_TIMEOUT_MS = 5_000;
+
 // How long the worker waits for the claim's answer before giving up
 // (worker.ts): longer than the claim's own timeout, so by then the claim has
 // committed or rolled back.

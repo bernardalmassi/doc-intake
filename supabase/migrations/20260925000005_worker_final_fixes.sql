@@ -683,3 +683,167 @@ begin
   return v_doc;
 end;
 $$;
+
+-- 7. The sweep waits for a run past its deadline, in the lock order (V4) --------
+
+-- The sweep took each candidate's document and run with NOWAIT (since
+-- 20260925000003), because it holds the candidates it has already handled
+-- and a wait could close a cycle. But every sweep candidate is past a
+-- deadline, and NOWAIT meant that whoever held a candidate's document or run
+-- at the moment of each tick kept it in flight: a document's uploader or
+-- admin renaming it in bursts (a rename holds the row) kept their runs
+-- queued or running indefinitely, their estimates held against the
+-- ceilings, with no deadline enforced at all (the review's V4).
+--
+-- Now the sweep waits for those locks, each wait at most lock_timeout (5 s),
+-- and takes them in the agreed order: it reads its candidates without
+-- locking anything, as before, then takes the documents of all of them in
+-- id order, then their runs in id order (the order delete_tenant takes a
+-- tenant's documents and runs), and only then re-checks each candidate
+-- under its locks and reaps it and archives its message, the message last.
+-- A waiter queues behind the lock's current holder, so a rename's lock, held
+-- for a moment, is had within the wait however often the renames come. A
+-- candidate whose document or run isn't had within 5 s, or whose wait was
+-- ended as a deadlock, is left for the next tick (lock_not_available or
+-- deadlock_detected, caught per candidate, as NOWAIT's miss was). A tick in
+-- which k candidates' locks are held that long takes up to k x 5 s.
+-- Mirrored in config.ts as SWEEP_LOCK_TIMEOUT_MS; queue-migration.test.ts
+-- checks the two agree. Step (b), the wakes, is unchanged.
+create or replace function private.sweep_extraction_queue()
+returns void language plpgsql security definer set search_path = '' set lock_timeout = '5s' as $$
+declare
+  v_limits public.extraction_limits;
+  v_stale  interval;
+  v_runs   uuid[];
+  v_docs   uuid[] := '{}';
+  v_held   uuid[] := '{}';
+  v_id     uuid;
+  v_msg    record;
+  v_wakes  integer;
+begin
+  select l.* into v_limits from public.extraction_limits l;
+  v_stale := make_interval(mins => v_limits.stale_run_minutes);
+
+  -- the candidates' runs, read without locking anything: (a) a claimed
+  -- message past its visibility timeout, (c) a running run past the stale
+  -- limit with no live message, (d) a queued run past the stale limit
+  select coalesce(array_agg(distinct c.run_id), '{}') into v_runs from (
+    select (q.message ->> 'run_id')::uuid as run_id from pgmq.q_extraction q
+    where q.read_ct >= 1 and q.vt <= now()
+    union all
+    select r.id from public.extraction_runs r
+    where r.status = 'running'
+      and coalesce(r.claimed_at, r.started_at) < now() - v_stale
+      and not exists (select 1 from pgmq.q_extraction q where q.msg_id = r.queue_msg_id)
+    union all
+    select r.id from public.extraction_runs r
+    where r.status = 'queued' and r.started_at < now() - v_stale
+  ) c
+  where c.run_id is not null;
+
+  -- their documents, in id order, then their runs, in id order, each wait
+  -- bounded by lock_timeout; one not had in time is left for the next tick
+  for v_id in
+    select distinct r.document_id from public.extraction_runs r
+    where r.id = any (v_runs) and r.document_id is not null
+    order by r.document_id
+  loop
+    begin
+      perform 1 from public.documents d where d.id = v_id for update;
+      v_docs := v_docs || v_id;
+    exception when lock_not_available or deadlock_detected then
+      null;
+    end;
+  end loop;
+
+  for v_id in
+    select r.id from public.extraction_runs r
+    where r.id = any (v_runs) and (r.document_id is null or r.document_id = any (v_docs))
+    order by r.id
+  loop
+    begin
+      perform 1 from public.extraction_runs r where r.id = v_id for update;
+      v_held := v_held || v_id;
+    exception when lock_not_available or deadlock_detected then
+      null;
+    end;
+  end loop;
+
+  -- (a), under the locks: a message whose run is held elsewhere waits for
+  -- the next tick; one whose run is gone is only archived
+  for v_msg in
+    select q.msg_id, (q.message ->> 'run_id')::uuid as run_id from pgmq.q_extraction q
+    where q.read_ct >= 1 and q.vt <= now()
+    order by q.msg_id
+  loop
+    if v_msg.run_id is not null and not (v_msg.run_id = any (v_held))
+       and exists (select 1 from public.extraction_runs r where r.id = v_msg.run_id) then
+      continue;
+    end if;
+    begin
+      if exists (select 1 from pgmq.q_extraction q
+                 where q.msg_id = v_msg.msg_id and q.read_ct >= 1 and q.vt <= now()) then
+        if v_msg.run_id = any (v_held) then
+          perform private.reap_extraction_run(v_msg.run_id,
+            format('claimed but not finished within %s seconds', v_limits.worker_visibility_seconds));
+        end if;
+        perform pgmq.archive('extraction', v_msg.msg_id);
+      end if;
+    exception when lock_not_available or deadlock_detected then
+      null;
+    end;
+  end loop;
+
+  -- (c), under the locks
+  for v_id in
+    select r.id from public.extraction_runs r
+    where r.id = any (v_held)
+      and r.status = 'running'
+      and coalesce(r.claimed_at, r.started_at) < now() - v_stale
+      and not exists (select 1 from pgmq.q_extraction q where q.msg_id = r.queue_msg_id)
+    order by r.id
+  loop
+    begin
+      perform private.reap_extraction_run(v_id,
+        format('still running after %s minutes; failed by the sweep', v_limits.stale_run_minutes));
+    exception when lock_not_available or deadlock_detected then
+      null;
+    end;
+  end loop;
+
+  -- (d), under the locks
+  for v_id in
+    select r.id from public.extraction_runs r
+    where r.id = any (v_held)
+      and r.status = 'queued'
+      and r.started_at < now() - v_stale
+    order by r.id
+  loop
+    begin
+      perform private.reap_extraction_run(v_id,
+        format('not claimed within %s minutes; cancelled at no cost', v_limits.stale_run_minutes));
+    exception when lock_not_available or deadlock_detected then
+      null;
+    end;
+  end loop;
+
+  -- (b), each wake on its own
+  select count(*) into v_wakes from (
+    select 1 from pgmq.q_extraction q
+    join public.extraction_runs r on r.id = (q.message ->> 'run_id')::uuid
+    where q.read_ct = 0
+      and q.vt <= now()
+      and q.enqueued_at < now() - interval '60 seconds'
+      and r.status = 'queued'
+      and r.started_at >= now() - v_stale
+    limit 5
+  ) lost;
+  for i in 1 .. v_wakes loop
+    begin
+      perform private.wake_extraction_worker();
+    exception when others then
+      raise warning 'extraction worker not woken (SQLSTATE %)', sqlstate;
+    end;
+  end loop;
+end;
+$$;
