@@ -46,5 +46,10 @@ next-env.d.ts
 .claude/
 .codex/
 
+# session notes kept on disk, not published
+/HANDOVER-session4.md
+/BACKEND-CHECKLIST.md
+/FRONTEND-CHECKLIST.md
+
 # editor
 .vscode/
