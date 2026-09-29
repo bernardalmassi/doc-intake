@@ -1,6 +1,6 @@
 # pgmq queue worker: design
 
-Phase 0 design, approved on 2026-09-24 with the decisions and fixes in section 13. Base: origin/main at `a8efa8f`. Nothing here is built yet.
+Phase 0 design, approved on 2026-09-24 with the decisions and fixes in section 13. Base: origin/main at `4808b52`. Nothing here is built yet.
 
 Sources for the platform facts:
 - Supabase docs, through the docs search tool.
@@ -16,23 +16,23 @@ Sources for the platform facts:
 
 ## 1. State answers
 
-- **design-landing is not merged.** It is 14 commits ahead of main, forked at `540e0cc`. Main has 2 commits since then (`14ed340`, `a8efa8f`).
+- **design-landing is not merged.** It is 14 commits ahead of main, forked at `93a1688`. Main has 2 commits since then (`590ca31`, `4808b52`).
 - **The tenant isolation test is on main:** `tests/tenant-isolation.test.ts`.
-- **`tests/fixtures/test-invoice-messy-scan.pdf` is tracked only on `origin/design-landing`.** It was added in `158d802` ("Commit the scan's PDF, and derive the landing image from it in the test"). No other ref has it; main has no `tests/fixtures/` at all.
+- **`tests/fixtures/test-invoice-messy-scan.pdf` is tracked only on `design-landing`.** Since the 2026-09-29 republish that branch lives only in the archive repository (`bernardalmassi/doc-intake-archive`, remote `archive`), with its commit IDs unchanged. It was added in `158d802` ("Commit the scan's PDF, and derive the landing image from it in the test"). No other ref has it; main has no `tests/fixtures/` at all.
 - **Last 12 commits of origin/main:**
 ```
-a8efa8f Drop the one-argument open_extraction_run wrapper
-14ed340 Ignore .vscode/: it's local editor config
-540e0cc Derive an organization's web address on the server when none is typed
-f8673b0 Bring the README up to date, and put the time limits in SECURITY.md
-90e7644 Run the functions in Frankfurt, next to the database
-0554bdc Give the Extract action's page a 240 second function limit
-e9bec13 Ignore the local Codex plugin folder
-1439a02 Write the session 4 handover
-19d1b8c Let the abandoned-run estimate count all 100 pages per call
-8658369 Refuse documents over 100 pages, and say why Sonnet 5 is the default
-12177f6 Default Claude extraction to Sonnet 5, with Haiku 4.5 still selectable
-4253a82 Charge an abandoned run an estimate from its page count
+4808b52 Drop the one-argument open_extraction_run wrapper
+590ca31 Ignore .vscode/: it's local editor config
+93a1688 Derive an organization's web address on the server when none is typed
+41f1e84 Bring the README up to date, and put the time limits in SECURITY.md
+73675a2 Run the functions in Frankfurt, next to the database
+a4abdb4 Give the Extract action's page a 240 second function limit
+e74394d Ignore the local Codex plugin folder
+cda844e Write the session 4 handover
+37efaca Let the abandoned-run estimate count all 100 pages per call
+56d1b72 Refuse documents over 100 pages, and say why Sonnet 5 is the default
+bd037a2 Default Claude extraction to Sonnet 5, with Haiku 4.5 still selectable
+431b460 Charge an abandoned run an estimate from its page count
 ```
 
 ## 2. The run lifecycle today
