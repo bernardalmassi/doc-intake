@@ -1,44 +1,27 @@
-// The words the organization page uses for roles, states and results.
-// Database values (roles, status enums) never reach the screen as they are,
-// and errors arrive as codes whose words are src/lib/errors.ts's.
+// The words the organization page uses for roles and results. Database
+// values (roles, status enums) never reach the screen as they are: a role
+// is said as what it allows, a status as one of the states in
+// state-glyph.tsx, and errors arrive as codes whose words are
+// src/lib/errors.ts's.
 
 import { EXTRACTION_LIMITS } from "@/lib/extraction/config";
 import type { FormState } from "@/app/form-state";
-import { userFacingError } from "@/lib/errors";
+import { type ErrorCode, userFacingError } from "@/lib/errors";
 import { formatBytes, NBSP } from "./format";
 import type { Role } from "./types";
 
-export const ROLE_LABELS: Record<Role, string> = {
-  owner: "Owner",
-  admin: "Admin",
-  member: "Member",
-};
-
+// What the reader's role lets them do here, said instead of the role's
+// name: "Owner" reads oddly on an organization of one, and the name says
+// nothing about what the page will let you do. Printed after "You can".
+// Owners and admins can do the same things on this page.
 export function roleAbilities(role: Role): string {
   return role === "member"
-    ? "You can upload and download documents. Admins run extraction and delete documents."
-    : "You can upload, extract and delete documents.";
+    ? "Upload and download documents, and read what was extracted from them. An admin extracts and deletes them."
+    : "Upload, extract, download and delete documents, and read what was extracted from them.";
 }
 
 export function canManage(role: Role): boolean {
   return role === "owner" || role === "admin";
-}
-
-const STATUS_LABELS: Record<string, string> = {
-  uploading: "Upload incomplete",
-  pending: "Ready to extract",
-  processing: "Extracting",
-  extracted: "Extracted",
-  needs_review: "Needs review",
-  failed: "Extraction failed",
-};
-
-// A status the page doesn't know yet still reads as words, not as an enum.
-export function statusLabel(status: string): string {
-  const known = STATUS_LABELS[status];
-  if (known) return known;
-  const words = status.replace(/_/g, " ");
-  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 // The Documents heading takes focus after a delete removes the item that
@@ -80,6 +63,19 @@ export function describeRejection(
 export const UPLOAD_STEPS = ["Preparing", "Sending the file", "Checking it arrived"] as const;
 
 // ------------------------------------------------------- extract results
+
+// Why a failed run failed, for its document's line and its row in the run
+// history: the catalog's sentence for its code. Except the catalog's
+// unknown, "Something went wrong. Please try again.", which alone doesn't
+// say what went wrong, and a failed run that stored no error at all: for
+// those the page says what failed, and that it can't say why (the stored
+// text, if any, never reaches the page).
+export const UNKNOWN_RUN_FAILURE = "The extraction failed, and this page can't say why.";
+
+export function runFailureSentence(code: ErrorCode | null): string {
+  if (code === null || code === "unknown") return `${UNKNOWN_RUN_FAILURE} Please try again.`;
+  return userFacingError(code).message;
+}
 
 // A sentence for the notice beside a document's buttons.
 export type Explained = { text: string };

@@ -26,7 +26,9 @@ function getServerSnapshot(): Theme {
   return "dark";
 }
 
-export function ThemeToggle() {
+// className replaces the button's look; the landing page passes its own,
+// from its CSS module.
+export function ThemeToggle({ className = iconButtonClass }: { className?: string }) {
   const theme = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const next: Theme = theme === "dark" ? "light" : "dark";
 
@@ -57,7 +59,7 @@ export function ThemeToggle() {
       onClick={toggle}
       aria-label={`Switch to ${next} theme`}
       title={`Switch to ${next} theme`}
-      className={iconButtonClass}
+      className={className}
     >
       <SunIcon className="in-data-[theme=light]:hidden" />
       <MoonIcon className="hidden in-data-[theme=light]:block" />

@@ -2,7 +2,16 @@
 
 import { unstable_rethrow } from "next/navigation";
 import { useActionState, useEffect, useId, useMemo, useRef, useState } from "react";
-import { errorClass, inputClass, labelClass, submitButtonClass } from "@/app/ui";
+import {
+  errorClass,
+  errorInkRuleClass,
+  formRowClass,
+  formRowLabelClass,
+  formWidthClass,
+  inputClass,
+  pageTitleClass,
+  submitButtonClass,
+} from "@/app/ui";
 import { MIN_PASSWORD_LENGTH } from "@/lib/password";
 import type { FormState } from "@/app/form-state";
 import { classifyThrown } from "@/lib/errors";
@@ -16,15 +25,21 @@ export type AuthAction = (prev: FormState, formData: FormData) => Promise<FormSt
 export type Mode = "sign-in" | "sign-up";
 
 const copy = {
+  // title: the page's h1, printed by the form only where it changes with
+  // the form's step. Sign-up's does: once the email is sent the page is
+  // "Check your email" (CheckEmail). Sign-in's never does, and its view
+  // prints it above the confirmation notice.
   "sign-in": {
+    title: null,
     submit: "Sign in",
     pending: "Signing in…",
     passwordAutoComplete: "current-password",
     passwordMissing: "Enter your password.",
   },
   "sign-up": {
+    title: "Create an account",
     submit: "Create account",
-    pending: "Creating your account…",
+    pending: "Creating account…",
     passwordAutoComplete: "new-password",
     passwordMissing: "Choose a password.",
   },
@@ -160,100 +175,114 @@ export function CredentialsFormView({ mode, state, pending, formAction }: ViewPr
     undefined;
 
   return (
-    // noValidate: the checks in validate() replace the browser's bubbles,
-    // so errors look and read the same whether the browser or the server
-    // found them. required and type="email" stay for their semantics.
-    <form
-      noValidate
-      action={formAction}
-      onSubmit={onSubmit}
-      // React resets the form once the action has run, which empties the
-      // uncontrolled password; the rule has to follow.
-      onReset={isSignUp ? password.reset : undefined}
-      className="mt-6"
-    >
-      <div>
-        <label htmlFor={ids.email} className={labelClass}>
-          Email
-        </label>
-        <input
-          ref={emailRef}
-          id={ids.email}
-          name="email"
-          type="email"
-          autoComplete="username"
-          required
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          aria-invalid={problems.email ? true : undefined}
-          aria-describedby={problems.email ? ids.emailError : undefined}
-          className={inputClass}
-        />
-        {problems.email && (
-          <p id={ids.emailError} className={`mt-1 ${errorClass}`}>
-            {problems.email}
-          </p>
-        )}
-      </div>
+    <>
+      {text.title && <h1 className={pageTitleClass}>{text.title}</h1>}
+      {/* noValidate: the checks in validate() replace the browser's bubbles,
+          so errors look and read the same whether the browser or the server
+          found them. required and type="email" stay for their semantics.
 
-      <div className="mt-5">
-        <label htmlFor={ids.password} className={labelClass}>
-          Password
-        </label>
-        <input
-          ref={passwordRef}
-          id={ids.password}
-          name="password"
-          type="password"
-          autoComplete={text.passwordAutoComplete}
-          required
-          // Read by password generators; validate() does the checking. No
-          // maxLength: it would cut a pasted password short without a word.
-          minLength={isSignUp ? MIN_PASSWORD_LENGTH : undefined}
-          onChange={isSignUp ? password.onChange : undefined}
-          aria-invalid={passwordProblem ? true : undefined}
-          aria-describedby={passwordDescribedBy}
-          className={inputClass}
-        />
-        {passwordProblem && (
-          <p id={ids.passwordError} className={`mt-1 ${errorClass}`}>
-            {passwordProblem}
-          </p>
-        )}
-        {isSignUp && (
-          <>
-            <PasswordRule id={ids.passwordRule} length={password.length} />
-            <p aria-live="polite" className="sr-only">
-              {password.announcement}
-            </p>
-          </>
-        )}
-      </div>
-
-      {/* Always in the page, so a message added to it is announced. */}
-      <div role="alert">
-        {/* Written by focusField, never by React. */}
-        <span ref={echoRef} className="sr-only" />
-        {problems.form && (
-          <p className={`mt-5 max-w-sm rounded-md border border-danger px-3 py-2 ${errorClass}`}>
-            {problems.form}
-          </p>
-        )}
-      </div>
-      {/* A label change on the focused button isn't reliably announced. */}
-      <div role="status" className="sr-only">
-        {pending ? text.pending : ""}
-      </div>
-
-      <button
-        type="submit"
-        aria-disabled={pending || undefined}
-        className={`mt-6 w-full max-w-sm ${submitButtonClass}`}
+          A ruled register, the organization page's: one row per field, the
+          label in the left column, then a row for the button. An error stands
+          under what it is about against a 2px ink rule, as a refusal does on
+          the organization page; signal is kept for the one primary action. */}
+      <form
+        noValidate
+        action={formAction}
+        onSubmit={onSubmit}
+        // React resets the form once the action has run, which empties the
+        // uncontrolled password; the rule has to follow.
+        onReset={isSignUp ? password.reset : undefined}
+        className={`mt-8 ${formWidthClass}`}
       >
-        {pending && <Spinner />}
-        {pending ? text.pending : text.submit}
-      </button>
-    </form>
+        <div className={formRowClass}>
+          <label htmlFor={ids.email} className={formRowLabelClass}>
+            Email
+          </label>
+          <div className="min-w-0">
+            <input
+              ref={emailRef}
+              id={ids.email}
+              name="email"
+              type="email"
+              autoComplete="username"
+              required
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              aria-invalid={problems.email ? true : undefined}
+              aria-describedby={problems.email ? ids.emailError : undefined}
+              className={inputClass}
+            />
+            {problems.email && (
+              <p id={ids.emailError} className={`mt-3 ${errorClass} ${errorInkRuleClass}`}>
+                {problems.email}
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className={formRowClass}>
+          <label htmlFor={ids.password} className={formRowLabelClass}>
+            Password
+          </label>
+          <div className="min-w-0">
+            <input
+              ref={passwordRef}
+              id={ids.password}
+              name="password"
+              type="password"
+              autoComplete={text.passwordAutoComplete}
+              required
+              // Read by password generators; validate() does the checking. No
+              // maxLength: it would cut a pasted password short without a word.
+              minLength={isSignUp ? MIN_PASSWORD_LENGTH : undefined}
+              onChange={isSignUp ? password.onChange : undefined}
+              aria-invalid={passwordProblem ? true : undefined}
+              aria-describedby={passwordDescribedBy}
+              className={inputClass}
+            />
+            {/* Sign-up: the rule first, where it always is, so an error
+                doesn't push it down; the error under it. */}
+            {isSignUp && (
+              <>
+                <PasswordRule id={ids.passwordRule} length={password.length} />
+                <p aria-live="polite" className="sr-only">
+                  {password.announcement}
+                </p>
+              </>
+            )}
+            {passwordProblem && (
+              <p id={ids.passwordError} className={`mt-3 ${errorClass} ${errorInkRuleClass}`}>
+                {passwordProblem}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* The button's row: nothing in the label column, so the button
+            lines up with the fields above it. */}
+        <div className={formRowClass}>
+          <div aria-hidden="true" className="hidden md:block" />
+          <div className="min-w-0">
+            {/* Always in the page, so a message added to it is announced. */}
+            <div role="alert">
+              {/* Written by focusField, never by React. */}
+              <span ref={echoRef} className="sr-only" />
+              {problems.form && <p className={`mb-4 ${errorClass} ${errorInkRuleClass}`}>{problems.form}</p>}
+            </div>
+            {/* A label change on the focused button isn't reliably announced. */}
+            <div role="status" className="sr-only">
+              {pending ? text.pending : ""}
+            </div>
+
+            {/* While pending, the landing's dotted border and the words say it
+                is working; nothing turns (DESIGN.md: no looping motion). */}
+            <button type="submit" aria-disabled={pending || undefined} className={submitButtonClass}>
+              {pending ? text.pending : text.submit}
+            </button>
+          </div>
+        </div>
+      </form>
+    </>
   );
 }
 
@@ -298,24 +327,4 @@ function focusField(
   } else {
     field.focus();
   }
-}
-
-// A three-quarter ring. Turns only when the visitor allows motion; the
-// label says "…ing" either way.
-function Spinner() {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      width="16"
-      height="16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      aria-hidden="true"
-      className="motion-safe:animate-spin"
-    >
-      <path d="M8 2a6 6 0 1 1-6 6" />
-    </svg>
-  );
 }

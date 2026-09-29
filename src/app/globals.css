@@ -1,54 +1,69 @@
 @import "tailwindcss";
 
-/* The local /design-preview fixture page is git-excluded, and Tailwind
-   skips excluded paths, so it is registered here. A no-op in a clone
-   without the folder. */
-@source "./design-preview";
-
 /*
-  Design tokens. Components use only these, through Tailwind utilities:
-  bg-canvas, bg-surface, border-line, border-line-strong, text-fg,
-  text-muted, bg-accent, hover:bg-accent-hover, text-accent-fg, text-danger.
-  Each theme below swaps the raw values, so no component needs `dark:`.
+  Design tokens, one set for the landing page and /app (DESIGN.md), defined
+  here and nowhere else. Three colours, named for their job, in both
+  themes:
 
-  Tailwind's default palette, type scale and font stacks are reset, so a
-  stray `neutral-800`, `text-xs` or `font-mono` compiles to nothing.
-  transparent, current and inherit are keywords, not theme values, and
-  keep working. Values, reasons and contrast ratios: DESIGN-NOTES.md.
+    paper      the one background
+    ink        all text, every rule and border, icon strokes, hover fills
+    signal     the one accent, as a fill (the fields to check, the one
+               primary action) or a line (the focus ring, quote underlines)
+    on-signal  text on signal: always the dark one, 5.06:1 in both themes
+
+  Light swaps paper and ink; signal stays. Signal is never text on paper
+  (3.22:1 on the light ground). Hovering an action fills it with ink and
+  sets its text in paper (16.30:1), the landing's hover, primary included:
+  there is no hover shade of signal. stage and stage-edge are aliases, for
+  the ground behind the landing's scan only (DESIGN.md's exception).
+
+  Components use only these, through Tailwind utilities (bg-paper,
+  text-ink, border-ink, bg-signal, text-on-signal …). Tailwind's palette,
+  type scale, font stacks, radii, shadows, blurs and animations are reset,
+  so a stray `neutral-800`, `text-xs`, `rounded-lg`, `shadow-md` or
+  `animate-spin` compiles to nothing. transparent, current and inherit are
+  keywords, not theme values, and keep working.
 */
 @theme inline {
   --color-*: initial;
-  --color-canvas: var(--canvas);
-  --color-surface: var(--surface);
-  --color-line: var(--line);
-  --color-line-strong: var(--line-strong);
-  --color-fg: var(--fg);
-  --color-muted: var(--muted);
-  --color-accent: var(--accent);
-  --color-accent-hover: var(--accent-hover);
-  --color-accent-fg: var(--accent-fg);
-  --color-danger: var(--danger);
+  --color-paper: var(--paper);
+  --color-ink: var(--ink);
+  --color-signal: var(--signal);
+  --color-on-signal: var(--on-signal);
+  --color-stage: var(--stage);
+  --color-stage-edge: var(--stage-edge);
 
   --font-*: initial;
+  /* Geist for reading, Archivo for display and labels. Both are loaded
+     with next/font in the root layout. */
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-archivo), ui-sans-serif, sans-serif;
 
-  /* No glass: blur-* and backdrop-blur-* have no named values. */
+  /* One radius, none. No shadows, no glass, nothing that loops. */
+  --radius-*: initial;
+  --shadow-*: initial;
+  --inset-shadow-*: initial;
+  --drop-shadow-*: initial;
+  --text-shadow-*: initial;
   --blur-*: initial;
+  --animate-*: initial;
+
+  /* Motion: ease-out only, short. */
+  --ease-*: initial;
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --default-transition-duration: 150ms;
+  --default-transition-timing-function: cubic-bezier(0, 0, 0.2, 1);
 }
 
-/* Four sizes, each with its line height. Nothing else exists. */
+/* Four sizes, the landing's reading sizes plus a display size for page
+   titles. label (12/16, Archivo) and display are utilities below, because
+   each also sets its face. Nothing else exists. */
 @theme {
   --text-*: initial;
-  --text-sm: 0.8125rem; /* 13px: labels, meta, table cells, buttons */
-  --text-sm--line-height: 1.25rem;
-  --text-base: 0.9375rem; /* 15px: body */
-  --text-base--line-height: 1.5rem;
-  --text-lg: 1.25rem; /* 20px: section headings */
-  --text-lg--line-height: 1.75rem;
-  --text-lg--letter-spacing: -0.01em;
-  --text-2xl: 1.875rem; /* 30px: page titles */
-  --text-2xl--line-height: 2.25rem;
-  --text-2xl--letter-spacing: -0.02em;
+  --text-small: 0.9375rem; /* 15px: meta, quotes, questions, hints, table cells, errors */
+  --text-small--line-height: 1.375rem;
+  --text-body: 1.125rem; /* 18px: values, sentences, inputs; the default */
+  --text-body--line-height: 1.75rem;
 }
 
 /*
@@ -61,57 +76,244 @@
 :root,
 [data-theme="dark"] {
   color-scheme: dark;
-  --canvas: #0c0c0b;
-  --surface: #171716;
-  --line: #282826;
-  --line-strong: #6b6b66;
-  --fg: #ededea;
-  --muted: #9e9e98;
-  --accent: #ff8f40;
-  --accent-hover: #ffa968;
-  --accent-fg: #0c0c0b;
-  --danger: #ff6b6b;
+  --paper: #141413;
+  --ink: #f2f1ec;
+  --signal: #e8560f;
+  --on-signal: #141413;
+  --stage: var(--paper);
+  --stage-edge: var(--ink);
 }
 
 [data-theme="light"] {
   color-scheme: light;
-  --canvas: #fafaf8;
-  --surface: #ffffff;
-  --line: #e6e6e1;
-  --line-strong: #8c8c86;
-  --fg: #141413;
-  --muted: #5e5e59;
-  --accent: #b54a00;
-  --accent-hover: #9a3f00;
-  --accent-fg: #fafaf8;
-  --danger: #b91c1c;
+  --paper: #f2f1ec;
+  --ink: #141413;
+  --stage: var(--ink);
+  --stage-edge: var(--paper);
 }
 
-/* Hand-written CSS reads the raw variables (var(--accent)), not
-   var(--color-accent): those are resolved once on :root, so they would
+/* 12/16, Archivo set wide, uppercase: state words, tags, column heads,
+   section labels, buttons, form labels. The landing's .label. */
+@utility label {
+  font-family: var(--font-archivo), ui-sans-serif, sans-serif;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-variation-settings: "wdth" 125;
+}
+
+/* Page titles: Archivo at normal width, 32px on a phone to 48px. */
+@utility display {
+  font-family: var(--font-archivo), ui-sans-serif, sans-serif;
+  font-size: clamp(2rem, 1.5rem + 2vw, 3rem);
+  line-height: 1.05;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  font-variation-settings: "wdth" 100;
+}
+
+/* The name, as on the landing: Archivo wide at the body size. */
+@utility wordmark {
+  font-family: var(--font-archivo), ui-sans-serif, sans-serif;
+  font-size: 1.125rem;
+  line-height: 1.75rem;
+  font-weight: 500;
+  font-variation-settings: "wdth" 125;
+}
+
+/* Hand-written CSS reads the raw variables (var(--signal)), not
+   var(--color-signal): those are resolved once on :root, so they would
    ignore a data-theme set on anything below <html>. */
 @layer base {
-  /* One ring for everything keyboard-focusable. Inputs tighten it to sit
-     on their border (ui.ts). */
+  /* Numbers line up everywhere, as on the landing. */
+  body {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* One ring for everything keyboard-focusable, the landing's: 2px of
+     signal, 2px out (3.22:1 on the light ground, 5.06:1 on the dark). */
   :focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--signal);
     outline-offset: 2px;
   }
 
   ::placeholder {
-    color: var(--muted);
+    color: var(--ink);
   }
 
   ::selection {
-    background-color: var(--fg);
-    color: var(--canvas);
+    background-color: var(--ink);
+    color: var(--paper);
   }
 
-  /* One family: code-ish elements don't switch to a monospace stack. */
+  /* Reading faces only: code-ish elements don't switch to a monospace. */
   code,
   kbd,
   samp,
   pre {
     font-family: inherit;
+  }
+
+  /* Native controls come square too (the file picker's button). */
+  ::file-selector-button {
+    border-radius: 0;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      transition-duration: 0s !important;
+      animation-duration: 0s !important;
+    }
+  }
+}
+
+/*
+  The register (the organization page's document list). Each document is
+  one ruled line: the state and the name, the detail under them, the one
+  action and the chevron at the right; a message from the action (a
+  refusal, a delete to confirm) gets a line of its own under the detail.
+  On a phone the action drops under the detail. DocumentActions' root is
+  display: contents, so its two parts are placed here.
+*/
+@layer components {
+  .ledger-line {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "head chevron"
+      "detail detail"
+      "action action"
+      "notice notice";
+    column-gap: 1rem;
+  }
+
+  .ledger-head {
+    grid-area: head;
+  }
+
+  .ledger-detail {
+    grid-area: detail;
+  }
+
+  .ledger-chevron {
+    grid-area: chevron;
+  }
+
+  .ledger-line > [data-actions] > [data-part="buttons"] {
+    grid-area: action;
+    position: relative;
+    z-index: 1;
+    margin-top: 0.75rem;
+  }
+
+  /* Above the line's cover too: it can hold Cancel. */
+  .ledger-line > [data-actions] > [data-part="notice"] {
+    grid-area: notice;
+    position: relative;
+    z-index: 1;
+    max-width: 65ch;
+  }
+
+  /* The file's own line: its label, what it is, and Download and Delete,
+     with their message under them. */
+  .ledger-file {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 0.25rem;
+  }
+
+  .ledger-file > [data-actions] > [data-part="buttons"] {
+    margin-top: 0.5rem;
+  }
+
+  /* The run history's line: its summary, Extract again at the right, and
+     the action's message on a line of its own. */
+  .ledger-runs-row > [data-actions] > [data-part="notice"] {
+    flex-basis: 100%;
+  }
+
+  @media (min-width: 48rem) {
+    .ledger-line {
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      grid-template-areas:
+        "head action chevron"
+        "detail action chevron"
+        "notice notice notice";
+    }
+
+    .ledger-line > [data-actions] > [data-part="buttons"] {
+      margin-top: 0;
+      align-self: start;
+    }
+
+    .ledger-line > [data-actions] > [data-part="notice"] {
+      padding-left: 12rem;
+      max-width: none;
+    }
+
+    .ledger-file {
+      grid-template-columns: 11rem minmax(0, 1fr) auto;
+      grid-template-areas:
+        "label meta buttons"
+        ". notice notice";
+      column-gap: 1rem;
+      align-items: start;
+    }
+
+    .ledger-file-label {
+      grid-area: label;
+      padding-top: 0.25rem;
+    }
+
+    .ledger-file-meta {
+      grid-area: meta;
+      padding-top: 0.125rem;
+    }
+
+    .ledger-file > [data-actions] > [data-part="buttons"] {
+      grid-area: buttons;
+      margin-top: 0;
+    }
+
+    .ledger-file > [data-actions] > [data-part="notice"] {
+      grid-area: notice;
+    }
+
+    /* The runs row's message lines up with every other line's words. */
+    .ledger-runs-row > [data-actions] > [data-part="notice"] {
+      padding-left: 12rem;
+    }
+  }
+
+  /* The one motion: what a line opens onto arrives, 4px from above to its
+     place and from clear to solid, 160ms ease-out, once per opening (an
+     animation starts when the hidden attribute goes). On arrival the line
+     that needs review opens the same way. Nothing loops; with reduced
+     motion it is simply there. */
+  @media (prefers-reduced-motion: no-preference) {
+    .ledger-arrive:not([hidden]) {
+      animation: ledger-arrive 160ms cubic-bezier(0, 0, 0.2, 1) 1 both;
+    }
+
+    /* In a closed <details> (the organizations list's Create fold) it has
+       no animation, so it gets one, and plays it, as the fold opens. */
+    details:not([open]) > .ledger-arrive {
+      animation: none;
+    }
+  }
+}
+
+@keyframes ledger-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }

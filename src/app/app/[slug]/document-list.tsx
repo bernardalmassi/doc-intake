@@ -1,93 +1,101 @@
-import { badgeClass, errorClass, hintClass, reviewBadgeClass, sectionTitleClass, textTargetClass } from "@/app/ui";
+import { errorInkRuleClass } from "@/app/ui";
 import { EXTRACTION_LIMITS } from "@/lib/extraction/config";
+import { userFacingError } from "@/lib/errors";
 import { DocumentActions, type ExtractMode } from "./document-actions";
+import { type DocumentState, failedExit, type StatedEntry, stateOf } from "./document-state";
 import { ExtractionPanel } from "./extraction-panel";
-import { fieldSummary } from "./fields";
-import { fileKind, formatBytes, formatUtc } from "./format";
-import { AlertIcon, ChevronRightIcon, DocumentsIcon, SpinnerIcon } from "./icons";
-import { type ErrorCode, userFacingError } from "@/lib/errors";
-import { DOCUMENTS_HEADING_ID, statusLabel } from "./messages";
+import { extractReads, fieldSummary } from "./fields";
+import { fileKind, formatBytes, formatClock, formatUtc } from "./format";
+import { Elapsed, LedgerLine, LineDetail, LineStateMark, Register, RegisterKey, RunsToggle } from "./ledger";
+import { DOCUMENTS_HEADING_ID, runFailureSentence, UNKNOWN_RUN_FAILURE } from "./messages";
 import { RunHistory, runHistoryMeta } from "./run-history";
+import { StateMark } from "./state-glyph";
 import type { DocumentEntry } from "./types";
 
 type ListProps = {
-  entries: DocumentEntry[];
+  entries: StatedEntry[];
   slug: string;
   canManage: boolean;
 };
 
+// The documents as a register: one ruled line per document, its state as
+// a printed column (a glyph and a word), its name, one sentence saying
+// what happens next, and at most one action. A line opens in place onto
+// what it has: the fields (the ones to check first), the run history and
+// the file. Lines that need review arrive open; nothing else does.
+//
+// From 64rem the landing's grid: the section's label and the register's
+// key in the first three columns, the register in the next eight, the
+// last empty. Each state is worked out once, here, and passed down.
 export function DocumentList({ entries, slug, canManage }: ListProps) {
-  const reviewCount = entries.filter((e) => e.document.status === "needs_review").length;
+  const stated = entries.map((entry) => ({ entry, state: stateOf(entry) }));
+  // What Extract reads is said once, beside the first Extract on the page.
+  const firstReady = stated.find(({ entry, state }) => state === "ready" && entry.document.status !== "uploading");
 
   return (
-    <>
-      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <h2 id={DOCUMENTS_HEADING_ID} tabIndex={-1} className={sectionTitleClass}>
-          Documents
-        </h2>
-        {entries.length > 0 && (
-          <p className={`${hintClass} tabular-nums`}>
-            {entries.length} {entries.length === 1 ? "document" : "documents"}
-            {reviewCount > 0 && ` · ${reviewCount} ${reviewCount === 1 ? "needs" : "need"} review`}
-          </p>
-        )}
-      </div>
+    <Register>
+      <div className="grid grid-cols-1 gap-x-8 lg:grid-cols-12">
+        <div className="lg:col-span-3">
+          <h2 id={DOCUMENTS_HEADING_ID} tabIndex={-1} className="label">
+            Documents · {entries.length}
+          </h2>
+          {entries.length > 0 && (
+            <RegisterKey lines={stated.map(({ entry, state }) => ({ id: entry.document.id, state }))} />
+          )}
+        </div>
 
-      {entries.length === 0 ? (
-        <EmptyDocuments canManage={canManage} />
-      ) : (
-        <ul className="mt-4 space-y-3">
-          {entries.map((entry) => (
-            <li key={entry.document.id}>
-              <DocumentItem entry={entry} slug={slug} canManage={canManage} />
-            </li>
-          ))}
-        </ul>
-      )}
-    </>
+        <div className="mt-3 min-w-0 lg:col-span-8 lg:col-start-4 lg:mt-0">
+          {entries.length === 0 ? (
+            <EmptyDocuments canManage={canManage} />
+          ) : (
+            <ul className="border-t border-ink">
+              {stated.map(({ entry, state }) => (
+                <li key={entry.document.id}>
+                  <DocumentLine
+                    entry={entry}
+                    state={state}
+                    slug={slug}
+                    canManage={canManage}
+                    explainExtract={canManage && entry === firstReady?.entry}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </Register>
   );
 }
 
-// The first thing a new organization sees: what to do, in order.
+// An empty register: one plain sentence, then the three things that fill
+// it, as ruled lines in the same two columns.
 function EmptyDocuments({ canManage }: { canManage: boolean }) {
-  const steps = [
-    <>
-      <span className="font-medium">Upload</span> a PDF, PNG or JPEG of up to 10&nbsp;MB, using the box above.
-    </>,
-    canManage ? (
+  const steps: [string, React.ReactNode][] = [
+    ["Upload", <>A PDF, PNG or JPEG of up to 10&nbsp;MB, in Upload below.</>],
+    [
+      "Extract",
+      canManage ? extractReads() : `An admin extracts it. ${extractReads()}`,
+    ],
+    [
+      "Check",
       <>
-        <span className="font-medium">Extract</span> it: its type, sender, recipient, dates, reference number,
-        total and a one-line summary are read for you.
-      </>
-    ) : (
-      <>
-        An admin <span className="font-medium">extracts</span> it: its type, sender, recipient, dates, reference
-        number, total and a one-line summary are read for you.
-      </>
-    ),
-    <>
-      <span className="font-medium">Check</span> anything marked <span className={reviewBadgeClass}>Needs review</span>
-      : those are the values the model wasn&apos;t sure about.
-    </>,
+        Anything marked <StateMark state="needs-review" className="align-[-1px]" />: the values the model wasn&apos;t
+        sure about, with the words it read them from.
+      </>,
+    ],
   ];
 
   return (
-    <div className="mt-4 rounded-lg border border-dashed border-line-strong p-5 sm:p-8">
-      <DocumentsIcon className="text-muted" />
-      <h3 className="mt-3 font-semibold">No documents yet</h3>
-      <p className="mt-1 max-w-prose text-muted">
-        Documents uploaded to this organization appear here, for every member to see.
-      </p>
-      <ol className="mt-5 max-w-prose space-y-3">
-        {steps.map((step, index) => (
-          <li key={index} className="flex gap-3">
-            <span
-              aria-hidden="true"
-              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-line-strong text-sm tabular-nums text-muted"
-            >
-              {index + 1}
+    <div className="border-t border-ink">
+      <p className="py-4">No documents yet. Documents uploaded here are listed for every member to see.</p>
+      <ol>
+        {steps.map(([verb, text], index) => (
+          <li key={verb} className="border-t border-ink py-3 md:grid md:grid-cols-[11rem_minmax(0,1fr)] md:gap-x-4">
+            <span className="label block">
+              {index + 1} {verb}
             </span>
-            <span className="min-w-0">{step}</span>
+            <span className="mt-1 block text-small md:mt-0">{text}</span>
           </li>
         ))}
       </ol>
@@ -95,218 +103,277 @@ function EmptyDocuments({ canManage }: { canManage: boolean }) {
   );
 }
 
-function DocumentItem({ entry, slug, canManage }: { entry: DocumentEntry; slug: string; canManage: boolean }) {
-  const { document, runs, fields, staleRun } = entry;
-  const review = document.status === "needs_review";
+// One document's line and what it opens onto.
+function DocumentLine({
+  entry,
+  state,
+  slug,
+  canManage,
+  explainExtract,
+}: {
+  entry: DocumentEntry;
+  state: DocumentState;
+  slug: string;
+  canManage: boolean;
+  explainExtract: boolean;
+}) {
+  const { document, runs, fields } = entry;
   const hasFile = document.status !== "uploading";
-  const kind = fileKind(document.mime_type);
-  const meta = [
-    kind,
-    document.size_bytes !== null ? formatBytes(document.size_bytes) : null,
-  ].filter((part): part is string => part !== null);
+  const low = fields.filter((field) => field.band === "low").length;
+  const nameId = `document-${document.id}`;
+  const again: ExtractMode = runs.length > 0 ? "again" : "first";
+  const hasFields = fields.length > 0;
 
-  // Extract is the primary action while there are no results yet; once
-  // there are, running it again is secondary.
-  let extract: { mode: ExtractMode; primary: boolean } | null = null;
-  if (canManage && hasFile) {
-    const mode: ExtractMode =
-      document.status === "processing" && !staleRun ? "running" : runs.length > 0 ? "again" : "first";
-    extract = { mode, primary: fields.length === 0 };
+  const actions = { id: document.id, slug, filename: document.filename, storagePath: document.storage_path };
+
+  // The closed line's one exit: Extract for ready; for failed, what the
+  // failure's own sentence tells the reader to do (failedExit). Needs
+  // review and done open onto their fields, which is the line itself.
+  // Uploading, queued and running offer nothing. Never the signal fill: on
+  // this page signal marks what needs a person, not an action.
+  const failed = state === "failed" ? failedExit(entry) : null;
+  let exit: React.ReactNode = null;
+  if (canManage && state === "ready" && hasFile) {
+    exit = (
+      <DocumentActions {...actions} canDownload={false} canDelete={false} extract={{ mode: again, primary: false }} />
+    );
+  } else if (canManage && failed === "extract") {
+    exit = (
+      <DocumentActions {...actions} canDownload={false} canDelete={false} extract={{ mode: "again", primary: false }} />
+    );
+  } else if (canManage && failed === "delete") {
+    exit = <DocumentActions {...actions} canDownload={false} canDelete extract={null} />;
+  } else if (failed === "download") {
+    // "Review it yourself instead": the file is the way on, for any member.
+    exit = <DocumentActions {...actions} canDownload canDelete={false} extract={null} />;
   }
 
+  // What the exit already offers isn't offered again in the File row, and
+  // Extract again stays in the runs row when the exit is something else,
+  // so a failure that says retrying won't help never leaves a dead end.
+  const deleteOnLine = canManage && failed === "delete";
+  const downloadOnLine = failed === "download";
+  const extractInRuns = canManage && hasFile && (hasFields || (failed !== null && failed !== "extract"));
+  const latest = runs[0];
+
   return (
-    // Needs review is the one state in the accent: the border and the
-    // badge, plus the badge's icon and words and its place at the top of
-    // the list, so it never rests on color alone.
     <article
-      aria-labelledby={`document-${document.id}`}
-      className={`rounded-lg border bg-surface p-4 sm:p-5 ${review ? "border-accent" : "border-line"}`}
+      aria-labelledby={nameId}
+      data-doc-status={document.status}
+      data-doc-state={state}
+      className="border-b border-ink"
     >
-      <div className="flex items-start justify-between gap-3">
-        <h3 id={`document-${document.id}`} className="min-w-0 font-medium [overflow-wrap:anywhere]">
-          {document.filename}
-        </h3>
-        <StatusBadge status={document.status} stale={staleRun} />
-      </div>
-      <p className={`mt-1 ${hintClass} tabular-nums`}>
-        {meta.length > 0 && `${meta.join(" · ")} · `}
-        {document.status === "uploading" ? "Upload started" : "Uploaded"}{" "}
-        <time dateTime={document.created_at}>{formatUtc(document.created_at)}</time>
-      </p>
-      <StatusLine entry={entry} canManage={canManage} />
-      <DocumentActions
-        id={document.id}
-        slug={slug}
-        filename={document.filename}
-        storagePath={document.storage_path}
-        canDownload={hasFile}
-        canDelete={canManage}
-        extract={extract}
-      />
-      {fields.length > 0 && (
-        // Open from the start when the document needs review: the fields
-        // to check are the reason to be here.
-        <details open={review} className="group mt-4 border-t border-line pt-3">
-          <Summary>Extracted fields</Summary>
-          <ExtractionPanel fields={fields} />
-        </details>
-      )}
-      {runs.length > 0 && (
-        <details className="group mt-4 border-t border-line pt-3">
-          <Summary meta={runHistoryMeta(runs)}>Run history</Summary>
-          <RunHistory runs={runs} filename={document.filename} staleRun={staleRun} />
-        </details>
-      )}
+      <LedgerLine
+        defaultOpen={state === "needs-review"}
+        revealsFields={hasFields}
+        cue={hasFields ? "Fields" : undefined}
+        head={
+          <>
+            <LineStateMark
+              id={document.id}
+              state={state}
+              count={state === "needs-review" ? low : undefined}
+              className="md:w-44 md:shrink-0"
+            />
+            <span
+              id={nameId}
+              title={document.filename}
+              className="block w-full min-w-0 [overflow-wrap:anywhere] md:truncate"
+            >
+              {document.filename}
+            </span>
+          </>
+        }
+        detail={
+          <LineDetail id={document.id}>
+            <Detail entry={entry} state={state} canManage={canManage} explainExtract={explainExtract} />
+          </LineDetail>
+        }
+        exit={exit}
+      >
+        {hasFields && latest?.status === "failed" && (
+          <p className={`mb-4 max-w-prose text-small md:ml-48 ${errorInkRuleClass}`}>
+            {latest.error_code && latest.error_code !== "unknown"
+              ? `The latest run failed. ${userFacingError(latest.error_code).message}`
+              : "The latest run failed, and this page can't say why."}{" "}
+            The fields below are from an earlier run.
+          </p>
+        )}
+
+        {hasFields && <ExtractionPanel fields={fields} />}
+
+        {runs.length > 0 ? (
+          <RunsToggle
+            summary={runHistoryMeta(runs)}
+            action={
+              extractInRuns ? (
+                <DocumentActions
+                  {...actions}
+                  canDownload={false}
+                  canDelete={false}
+                  extract={{ mode: "again", primary: false }}
+                />
+              ) : undefined
+            }
+          >
+            <RunHistory runs={runs} filename={document.filename} staleRun={entry.staleRun} />
+          </RunsToggle>
+        ) : (
+          <p
+            className={`${hasFields ? "mt-6" : ""} border-t border-ink pt-3 md:grid md:grid-cols-[11rem_minmax(0,1fr)] md:gap-x-4`}
+          >
+            <span className="label block">Runs 0</span>
+            <span className="text-small">No runs yet.</span>
+          </p>
+        )}
+
+        {/* Delete stays here while a line reads uploading: the page can't
+            tell an upload under way from one that failed a moment ago,
+            whose sender the upload form sends here to delete it. Deleting
+            one under way stops it; Storage refuses the rest of its bytes. */}
+        <FileRow
+          entry={entry}
+          actions={actions}
+          canDownload={hasFile && !downloadOnLine}
+          canDelete={canManage && !deleteOnLine}
+        />
+      </LedgerLine>
     </article>
   );
 }
 
-// The clickable line of a disclosure: a chevron that turns when open, the
-// name, and optional muted detail. At least 24px tall (textTargetClass).
-function Summary({ children, meta }: { children: React.ReactNode; meta?: string }) {
+// The document as a file: its kind, size and upload time, and what can be
+// done with the file itself.
+function FileRow({
+  entry,
+  actions,
+  canDownload,
+  canDelete,
+}: {
+  entry: DocumentEntry;
+  actions: { id: string; slug: string; filename: string; storagePath: string };
+  canDownload: boolean;
+  canDelete: boolean;
+}) {
+  const { document } = entry;
+  const kind = fileKind(document.mime_type);
+  const meta = [kind, document.size_bytes !== null ? formatBytes(document.size_bytes) : null].filter(
+    (part): part is string => part !== null,
+  );
+
   return (
-    <summary
-      className={`flex w-fit cursor-pointer list-none flex-wrap items-center gap-x-1.5 text-sm font-medium [&::-webkit-details-marker]:hidden ${textTargetClass}`}
-    >
-      <ChevronRightIcon className="text-muted group-open:rotate-90" />
-      <span className="mr-1.5">{children}</span>
-      {meta && <span className="font-normal text-muted tabular-nums">{meta}</span>}
-    </summary>
+    <div className="ledger-file mt-4 border-t border-ink pt-3 md:mt-6">
+      <span className="ledger-file-label label">File</span>
+      <p className="ledger-file-meta text-small">
+        {meta.length > 0 && `${meta.join(" · ")} · `}
+        {document.status === "uploading" ? "Upload started" : "Uploaded"}{" "}
+        <time dateTime={document.created_at}>{formatUtc(document.created_at)}</time>
+      </p>
+      {(canDownload || canDelete) && (
+        <DocumentActions {...actions} canDownload={canDownload} canDelete={canDelete} extract={null} />
+      )}
+    </div>
   );
 }
 
-function StatusBadge({ status, stale }: { status: string; stale: boolean }) {
-  if (status === "needs_review") {
-    return (
-      <span className={`${reviewBadgeClass} shrink-0 gap-1`}>
-        <AlertIcon />
-        Needs review
-      </span>
-    );
-  }
-  if (status === "processing" && !stale) {
-    return (
-      <span className={`${badgeClass} shrink-0 gap-1.5`}>
-        <SpinnerIcon />
-        Extracting
-      </span>
-    );
-  }
-  return <span className={`${badgeClass} shrink-0`}>{stale ? "Extraction stalled" : statusLabel(status)}</span>;
-}
-
-// One or two sentences under the document's name saying where it stands
-// and what happens next, computed from the document and its runs.
-function StatusLine({ entry, canManage }: { entry: DocumentEntry; canManage: boolean }) {
-  const { document, runs, staleRun } = entry;
+// The line's one sentence: where the document stands and what happens
+// next, from data the page already has.
+function Detail({
+  entry,
+  state,
+  canManage,
+  explainExtract,
+}: {
+  entry: DocumentEntry;
+  state: DocumentState;
+  canManage: boolean;
+  explainExtract: boolean;
+}) {
+  const { runs, fields } = entry;
   const latest = runs[0];
-  const latestFailed = latest?.status === "failed";
-  const retry = canManage ? "You can try again." : "An admin can try again.";
-  // The catalog's sentences speak to whoever can act; a member can't.
-  const memberNote = canManage ? null : "Only an admin can run extraction.";
 
-  switch (document.status) {
+  switch (state) {
     case "uploading":
-      return <UnfinishedUpload canManage={canManage} />;
-
-    case "pending":
-      if (latestFailed) {
-        return <FailedRun lead="The last extraction failed." code={latest.error_code} next={memberNote} />;
-      }
+      // When the row was made, which is when the upload started; elapsed
+      // time once the browser has a clock, as a running extraction's.
       return (
-        <p className={`mt-3 ${hintClass}`}>
-          {canManage
-            ? "Not extracted yet. Extract reads its type, sender, dates, amounts and more."
-            : "Not extracted yet. An admin can extract it."}
+        <p>
+          Started <time dateTime={entry.document.created_at}>{formatClock(entry.document.created_at)}</time>
+          <Elapsed since={entry.document.created_at} spoken="uploading for" />. The file hasn&apos;t arrived yet.
         </p>
       );
 
-    case "processing":
-      if (staleRun) {
-        return (
-          <p className="mt-3 max-w-prose text-sm">
-            This extraction has been running for more than {EXTRACTION_LIMITS.staleRunMinutes} minutes and has
-            probably stopped.{" "}
-            <span className="text-muted">
-              {canManage ? "Extract again to restart it." : "An admin can restart it."}
-            </span>
-          </p>
-        );
-      }
-      return (
-        <p className={`mt-3 ${hintClass}`}>
-          Extraction is running. Refresh the page in a minute to see the results.
-        </p>
-      );
-
-    case "failed":
-      if (!latestFailed) return <FailedRun lead="Extraction failed." code={null} next={retry} />;
-      return <FailedRun lead="Extraction failed." code={latest.error_code} next={memberNote} />;
-
-    case "extracted":
-    case "needs_review":
+    case "ready":
+      if (!canManage) return <p>Not extracted yet. An admin can extract it.</p>;
       return (
         <>
-          <FieldsLine entry={entry} />
-          {latestFailed && (
-            <FailedRun
-              lead="The latest extraction failed."
-              code={latest.error_code}
-              next="The results below are from an earlier run."
-            />
-          )}
+          <p>Not extracted yet.</p>
+          {/* Beside Extract, what it will do, in words: no signal, no
+              control. Once per page. */}
+          {explainExtract && <p className="mt-1 max-w-prose">{extractReads()}</p>}
         </>
       );
 
-    default:
-      return null;
+    case "queued":
+      return <p>Waiting to start.</p>;
+
+    case "running":
+      // The start time always; elapsed time once the browser has a clock.
+      if (latest?.status !== "running") return <p>Extracting.</p>;
+      return (
+        <p>
+          Started <time dateTime={latest.started_at}>{formatClock(latest.started_at)}</time>
+          <Elapsed since={latest.started_at} />
+        </p>
+      );
+
+    case "done": {
+      const summary = fieldSummary(fields);
+      return (
+        <p>
+          {summary.read}
+          {summary.questions && ` ${summary.questions}`}
+          {latest?.status === "failed" && " The latest run failed."}
+        </p>
+      );
+    }
+
+    case "needs-review": {
+      const summary = fieldSummary(fields);
+      return (
+        <p>
+          {summary.check}
+          {latest?.status === "failed" && " The latest run failed."}
+        </p>
+      );
+    }
+
+    case "failed":
+      return <p className="max-w-prose">{failureReason(entry, canManage)}</p>;
   }
 }
 
-// The status line of an extracted document, computed from its fields:
-// "9 of 10 fields found. 2 need checking: Due date and Total amount."
-// The fields to check are in the accent, as they are what review means.
-function FieldsLine({ entry }: { entry: DocumentEntry }) {
-  if (entry.fields.length === 0) return null;
-  const summary = fieldSummary(entry.fields);
-  return (
-    <p className="mt-3 max-w-prose text-sm">
-      {summary.found}
-      {summary.check && <span className="font-medium text-accent"> {summary.check}</span>}
-      {summary.note && <span className="text-muted"> {summary.note}</span>}
-    </p>
-  );
-}
-
-// A failed run: what failed and why in danger text (the catalog's sentence
-// for the run's error code, which says what to do next), then anything the
-// reader needs besides.
-function FailedRun({ lead, code, next }: { lead: string; code: ErrorCode | null; next: string | null }) {
-  return (
-    <p className="mt-3 flex max-w-prose items-start gap-1.5 text-sm">
-      <AlertIcon className="mt-0.5 text-danger" />
-      <span className="min-w-0">
-        <span className={errorClass}>
-          {lead}
-          {code !== null && ` ${userFacingError(code).message}`}
-        </span>
-        {next && <span className="text-muted"> {next}</span>}
-      </span>
-    </p>
-  );
-}
-
-// A row whose file never arrived: the upload was interrupted, or failed
-// after the row was created. There is nothing to download or extract, and
-// nothing sweeps these yet, so say what happened and who can tidy it up.
-function UnfinishedUpload({ canManage }: { canManage: boolean }) {
-  return (
-    <p className="mt-3 max-w-prose text-sm">
-      This upload never finished, so there is no file to download or extract. To add the document, upload it
-      again.{" "}
-      <span className="text-muted">
-        {canManage ? "You can delete this entry." : "An admin can delete this entry."}
-      </span>
-    </p>
-  );
+// Why a document has no usable result, in the catalog's words or the
+// page's own, and, for a member, who can do something about it.
+function failureReason(entry: DocumentEntry, canManage: boolean): string {
+  const { document, runs, staleRun } = entry;
+  if (document.status === "uploading") {
+    return `The upload never finished, so there is no file. ${
+      canManage ? "Delete this entry, then upload the file again." : "An admin can delete this entry."
+    }`;
+  }
+  if (staleRun) {
+    return `Stopped responding after ${EXTRACTION_LIMITS.staleRunMinutes} minutes.${
+      canManage ? " Extract again to restart it." : " An admin can restart it."
+    }`;
+  }
+  const exit = failedExit(entry);
+  const forMember =
+    canManage || exit === "download" ? "" : exit === "delete" ? " Only an admin can delete it." : " Only an admin can extract it again.";
+  const latest = runs[0];
+  const code = latest?.status === "failed" ? latest.error_code : null;
+  // An admin is told to try again, as the catalog's retryable sentences
+  // do; a member is told who can.
+  if (code === null || code === "unknown") return `${UNKNOWN_RUN_FAILURE}${forMember || " Please try again."}`;
+  return `${runFailureSentence(code)}${forMember}`;
 }
