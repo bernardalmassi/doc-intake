@@ -182,6 +182,34 @@ export const MAX_VALIDATION_RETRIES = 1;
 // for a fixed-schema extraction.
 export const OPENAI_REASONING_EFFORT = "minimal" as const;
 
+// What the price table below assumes a call is billed at: the standard
+// service tier, and for Claude, global inference routing. Every model call
+// asks for exactly that (providers/requests.ts), so a workspace's or
+// project's default can't bill it at another rate: Anthropic's Priority
+// Tier, or its US-only inference at 1.1x the standard rate (Claude 4.6 and
+// later); OpenAI's priority, flex or scale tiers. An account that doesn't
+// allow what is asked for answers 400, and the call is refused and not
+// billed, rather than billed above the table. OpenAI's regional endpoints
+// (us., eu., ae.api.openai.com) are chosen by the base URL, which
+// providers/clients.ts pins to the global one; no request parameter does.
+export const ANTHROPIC_SERVICE_TIER = "standard_only" as const;
+export const OPENAI_SERVICE_TIER = "default" as const;
+
+// inference_geo for each Anthropic model on file: "global" is the standard
+// price; null sends none, for a model that refuses the parameter (400 before
+// Claude 4.6), whose price has no geography. Every Anthropic model in
+// PRICING must be here (provider-requests.test.ts).
+const ANTHROPIC_INFERENCE_GEO: Record<string, "global" | null> = {
+  "claude-haiku-4-5-20251001": null,
+  "claude-sonnet-5": "global",
+};
+
+export function anthropicInferenceGeo(model: string): "global" | null {
+  const geo = ANTHROPIC_INFERENCE_GEO[model];
+  if (geo === undefined) throw new Error(`no inference_geo decided for ${model}; add it to config.ts`);
+  return geo;
+}
+
 // Prices in USD per million tokens, standard tier, no caching, no batch,
 // read from each provider's own pricing page on checkedOn. The database
 // computes every run's cost from public.extraction_model_prices; this is a

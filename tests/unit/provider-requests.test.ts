@@ -1,16 +1,26 @@
 // What each provider is sent (src/lib/extraction/providers/requests.ts),
 // through the real SDKs over a fake fetch, with no network: the token count
 // that run.ts makes before every call carries exactly the input the call
-// then sends, and only the call carries the output cap. So the count
-// measures what the call is billed for. Also: a count that isn't a
-// non-negative whole number fails, so no call is sent on it.
+// then sends, and only the call carries the output cap and what it is
+// billed at: the standard service tier, and for Claude global inference
+// routing (none for a model that refuses the parameter), the rates the
+// price table assumes. So the count measures what the call is billed for,
+// at the table's prices. Also: a count that isn't a non-negative whole
+// number fails, so no call is sent on it.
 //
 // Needs no database and no key; the clients point at .invalid hosts.
 
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_MODELS, MAX_OUTPUT_TOKENS } from "@/lib/extraction/config";
+import {
+  ANTHROPIC_SERVICE_TIER,
+  anthropicInferenceGeo,
+  DEFAULT_MODELS,
+  MAX_OUTPUT_TOKENS,
+  OPENAI_SERVICE_TIER,
+  PRICING,
+} from "@/lib/extraction/config";
 import { interpretTokenCount } from "@/lib/extraction/providers/interpret";
 import {
   anthropicCountParams,
@@ -73,8 +83,11 @@ describe("the count and the call carry the same input", () => {
     expect(counted.input_tokens).toBe(6708);
     expect(sent.map((s) => new URL(s.url).pathname)).toEqual(["/v1/messages/count_tokens", "/v1/messages"]);
     const [count, call] = sent.map((s) => s.body);
-    const { max_tokens, ...input } = call;
+    const { max_tokens, service_tier, inference_geo, ...input } = call;
     expect(max_tokens).toBe(MAX_OUTPUT_TOKENS);
+    // the standard tier and global routing, what the price table assumes
+    expect(service_tier).toBe("standard_only");
+    expect(inference_geo).toBe("global");
     expect(count).toEqual(input);
     expect(Object.keys(count).sort()).toEqual(["messages", "model", "output_config", "system", "thinking"]);
   });
@@ -105,10 +118,35 @@ describe("the count and the call carry the same input", () => {
     expect(counted.input_tokens).toBe(2655);
     expect(sent.map((s) => new URL(s.url).pathname)).toEqual(["/v1/responses/input_tokens", "/v1/responses"]);
     const [count, call] = sent.map((s) => s.body);
-    const { max_output_tokens, ...input } = call;
+    const { max_output_tokens, service_tier, ...input } = call;
     expect(max_output_tokens).toBe(MAX_OUTPUT_TOKENS);
+    // the standard tier; the region is the pinned base URL's (clients.ts)
+    expect(service_tier).toBe("default");
     expect(count).toEqual(input);
     expect(Object.keys(count).sort()).toEqual(["input", "instructions", "model", "reasoning", "text"]);
+  });
+});
+
+describe("what a call is billed at (V10)", () => {
+  it("is decided for every model on file: the standard tier, and a geography for every Claude model", () => {
+    expect(ANTHROPIC_SERVICE_TIER).toBe("standard_only");
+    expect(OPENAI_SERVICE_TIER).toBe("default");
+    for (const [model, price] of Object.entries(PRICING)) {
+      if (price.provider !== "anthropic") continue;
+      expect(() => anthropicInferenceGeo(model), model).not.toThrow();
+    }
+    expect(() => anthropicInferenceGeo("claude-unpriced-9")).toThrow(/no inference_geo decided/);
+  });
+
+  it("sends global routing to Sonnet 5 and no geography to Haiku 4.5, which refuses the parameter", () => {
+    expect(anthropicCreateParams("claude-sonnet-5", first)).toMatchObject({ service_tier: "standard_only", inference_geo: "global" });
+    const haiku = anthropicCreateParams("claude-haiku-4-5-20251001", first);
+    expect(haiku.service_tier).toBe("standard_only");
+    expect("inference_geo" in haiku).toBe(false);
+    expect(openAICreateParams("gpt-5-nano", first).service_tier).toBe("default");
+    // the counts carry neither
+    expect("service_tier" in anthropicCountParams("claude-sonnet-5", first)).toBe(false);
+    expect("service_tier" in openAICountParams("gpt-5-nano", first)).toBe(false);
   });
 });
 

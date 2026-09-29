@@ -1,7 +1,9 @@
 // What each provider is sent for a request: the model call, and the token
 // count that goes before it (run.ts). Both are built from one set of
 // fields, so the count measures exactly the input the call will send; the
-// call adds only its output cap.
+// call adds only its output cap and what it is billed at: the standard
+// service tier, and for Claude global inference routing, the rates the
+// price table assumes (config.ts). Neither count endpoint takes those.
 //
 // It lives apart from anthropic.ts and openai.ts, like classify.ts, because
 // those import "server-only" and so can't be loaded by tests. This module
@@ -11,7 +13,13 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
 import type { ResponseInput } from "openai/resources/responses/responses";
-import { ANTHROPIC_THINKING, OPENAI_REASONING_EFFORT } from "../config";
+import {
+  ANTHROPIC_SERVICE_TIER,
+  ANTHROPIC_THINKING,
+  anthropicInferenceGeo,
+  OPENAI_REASONING_EFFORT,
+  OPENAI_SERVICE_TIER,
+} from "../config";
 import { ATTACHMENT_FILENAME } from "../schema";
 import type { ExtractionRequest } from "./types";
 import { toBase64 } from "./types";
@@ -49,7 +57,13 @@ function anthropicInput(model: string, request: ExtractionRequest) {
 }
 
 export function anthropicCreateParams(model: string, request: ExtractionRequest): Anthropic.MessageCreateParamsNonStreaming {
-  return { ...anthropicInput(model, request), max_tokens: request.maxOutputTokens };
+  const geo = anthropicInferenceGeo(model);
+  return {
+    ...anthropicInput(model, request),
+    max_tokens: request.maxOutputTokens,
+    service_tier: ANTHROPIC_SERVICE_TIER,
+    ...(geo === null ? {} : { inference_geo: geo }),
+  };
 }
 
 export function anthropicCountParams(model: string, request: ExtractionRequest): Anthropic.MessageCountTokensParams {
@@ -95,7 +109,7 @@ function openAIInput(model: string, request: ExtractionRequest) {
 }
 
 export function openAICreateParams(model: string, request: ExtractionRequest): OpenAI.Responses.ResponseCreateParamsNonStreaming {
-  return { ...openAIInput(model, request), max_output_tokens: request.maxOutputTokens };
+  return { ...openAIInput(model, request), max_output_tokens: request.maxOutputTokens, service_tier: OPENAI_SERVICE_TIER };
 }
 
 export function openAICountParams(model: string, request: ExtractionRequest): OpenAI.Responses.InputTokenCountParams {
