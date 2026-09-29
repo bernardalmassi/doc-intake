@@ -1,0 +1,72 @@
+# Keeps the app's Supabase project (free plan) from being paused for
+# inactivity: once a day, and whenever started by hand (Actions → Keep
+# Supabase awake → Run workflow), it makes one read over the REST API with
+# the publishable key. Supabase counts API calls to the project as activity
+# (docs, "Project Pausing").
+#
+# The read is of `tenants` as the anon role, which has no privilege on any
+# table (SECURITY.md), so the expected answer is Postgres's own refusal,
+# SQLSTATE 42501, as HTTP 401. That code comes only from the database, so it
+# proves the request reached Postgres. Anything else fails the run: no
+# answer, a paused or restricted project, a rejected key, and also a 200,
+# which would mean the publishable key can read a table.
+#
+# Needs two repository secrets: SUPABASE_URL (the app project's URL) and
+# SUPABASE_PUBLISHABLE_KEY (its sb_publishable_ key). Never the secret key:
+# the step refuses any key that isn't a publishable one. Nothing is checked
+# out and no action is used, so there is nothing to install or pin.
+
+name: Keep Supabase awake
+
+on:
+  schedule:
+    - cron: "17 6 * * *" # daily, 06:17 UTC
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  read:
+    name: One read over the REST API
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read tenants as anon and expect Postgres's refusal
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_PUBLISHABLE_KEY:-}" ]; then
+            echo "::error::Set the SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY repository secrets."
+            exit 1
+          fi
+          case "$SUPABASE_PUBLISHABLE_KEY" in
+            sb_publishable_*) ;;
+            *)
+              echo "::error::SUPABASE_PUBLISHABLE_KEY is not a publishable key (sb_publishable_…). Never put the secret key here."
+              exit 1
+              ;;
+          esac
+
+          body="$(mktemp)"
+          if ! status="$(curl --silent --show-error --max-time 30 --output "$body" --write-out '%{http_code}' \
+            --header "apikey: $SUPABASE_PUBLISHABLE_KEY" \
+            "${SUPABASE_URL%/}/rest/v1/tenants?select=id&limit=1")"; then
+            echo "::error::The Supabase project did not answer (no HTTP response)."
+            exit 1
+          fi
+          code="$(jq -r '.code? // empty' "$body" 2>/dev/null || true)"
+
+          if [ "$status" = "401" ] && [ "$code" = "42501" ]; then
+            echo "The project answered: Postgres refused anon a read of tenants (42501), as the grants intend."
+            exit 0
+          fi
+          if [ "$status" = "200" ]; then
+            echo "::error::The publishable key read the tenants table (HTTP 200). No table is meant to be readable by anon; check the grants."
+            exit 1
+          fi
+          echo "::error::The Supabase project did not answer as expected: HTTP $status, error code '${code:-none}'. A paused project must be restored in the dashboard."
+          head -c 500 "$body"
+          echo
+          exit 1
