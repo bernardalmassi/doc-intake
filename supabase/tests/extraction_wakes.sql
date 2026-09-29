@@ -85,12 +85,13 @@ begin
     ('a wake that fails is its own subtransaction: the sweep returns and keeps the tick''s reap', v_run.error);
 end $t$;
 
--- 2. The URL, checked strictly (20260925000004) --------------------------------
+-- 2. The URL, checked strictly (20260925000004; localhost and IP literals by name, 20260925000005)
 
 do $t$
 declare
   v_case    record;
   v_problem text;
+  v_count   integer := 0;
 begin
   for v_case in select * from (values
     ('https://worker.invalid/api/extraction-worker', null),
@@ -103,9 +104,24 @@ begin
     ('https://user@worker.invalid/api/extraction-worker', 'has a user name or password'),
     ('https://worker.invalid:8443/api/extraction-worker', 'has a port'),
     ('https://worker.invalid:/api/extraction-worker', 'has a port'),
-    ('https://[::1]/api/extraction-worker', 'has no plain host name'),
-    ('https://10.0.0.1/api/extraction-worker', 'has no plain host name'),
-    ('https://localhost/api/extraction-worker', 'has no plain host name'),
+    ('https://[::1]/api/extraction-worker', 'is an IP address'),
+    ('https://[::1]:8443/api/extraction-worker', 'is an IP address'),
+    ('https://[::ffff:127.0.0.1]/api/extraction-worker', 'is an IP address'),
+    ('https://10.0.0.1/api/extraction-worker', 'is an IP address'),
+    ('https://127.0.0.1/api/extraction-worker', 'is an IP address'),
+    ('https://127.1/api/extraction-worker', 'is an IP address'),
+    ('https://2130706433/api/extraction-worker', 'is an IP address'),
+    ('https://0x7f000001/api/extraction-worker', 'is an IP address'),
+    ('https://0x7F.0.0.1/api/extraction-worker', 'is an IP address'),
+    ('https://0177.0.0.1/api/extraction-worker', 'is an IP address'),
+    ('https://127.0.0.1./api/extraction-worker', 'is an IP address'),
+    ('https://localhost/api/extraction-worker', 'is localhost'),
+    ('https://localhost./api/extraction-worker', 'is localhost'),
+    ('https://worker.localhost/api/extraction-worker', 'is localhost'),
+    ('https://a.b.localhost/api/extraction-worker', 'is localhost'),
+    ('https://Worker.LOCALHOST/api/extraction-worker', 'is localhost'),
+    ('https://localhost.invalid/api/extraction-worker', null),
+    ('https://mylocalhost.invalid/api/extraction-worker', null),
     ('https://worker.invalid./api/extraction-worker', 'has no plain host name'),
     ('https://Worker.invalid/api/extraction-worker', 'has no plain host name'),
     ('https://-worker.invalid/api/extraction-worker', 'has no plain host name'),
@@ -130,8 +146,9 @@ begin
     if v_problem is distinct from v_case.problem then
       raise exception 'extraction_worker_url_problem(%): expected %, got %', coalesce(quote_literal(v_case.url), 'null'), v_case.problem, v_problem;
     end if;
+    v_count := v_count + 1;
   end loop;
-  insert into checks (step, result) values ('the worker URL must be exactly https://<plain host>/api/extraction-worker', '32 URLs');
+  insert into checks (step, result) values ('the worker URL must be exactly https://<plain host>/api/extraction-worker: no IP address, no localhost', v_count || ' URLs');
 end $t$;
 
 -- The real wake with a Vault pair created inside this transaction: nothing is
@@ -150,7 +167,9 @@ begin
     'https://worker.invalid:8443/api/extraction-worker',
     'https://worker.invalid/api/extraction-worker?next=1',
     'http://worker.invalid/api/extraction-worker',
-    E'https://worker.invalid/api/extraction-worker\n'
+    E'https://worker.invalid/api/extraction-worker\n',
+    'https://worker.localhost/api/extraction-worker',
+    'https://127.0.0.1/api/extraction-worker'
   ] loop
     perform vault.update_secret((select id from vault.secrets where name = 'extraction_worker_url'), v_bad);
     v_before := (select count(*) from net.http_request_queue);
@@ -168,7 +187,7 @@ begin
     raise exception 'a wake with a good URL must queue exactly one request to it';
   end if;
   insert into checks (step, result) values
-    ('a wake queues nothing for a malformed Vault URL (it warns instead) and one request for a good one', '5 malformed, 1 good');
+    ('a wake queues nothing for a malformed Vault URL (it warns instead) and one request for a good one', '7 malformed, 1 good');
 end $t$;
 
 select step, result from checks order by n;

@@ -847,3 +847,68 @@ begin
   end loop;
 end;
 $$;
+
+-- 12. The wake URL refuses localhost, *.localhost and IP literals (V9) ------------
+
+-- As in 20260925000004, except that a host that is an IP address, or is
+-- localhost or a name under it, is refused by name. The plain-host pattern
+-- already refused a bare "localhost" (one label) and a dotted IPv4 address
+-- (its last label starts with a digit), but let "worker.localhost" through,
+-- which resolvers, curl's among them, send to the loopback interface: the
+-- bearer would go to whatever listened there, with no warning. Now:
+--   is an IP address   an IPv6 literal (in brackets), or an IPv4 address in
+--                      any form a resolver accepts: dotted or not, decimal,
+--                      octal or hex
+--   is localhost       localhost or any name under it, in any case, with or
+--                      without a trailing dot
+-- A name that merely contains the word (localhost.example, say) is a DNS
+-- name like any other. Only the Vault owner can set the URL; this makes a
+-- mistake loud. extraction_wakes.sql checks each form.
+create or replace function private.extraction_worker_url_problem(p_url text)
+returns text language plpgsql immutable set search_path = '' as $$
+declare
+  v_authority text;
+  v_host      text;
+begin
+  if p_url is null then
+    return 'is missing';
+  end if;
+  if p_url ~ '[[:space:][:cntrl:]]' then
+    return 'contains whitespace or a control character';
+  end if;
+  if p_url !~ '^https://' then
+    return 'is not https';
+  end if;
+  v_authority := substring(p_url from '^https://([^/?#]*)');
+  if v_authority ~ '@' then
+    return 'has a user name or password';
+  end if;
+  if v_authority ~ '^\[' then
+    -- an IPv6 address
+    return 'is an IP address';
+  end if;
+  if v_authority ~ ':' then
+    return 'has a port';
+  end if;
+  v_host := lower(v_authority);
+  if v_host ~ '^(0x[0-9a-f]*|[0-9]+)(\.(0x[0-9a-f]*|[0-9]+))*\.?$' then
+    return 'is an IP address';
+  end if;
+  if v_host ~ '(^|\.)localhost\.?$' then
+    return 'is localhost';
+  end if;
+  if v_authority !~ '^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$' then
+    return 'has no plain host name';
+  end if;
+  if p_url ~ '\?' then
+    return 'has a query';
+  end if;
+  if p_url ~ '#' then
+    return 'has a fragment';
+  end if;
+  if substring(p_url from '^https://[^/?#]*(.*)$') is distinct from '/api/extraction-worker' then
+    return 'has a path other than /api/extraction-worker';
+  end if;
+  return null;
+end;
+$$;
