@@ -487,19 +487,34 @@ begin
   insert into checks (step, result) values ('a finish clamps absurd token counts, in the run and the ledger', v_run.cost_usd::text || ' USD');
 end $t$;
 
--- 6c. The caller is checked before any row is locked (20260925000004) -------
+-- 6c. Every RPC that locks a document or a run checks its caller first ------
 
--- A member (not an admin) of organization 11, and a run of its document 12
--- opened by the owner through the old path. A refused caller must leave no
--- lock behind on the document or the run: a row lock, even one taken in a
--- subtransaction that was then rolled back, sets the row's xmax to the
--- locker, so an xmax unchanged across the refused calls means none of them
--- locked the row. (The organization row is already key-share locked by this
--- transaction's own membership inserts, so its xmax can't tell.)
+-- (20260925000004 for the enqueue, open and close; 20260925000005 for
+-- complete_document_upload and the finish.) A member (not an admin) of
+-- organization 11 and a user who is no member of it; a run of its document
+-- 12 opened by the owner through the old path, its document c3 still
+-- uploading, and a queue run of its document c4, claimed as the worker
+-- claims it. A refused caller must leave no lock behind on a document or a
+-- run: a row lock, even one taken in a subtransaction that was then rolled
+-- back, sets the row's xmax to the locker, so an xmax unchanged across the
+-- refused calls means none of them locked the row. xmax tells when a lock is
+-- new or stronger: documents 11 and c3 are unlocked, and document 12 and
+-- both runs are only key-share locked by this transaction (the foreign keys
+-- of the run and the token inserts), so a FOR UPDATE on them shows, as a
+-- multixact (against 20260925000004's finish, the run of c4's did). Document
+-- c4, which the claim holds for update, and the organization row, which the
+-- membership inserts key-share lock, can't show a lock no stronger.
+--
+-- Every function in public that an API role may execute and that reaches
+-- documents, runs or accounts must be called here, or listed with the
+-- reason it isn't, so a new one can't be added without this test.
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
   created_at, updated_at, raw_app_meta_data, raw_user_meta_data, is_sso_user, is_anonymous)
-values ('e1e1e1e1-0000-4000-8000-000000000002', '00000000-0000-0000-0000-000000000000', 'authenticated',
-  'authenticated', 'queue-test-member@example.invalid', 'x', now(), now(), now(), '{}', '{}', false, false);
+values
+  ('e1e1e1e1-0000-4000-8000-000000000002', '00000000-0000-0000-0000-000000000000', 'authenticated',
+   'authenticated', 'queue-test-member@example.invalid', 'x', now(), now(), now(), '{}', '{}', false, false),
+  ('e1e1e1e1-0000-4000-8000-000000000003', '00000000-0000-0000-0000-000000000000', 'authenticated',
+   'authenticated', 'queue-test-outsider@example.invalid', 'x', now(), now(), now(), '{}', '{}', false, false);
 insert into public.tenants (id, name, slug)
 values ('e2e2e2e2-0000-4000-8000-000000000011', 'Queue test 11', 'queue-test-11');
 insert into public.memberships (tenant_id, user_id, role) values
@@ -509,67 +524,140 @@ insert into public.documents (id, tenant_id, filename, uploaded_by, status, mime
   ('e3e3e3e3-0000-4000-8000-000000000011', 'e2e2e2e2-0000-4000-8000-000000000011', 'queue-11.pdf',
    'e1e1e1e1-0000-4000-8000-000000000001', 'pending', 'application/pdf', 3141),
   ('e3e3e3e3-0000-4000-8000-000000000012', 'e2e2e2e2-0000-4000-8000-000000000011', 'queue-12.pdf',
+   'e1e1e1e1-0000-4000-8000-000000000001', 'pending', 'application/pdf', 3141),
+  ('e3e3e3e3-0000-4000-8000-0000000000c4', 'e2e2e2e2-0000-4000-8000-000000000011', 'queue-c4.pdf',
    'e1e1e1e1-0000-4000-8000-000000000001', 'pending', 'application/pdf', 3141);
+insert into public.documents (id, tenant_id, filename, uploaded_by)
+values ('e3e3e3e3-0000-4000-8000-0000000000c3', 'e2e2e2e2-0000-4000-8000-000000000011', 'queue-c3.pdf',
+        'e1e1e1e1-0000-4000-8000-000000000001');
 
 do $t$
 declare
   v_open    record;
+  v_claim   record;
+  v_run_c4  uuid;
   v_refused text;
-  v_doc     text := 'e3e3e3e3-0000-4000-8000-000000000011';
+  v_fn      record;
+  v_calls   text[] := '{}';
+  v_doc     uuid := 'e3e3e3e3-0000-4000-8000-000000000011';
   v_before  jsonb;
   v_after   jsonb;
   v_xmax    text := $q$
     select jsonb_build_object(
       'document 11', (select d.xmax::text from public.documents d where d.id = 'e3e3e3e3-0000-4000-8000-000000000011'),
       'document 12', (select d.xmax::text from public.documents d where d.id = 'e3e3e3e3-0000-4000-8000-000000000012'),
-      'run of 12', (select r.xmax::text from public.extraction_runs r where r.document_id = 'e3e3e3e3-0000-4000-8000-000000000012'))
+      'document c3', (select d.xmax::text from public.documents d where d.id = 'e3e3e3e3-0000-4000-8000-0000000000c3'),
+      'run of 12', (select r.xmax::text from public.extraction_runs r where r.document_id = 'e3e3e3e3-0000-4000-8000-000000000012'),
+      'run of c4', (select r.xmax::text from public.extraction_runs r where r.document_id = 'e3e3e3e3-0000-4000-8000-0000000000c4'))
   $q$;
 begin
-  -- the owner opens a run of document 12 (old path), for the close cases
+  -- the owner opens a run of document 12 (old path), and enqueues document
+  -- c4, which the worker claims
   select * into v_open from public.open_extraction_run('e3e3e3e3-0000-4000-8000-000000000012', 1);
+  v_run_c4 := public.enqueue_extraction_run('e3e3e3e3-0000-4000-8000-0000000000c4', 1);
+  select * into v_claim from public.claim_extraction_run();
+  if v_claim.run_id is distinct from v_run_c4 then
+    raise exception 'expected to claim %, got %', v_run_c4, v_claim.run_id;
+  end if;
   execute v_xmax into v_before;
+  if v_before ? 'x' or exists (select 1 from jsonb_each_text(v_before) e where e.value is null) then
+    raise exception 'a fixture row is missing: %', v_before;
+  end if;
 
-  -- as the member
+  -- as the member (not an admin, not the uploader)
   perform set_config('request.jwt.claims',
     '{"sub":"e1e1e1e1-0000-4000-8000-000000000002","role":"authenticated"}', true);
-  foreach v_refused in array array['enqueue', 'open'] loop
+  foreach v_refused in array array['enqueue', 'open', 'complete', 'delete tenant', 'close'] loop
     begin
-      if v_refused = 'enqueue' then
-        perform public.enqueue_extraction_run(v_doc::uuid, 1);
-      else
-        perform * from public.open_extraction_run(v_doc::uuid, 1);
-      end if;
+      case v_refused
+        when 'enqueue' then perform public.enqueue_extraction_run(v_doc, 1);
+        when 'open' then perform * from public.open_extraction_run(v_doc, 1);
+        when 'complete' then perform public.complete_document_upload('e3e3e3e3-0000-4000-8000-0000000000c3');
+        when 'delete tenant' then perform public.delete_tenant('e2e2e2e2-0000-4000-8000-000000000011');
+        -- the right token, the wrong user
+        else perform public.close_extraction_run(v_open.run_id, v_open.close_token, 'failed', null, null, 0, 0, 1, 0, 'x');
+      end case;
       raise exception '% by a member was accepted', v_refused;
     exception when sqlstate '42501' then
-      null;
+      v_calls := v_calls || ('member: ' || v_refused);
+    end;
+  end loop;
+
+  -- as a user who is no member of the organization
+  perform set_config('request.jwt.claims',
+    '{"sub":"e1e1e1e1-0000-4000-8000-000000000003","role":"authenticated"}', true);
+  foreach v_refused in array array['enqueue', 'complete'] loop
+    begin
+      if v_refused = 'enqueue' then
+        perform public.enqueue_extraction_run(v_doc, 1);
+      else
+        perform public.complete_document_upload('e3e3e3e3-0000-4000-8000-0000000000c3');
+      end if;
+      raise exception '% by an outsider was accepted', v_refused;
+    exception when sqlstate '42501' then
+      v_calls := v_calls || ('outsider: ' || v_refused);
+    end;
+  end loop;
+
+  -- as the owner: a wrong close token and none; deleting their own account
+  -- while they own an organization
+  perform set_config('request.jwt.claims',
+    '{"sub":"e1e1e1e1-0000-4000-8000-000000000001","role":"authenticated"}', true);
+  foreach v_refused in array array['a wrong token', 'no token'] loop
+    begin
+      perform public.close_extraction_run(v_open.run_id,
+        case v_refused when 'no token' then null else gen_random_uuid() end, 'failed', null, null, 0, 0, 1, 0, 'x');
+      raise exception 'a close with % was accepted', v_refused;
+    exception when sqlstate '42501' then
+      v_calls := v_calls || ('owner: close with ' || v_refused);
     end;
   end loop;
   begin
-    -- the right token, the wrong user
-    perform public.close_extraction_run(v_open.run_id, v_open.close_token, 'failed', null, null, 0, 0, 1, 0, 'x');
-    raise exception 'a close by another user was accepted';
-  exception when sqlstate '42501' then
-    null;
+    perform public.delete_own_account();
+    raise exception 'an owner deleted their account';
+  exception when sqlstate '55000' then
+    v_calls := v_calls || 'owner: delete own account'::text;
   end;
 
-  -- as the owner, with a wrong token
-  perform set_config('request.jwt.claims',
-    '{"sub":"e1e1e1e1-0000-4000-8000-000000000001","role":"authenticated"}', true);
-  begin
-    perform public.close_extraction_run(v_open.run_id, gen_random_uuid(), 'failed', null, null, 0, 0, 1, 0, 'x');
-    raise exception 'a close with a wrong token was accepted';
-  exception when sqlstate '42501' then
-    null;
-  end;
+  -- as the worker, the claimed run finished with a wrong token and with none
+  foreach v_refused in array array['a wrong token', 'no token'] loop
+    begin
+      perform public.finish_extraction_run(v_run_c4,
+        case v_refused when 'no token' then null else gen_random_uuid() end,
+        'failed', null, null, 0, 0, 5, 0, false, 'x', null, null);
+      raise exception 'a finish with % was accepted', v_refused;
+    exception when sqlstate '42501' then
+      v_calls := v_calls || ('worker: finish with ' || v_refused);
+    end;
+  end loop;
 
   execute v_xmax into v_after;
   if v_after <> v_before then
     raise exception 'a refused caller locked rows: xmax % before, % after', v_before, v_after;
   end if;
+
+  -- every function in public that an API role may run and that reaches
+  -- documents, runs or accounts is one of these
+  for v_fn in
+    select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and (has_function_privilege('authenticated', p.oid, 'execute') or has_function_privilege('service_role', p.oid, 'execute'))
+      and p.prosrc ~* '(documents|extraction_runs|lock_extraction_run|reap_extraction_run|auth\.users)'
+  loop
+    if v_fn.proname not in ('enqueue_extraction_run', 'open_extraction_run', 'close_extraction_run',
+                            'complete_document_upload', 'delete_tenant', 'delete_own_account', 'finish_extraction_run',
+                            -- no caller to refuse: service_role alone may run it (section 9), and it takes
+                            -- every document and run with NOWAIT
+                            'claim_extraction_run') then
+      raise exception '% reaches documents, runs or accounts and is not covered by this test', v_fn.proname;
+    end if;
+  end loop;
+
   insert into checks (step, result) values
-    ('a member''s enqueue and open, another user''s close and a wrong-token close are refused before any row is locked', 'ok');
+    ('every RPC that locks a document or a run refuses a wrong caller before it locks anything', array_to_string(v_calls, '; '));
 
   perform private.reap_extraction_run(v_open.run_id, 'test');
+  perform public.finish_extraction_run(v_run_c4, v_claim.claim_token, 'failed', null, null, 0, 0, 5, 0, false, 'test', null, null);
 end $t$;
 
 -- 6e. Only the worker ends a queue run (20260925000004) ------------------------

@@ -604,3 +604,82 @@ end;
 $$;
 
 drop function private.check_extraction_limits(uuid, uuid);
+
+-- 6. complete_document_upload checks the caller before any lock (V3) ------------
+
+-- As in 20260917000009, except that the caller is checked before the row is
+-- locked, as 20260925000004 did for the enqueue, open and close: the
+-- document's uploader and organization are read without a lock, and a caller
+-- who didn't upload it, or is no longer a member, is refused there, with the
+-- same errors. Before, it locked the named document for update and only
+-- then checked, so anyone who knew a document's id could hold that row and
+-- make the claim and the sweep, which take it without waiting, skip its run.
+-- Both checks are made again under the lock, since the row or the
+-- membership can change in between.
+create or replace function public.complete_document_upload(p_document_id uuid)
+returns public.documents language plpgsql security definer set search_path = '' as $$
+declare
+  v_user_id  uuid := (select auth.uid());
+  v_uploader uuid;
+  v_tenant   uuid;
+  v_doc      public.documents;
+  v_meta     jsonb;
+begin
+  if v_user_id is null then
+    raise exception 'authentication required' using errcode = '42501';
+  end if;
+
+  -- the caller, before any lock: one error for missing and not-mine, so the
+  -- RPC can't be used to probe ids
+  select d.uploaded_by, d.tenant_id into v_uploader, v_tenant from public.documents d where d.id = p_document_id;
+  if v_uploader is null or v_uploader is distinct from v_user_id then
+    raise exception 'document not found or not uploaded by you'
+      using errcode = '42501';
+  end if;
+  if not private.is_tenant_member(v_tenant) then
+    raise exception 'you are no longer a member of this tenant'
+      using errcode = '42501';
+  end if;
+
+  -- lock the row so two completions can't both pass the status check
+  select d.* into v_doc from public.documents d
+  where d.id = p_document_id
+  for update;
+
+  -- again under the lock
+  if not found or v_doc.uploaded_by is distinct from v_user_id then
+    raise exception 'document not found or not uploaded by you'
+      using errcode = '42501';
+  end if;
+
+  if not private.is_tenant_member(v_doc.tenant_id) then
+    raise exception 'you are no longer a member of this tenant'
+      using errcode = '42501';
+  end if;
+
+  if v_doc.status <> 'uploading' then
+    raise exception 'document is not waiting for an upload'
+      using errcode = '55000';
+  end if;
+
+  select o.metadata into v_meta from storage.objects o
+  where o.bucket_id = 'documents'
+    and o.name = v_doc.storage_path;
+
+  -- Storage writes metadata once the bytes are stored; a row without it is
+  -- an upload that hasn't finished
+  if not found or v_meta is null or (v_meta ->> 'size') is null then
+    raise exception 'no file has been uploaded for this document'
+      using errcode = '55000';
+  end if;
+
+  update public.documents
+  set size_bytes = (v_meta ->> 'size')::bigint,
+      mime_type  = v_meta ->> 'mimetype',
+      status     = 'pending'
+  where id = p_document_id
+  returning * into v_doc;
+
+  return v_doc;
+end;
+$$;
