@@ -142,6 +142,10 @@ export function largestCountWithin(limit: number): number {
 // worker on it. A mirror; queue-migration.test.ts checks the migration.
 export const CLAIM_TIMEOUT_MS = 5_000;
 
+// How often pg_cron runs the queue's sweep (extraction-sweep, '* * * * *',
+// 20260925000002). A mirror; queue-migration.test.ts checks the schedule.
+export const SWEEP_INTERVAL_MS = 60_000;
+
 // How long the queue's sweep waits for each lock of a run past its deadline
 // (sweep_extraction_queue's lock_timeout, 20260925000005): it waits, in the
 // lock order, instead of skipping a run someone holds, and leaves one it

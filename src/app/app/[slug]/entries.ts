@@ -1,3 +1,4 @@
+import { inFlight, isOverdue } from "@/lib/extraction/deadlines";
 import { FIELDS } from "@/lib/extraction/schema";
 import { type DocumentEntry, type DocumentRow, type FieldRow, isStalled, type RunRow } from "./types";
 
@@ -5,9 +6,15 @@ const FIELD_ORDER = new Map(FIELDS.map((field, index) => [field.name, index]));
 
 // Groups runs and fields under their documents and puts the list in the
 // order it is shown: documents that need review first, then newest first.
-// Pure, so the design preview runs the same grouping and sorting on
-// fixture rows.
-export function buildEntries(documents: DocumentRow[], runs: RunRow[], fields: FieldRow[]): DocumentEntry[] {
+// `now` is the time of the render (page.tsx's request time), against which
+// a run still in flight is judged overdue; with none, nothing is. Pure, so
+// the design preview runs the same grouping and sorting on fixture rows.
+export function buildEntries(
+  documents: DocumentRow[],
+  runs: RunRow[],
+  fields: FieldRow[],
+  now: number | null = null,
+): DocumentEntry[] {
   const runsByDocument = new Map<string, RunRow[]>();
   for (const run of runs) {
     if (!run.document_id) continue;
@@ -36,7 +43,8 @@ export function buildEntries(documents: DocumentRow[], runs: RunRow[], fields: F
         ? latest.status
         : null;
     const stalled = latest !== undefined && isStalled(latest);
-    return { document, runs: documentRuns, fields: documentFields, stalled, extraction };
+    const overdue = extraction !== null && now !== null && isOverdue(latest, now);
+    return { document, runs: documentRuns, fields: documentFields, stalled, overdue, extraction };
   });
 
   return entries.toSorted((a, b) => {
@@ -48,8 +56,18 @@ export function buildEntries(documents: DocumentRow[], runs: RunRow[], fields: F
 }
 
 // Whether this render shows any run queued or running, as the database has
-// it. The page keeps refreshing while it does, and stops once two renders in
-// a row say it doesn't (RefreshWhileExtracting).
+// it, and not yet overdue. The page keeps refreshing while it does, and
+// stops once two renders in a row say it doesn't (RefreshWhileExtracting):
+// past its hard bound a run is shown stalled and no longer polled for.
 export function extractionsInFlight(entries: DocumentEntry[]): boolean {
-  return entries.some((entry) => entry.runs.some((run) => run.status === "queued" || run.status === "running"));
+  return entries.some((entry) => !entry.overdue && entry.runs.some(inFlight));
+}
+
+// What the document's Extract button does: first, never extracted; again,
+// there are earlier runs; running, disabled, while an extraction is in
+// flight and not yet overdue. Once it is overdue the button comes back
+// (again), and its enqueue ends the overdue run and starts a new one.
+export function extractMode(entry: Pick<DocumentEntry, "document" | "runs" | "overdue">): "first" | "again" | "running" {
+  if (entry.document.status === "processing" && !entry.overdue) return "running";
+  return entry.runs.length > 0 ? "again" : "first";
 }

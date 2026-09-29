@@ -28,7 +28,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { CLAIM_TIMEOUT_MS, EXTRACTION_LIMITS, PRICING, SWEEP_LOCK_TIMEOUT_MS } from "@/lib/extraction/config";
+import { CLAIM_TIMEOUT_MS, EXTRACTION_LIMITS, PRICING, SWEEP_INTERVAL_MS, SWEEP_LOCK_TIMEOUT_MS } from "@/lib/extraction/config";
 import { parseMigrations } from "../helpers/sql-raises";
 
 const dir = fileURLToPath(new URL("../../supabase/migrations/", import.meta.url));
@@ -154,6 +154,12 @@ describe("the live claim", () => {
 
 describe("the live sweep", () => {
   const body = parseMigrations(migrations).liveBodies.get("sweep_extraction_queue") ?? "";
+
+  it("runs every minute, the interval config.ts mirrors", () => {
+    const schedules = [...all.matchAll(/cron\.schedule\('extraction-sweep', '([^']+)'/g)];
+    expect(schedules.map((m) => m[1])).toEqual(["* * * * *"]);
+    expect(SWEEP_INTERVAL_MS).toBe(60_000);
+  });
 
   it("waits under its own lock_timeout, the one config.ts mirrors, set in its last definition", () => {
     const headers = [...all.matchAll(/create (?:or replace )?function private\.sweep_extraction_queue\(\)([\s\S]*?)as \$\$/gi)];

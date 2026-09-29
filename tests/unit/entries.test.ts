@@ -1,15 +1,17 @@
 // What the organization page derives from a document's runs
-// (src/app/app/[slug]/entries.ts), from the database's states alone, never
-// from the clock: whether its extraction is queued or running, whether its
-// latest run stalled (the database ended it as abandoned or expired), and
-// whether the render shows anything in flight, which is what keeps the page
-// polling. Pure. Needs no database.
+// (src/app/app/[slug]/entries.ts): whether its extraction is queued or
+// running, whether its latest run stalled (the database ended it as
+// abandoned or expired), whether a run still in flight is overdue (past the
+// hard bound its own timestamps give it, judged against the render's time,
+// src/lib/extraction/deadlines.ts), what Extract does, and whether the
+// render shows anything in flight that isn't overdue, which is what keeps
+// the page polling. No component reads a clock. Pure. Needs no database.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { buildEntries, extractionsInFlight } from "@/app/app/[slug]/entries";
+import { buildEntries, extractionsInFlight, extractMode } from "@/app/app/[slug]/entries";
 import type { DocumentRow, RunRow } from "@/app/app/[slug]/types";
 import type { ErrorCode } from "@/lib/errors";
 
@@ -40,7 +42,8 @@ function run(status: string, startedMinutesAgo: number, claimedMinutesAgo: numbe
   };
 }
 
-const entry = (document: DocumentRow, runs: RunRow[]) => buildEntries([document], runs, [])[0];
+// rendered at NOW
+const entry = (document: DocumentRow, runs: RunRow[]) => buildEntries([document], runs, [], NOW)[0];
 
 describe("an extraction's state on the page", () => {
   it("is queued until a worker claims the run, then running", () => {
@@ -48,10 +51,27 @@ describe("an extraction's state on the page", () => {
     expect(entry(doc("processing"), [run("running", 2, 1)])).toMatchObject({ extraction: "running", stalled: false });
   });
 
-  it("stays queued or running for as long as the database says so, however old the run", () => {
-    // no timer: a day-old run the database still has in flight is in flight
-    expect(entry(doc("processing"), [run("queued", 24 * 60)])).toMatchObject({ extraction: "queued", stalled: false });
-    expect(entry(doc("processing"), [run("running", 24 * 60, 24 * 60)])).toMatchObject({ extraction: "running", stalled: false });
+  it("keeps Extract disabled until the run's hard bound, and past it shows the run stalled and gives Extract back (V5)", () => {
+    // queued: overdue 12 min 5 s after its enqueue (deadlines.test.ts)
+    const young = entry(doc("processing"), [run("queued", 12)]);
+    expect(young).toMatchObject({ extraction: "queued", overdue: false });
+    expect(extractMode(young)).toBe("running");
+    const old = entry(doc("processing"), [run("queued", 13)]);
+    expect(old).toMatchObject({ extraction: "queued", overdue: true, stalled: false });
+    expect(extractMode(old)).toBe("again");
+    // claimed: overdue 11 min after its claim, however long it was queued
+    expect(entry(doc("processing"), [run("running", 30, 10)])).toMatchObject({ extraction: "running", overdue: false });
+    expect(entry(doc("processing"), [run("running", 30, 12)])).toMatchObject({ extraction: "running", overdue: true });
+    // a day-old run the database still has in flight is overdue
+    expect(entry(doc("processing"), [run("running", 24 * 60, 24 * 60)])).toMatchObject({ overdue: true });
+    // with no render time (the design preview's fixtures), nothing is
+    expect(buildEntries([doc("processing")], [run("queued", 24 * 60)], [])[0]).toMatchObject({ overdue: false });
+  });
+
+  it("gives Extract as first or again when nothing is in flight", () => {
+    expect(extractMode(entry(doc("pending"), []))).toBe("first");
+    expect(extractMode(entry(doc("extracted"), [run("succeeded", 5, 4)]))).toBe("again");
+    expect(extractMode(entry(doc("pending"), [run("failed", 12, 11, "d1", "extraction.abandoned")]))).toBe("again");
   });
 
   it("is stalled only once the database has ended the run as abandoned or expired", () => {
@@ -74,12 +94,15 @@ describe("an extraction's state on the page", () => {
 });
 
 describe("extractionsInFlight", () => {
-  it("is true while any run is queued or running, whatever its age, and false otherwise", () => {
-    expect(extractionsInFlight(buildEntries([doc("processing")], [run("queued", 1)], []))).toBe(true);
-    expect(extractionsInFlight(buildEntries([doc("processing")], [run("running", 3, 1)], []))).toBe(true);
-    expect(extractionsInFlight(buildEntries([doc("processing")], [run("queued", 24 * 60)], []))).toBe(true);
-    expect(extractionsInFlight(buildEntries([doc("extracted")], [run("succeeded", 1)], []))).toBe(false);
-    expect(extractionsInFlight(buildEntries([doc("pending")], [run("failed", 12, 11, "d1", "extraction.abandoned")], []))).toBe(false);
+  it("is true while any run is queued or running and not overdue, and false otherwise, so polling stops at the bound", () => {
+    expect(extractionsInFlight(buildEntries([doc("processing")], [run("queued", 1)], [], NOW))).toBe(true);
+    expect(extractionsInFlight(buildEntries([doc("processing")], [run("running", 3, 1)], [], NOW))).toBe(true);
+    expect(extractionsInFlight(buildEntries([doc("processing")], [run("queued", 12)], [], NOW))).toBe(true);
+    // past its hard bound: shown stalled, no longer polled for
+    expect(extractionsInFlight(buildEntries([doc("processing")], [run("queued", 13)], [], NOW))).toBe(false);
+    expect(extractionsInFlight(buildEntries([doc("processing")], [run("queued", 24 * 60)], [], NOW))).toBe(false);
+    expect(extractionsInFlight(buildEntries([doc("extracted")], [run("succeeded", 1)], [], NOW))).toBe(false);
+    expect(extractionsInFlight(buildEntries([doc("pending")], [run("failed", 12, 11, "d1", "extraction.abandoned")], [], NOW))).toBe(false);
     expect(extractionsInFlight([])).toBe(false);
   });
 
@@ -88,13 +111,14 @@ describe("extractionsInFlight", () => {
       [doc("extracted", "d1"), doc("processing", "d2")],
       [run("succeeded", 5, 4, "d1"), run("queued", 1, null, "d2")],
       [],
+      NOW,
     );
     expect(extractionsInFlight(entries)).toBe(true);
   });
 });
 
 describe("the page's components", () => {
-  it("read no clock and no stale limit to decide what is in flight or stalled", () => {
+  it("read no clock and no stale limit of their own: the render's time comes from page.tsx, the bound from deadlines.ts", () => {
     for (const file of ["entries.ts", "document-list.tsx", "run-history.tsx", "refresh-while-extracting.tsx", "poller.ts"]) {
       // the code, not the comments that say what it doesn't do
       const source = readFileSync(join(root, "src/app/app/[slug]", file), "utf8").replace(/^\s*\/\/.*$/gm, "");

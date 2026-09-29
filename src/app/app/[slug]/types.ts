@@ -64,9 +64,9 @@ export function toRunRow({ error, ...run }: RunRecord): RunRow {
 
 // A run the database ended because nothing finished it in time: abandoned
 // (claimed, and its worker never finished) or expired (never claimed). The
-// only way the page calls a run stalled. It never judges by the clock: a
-// run stays queued or running on the page for as long as the database says
-// so, and the queue's sweep gives every run a deadline there.
+// page also calls a document stalled while its run is still in flight past
+// the hard bound its own timestamps give it (overdue in DocumentEntry,
+// src/lib/extraction/deadlines.ts); nothing else is judged by the clock.
 export function isStalled(run: Pick<RunRow, "status" | "error_code">): boolean {
   return run.status === "failed" && (run.error_code === "extraction.abandoned" || run.error_code === "extraction.expired");
 }
@@ -91,9 +91,15 @@ export type DocumentEntry = {
   // in the order of FIELDS in src/lib/extraction/schema.ts
   fields: FieldRow[];
   // its latest run was ended by the database because nothing finished it
-  // in time: abandoned or expired (isStalled in entries.ts). Never decided
-  // by the page's clock.
+  // in time: abandoned or expired (isStalled in entries.ts)
   stalled: boolean;
+  // its latest run is still in flight, as the database has it, past the
+  // hard bound its own timestamps give it (overdueAt in
+  // src/lib/extraction/deadlines.ts): the database should have ended it
+  // by now. The page shows it stalled, stops polling for it and gives
+  // Extract back, whose enqueue ends it. Decided at render time, with the
+  // time page.tsx passes to buildEntries.
+  overdue: boolean;
   // while the document is processing and its latest run is in flight:
   // queued until a worker claims the run, running after that; otherwise null
   extraction: "queued" | "running" | null;

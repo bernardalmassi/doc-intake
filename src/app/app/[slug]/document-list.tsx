@@ -1,5 +1,6 @@
 import { badgeClass, errorClass, hintClass, reviewBadgeClass, sectionTitleClass, textTargetClass } from "@/app/ui";
 import { DocumentActions, type ExtractMode } from "./document-actions";
+import { extractMode } from "./entries";
 import { ExtractionPanel } from "./extraction-panel";
 import { fieldSummary } from "./fields";
 import { fileKind, formatBytes, formatUtc } from "./format";
@@ -95,7 +96,7 @@ function EmptyDocuments({ canManage }: { canManage: boolean }) {
 }
 
 function DocumentItem({ entry, slug, canManage }: { entry: DocumentEntry; slug: string; canManage: boolean }) {
-  const { document, runs, fields, stalled } = entry;
+  const { document, runs, fields, stalled, overdue } = entry;
   const review = document.status === "needs_review";
   const hasFile = document.status !== "uploading";
   const kind = fileKind(document.mime_type);
@@ -105,13 +106,12 @@ function DocumentItem({ entry, slug, canManage }: { entry: DocumentEntry; slug: 
   ].filter((part): part is string => part !== null);
 
   // Extract is the primary action while there are no results yet; once
-  // there are, running it again is secondary.
+  // there are, running it again is secondary. While an extraction is in
+  // flight it is disabled, until the run is overdue (past the hard bound
+  // its own timestamps give it): then it comes back, and its enqueue ends
+  // the overdue run and starts a new one.
   let extract: { mode: ExtractMode; primary: boolean } | null = null;
-  if (canManage && hasFile) {
-    const mode: ExtractMode =
-      document.status === "processing" ? "running" : runs.length > 0 ? "again" : "first";
-    extract = { mode, primary: fields.length === 0 };
-  }
+  if (canManage && hasFile) extract = { mode: extractMode(entry), primary: fields.length === 0 };
 
   return (
     // Needs review is the one state in the accent: the border and the
@@ -125,7 +125,7 @@ function DocumentItem({ entry, slug, canManage }: { entry: DocumentEntry; slug: 
         <h3 id={`document-${document.id}`} className="min-w-0 font-medium [overflow-wrap:anywhere]">
           {document.filename}
         </h3>
-        <StatusBadge status={document.status} stalled={stalled} />
+        <StatusBadge status={document.status} stalled={stalled || overdue} />
       </div>
       <p className={`mt-1 ${hintClass} tabular-nums`}>
         {meta.length > 0 && `${meta.join(" · ")} · `}
@@ -174,9 +174,10 @@ function Summary({ children, meta }: { children: React.ReactNode; meta?: string 
   );
 }
 
-// "Extraction stalled" only once the database has ended the latest run as
-// abandoned or expired; a document the database says is processing is
-// extracting, however long it takes.
+// "Extraction stalled" once the database has ended the latest run as
+// abandoned or expired, or while it is still in flight past its hard bound
+// (overdue); before that, a document the database says is processing is
+// extracting.
 function StatusBadge({ status, stalled }: { status: string; stalled: boolean }) {
   if (status === "needs_review") {
     return (
@@ -186,7 +187,7 @@ function StatusBadge({ status, stalled }: { status: string; stalled: boolean }) 
       </span>
     );
   }
-  if (status === "processing") {
+  if (status === "processing" && !stalled) {
     return (
       <span className={`${badgeClass} shrink-0 gap-1.5`}>
         <SpinnerIcon />
@@ -224,6 +225,19 @@ function StatusLine({ entry, canManage }: { entry: DocumentEntry; canManage: boo
       );
 
     case "processing":
+      if (entry.overdue) {
+        return (
+          <p className="mt-3 flex max-w-prose items-start gap-1.5 text-sm">
+            <AlertIcon className="mt-0.5 text-danger" />
+            <span className="min-w-0">
+              <span className={errorClass}>This extraction should have finished by now and hasn&apos;t.</span>{" "}
+              <span className="text-muted">
+                {canManage ? "Extract again ends it and starts a new one." : "An admin can extract it again."}
+              </span>
+            </span>
+          </p>
+        );
+      }
       return <p className={`mt-3 ${hintClass}`}>Extraction is running. This page updates when it finishes.</p>;
 
     case "failed":

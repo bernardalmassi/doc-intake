@@ -16,9 +16,10 @@ function toRole(value: string | undefined): Role {
 }
 
 // The time of the request, which tells one render of the page from the
-// next (RefreshWhileExtracting counts renders). A Server Component renders
-// once per request, so the clock is read once; react-hooks/purity can't
-// tell that from a client re-render, hence the helper.
+// next (RefreshWhileExtracting counts renders), and against which a run in
+// flight is judged overdue (buildEntries). A Server Component renders once
+// per request, so the clock is read once; react-hooks/purity can't tell
+// that from a client re-render, hence the helper.
 function requestTime(): number {
   return Date.now();
 }
@@ -88,12 +89,14 @@ export default async function OrganizationPage({ params }: PageProps<"/app/[slug
   // Only decides what to render. The database enforces who can extract
   // and delete.
   const role = toRole(membership.data?.role);
+  const renderedAt = requestTime();
   const entries = buildEntries(
     (documentsResult.data ?? []) as DocumentRow[],
     // Each run's stored error becomes a code here: the text itself never
     // reaches a component, or the browser.
     ((runsResult.data ?? []) as RunRecord[]).map(toRunRow),
     (fieldsResult.data ?? []) as FieldRow[],
+    renderedAt,
   );
 
   return (
@@ -102,7 +105,7 @@ export default async function OrganizationPage({ params }: PageProps<"/app/[slug
         <AccountControls email={user.email} />
       </SiteHeader>
       <main id={MAIN_ID} className={pageClass}>
-        <RefreshWhileExtracting active={extractionsInFlight(entries)} renderedAt={requestTime()} />
+        <RefreshWhileExtracting active={extractionsInFlight(entries)} renderedAt={renderedAt} />
         <LiveOperations>
           <OrganizationView organization={tenant} role={role} entries={entries} />
         </LiveOperations>
