@@ -1,16 +1,14 @@
 import "server-only";
 
-import type Anthropic from "@anthropic-ai/sdk";
 import { TOKEN_COUNT_TIMEOUT_MS } from "../config";
-import { classifyAnthropicError } from "./classify";
+import { anthropicCountTokens, anthropicExtract } from "./calls";
 import { createAnthropicClient } from "./clients";
-import { interpretAnthropicMessage, interpretTokenCount } from "./interpret";
-import { anthropicCountParams, anthropicCreateParams } from "./requests";
 import type { ExtractionProvider, ExtractionRequest, ProviderResponse } from "./types";
 
 // Messages API with a schema-constrained output, and its token counting
 // endpoint (the requests are built in requests.ts), through a client whose
-// base URL is fixed in code (clients.ts).
+// base URL is fixed in code (clients.ts). Each call and count is held to its
+// timeout for the whole of it, body included (calls.ts).
 export function createAnthropicProvider(options: {
   apiKey: string;
   model: string;
@@ -22,27 +20,12 @@ export function createAnthropicProvider(options: {
     name: "anthropic",
     model: options.model,
 
-    async countInputTokens(request: ExtractionRequest): Promise<number> {
-      let counted: Anthropic.MessageTokensCount;
-      try {
-        counted = await client.messages.countTokens(anthropicCountParams(options.model, request), {
-          timeout: TOKEN_COUNT_TIMEOUT_MS,
-        });
-      } catch (error) {
-        throw classifyAnthropicError(error);
-      }
-      return interpretTokenCount("anthropic", counted.input_tokens);
+    countInputTokens(request: ExtractionRequest): Promise<number> {
+      return anthropicCountTokens(client, options.model, request, TOKEN_COUNT_TIMEOUT_MS);
     },
 
-    async extract(request: ExtractionRequest): Promise<ProviderResponse> {
-      let response: Anthropic.Message;
-      try {
-        response = await client.messages.create(anthropicCreateParams(options.model, request));
-      } catch (error) {
-        throw classifyAnthropicError(error);
-      }
-
-      return interpretAnthropicMessage(response, request.maxOutputTokens);
+    extract(request: ExtractionRequest): Promise<ProviderResponse> {
+      return anthropicExtract(client, options.model, request, options.timeoutMs);
     },
   };
 }
