@@ -31,7 +31,7 @@ do $t$
 begin
   -- the claim below must read this fixture's message and no other
   if exists (select 1 from pgmq.q_extraction) or exists (select 1 from public.extraction_runs where status in ('queued', 'running')) then
-    raise exception 'the extraction queue is not idle (a suite run in progress, or one killed less than about 11 minutes ago); run test:db again once the sweep has ended it';
+    raise exception 'the extraction queue is not idle (a suite run in progress, or one killed less than 16 min 10 s ago); run test:db again once the sweep has ended it';
   end if;
   if exists (select 1 from public.tenants where id = 'f2f2f2f2-0000-4000-8000-000000000001')
      or exists (select 1 from auth.users where id = 'f1f1f1f1-0000-4000-8000-000000000001') then

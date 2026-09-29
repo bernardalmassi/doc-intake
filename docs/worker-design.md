@@ -225,7 +225,7 @@ One private function, **`private.check_extraction_limits(p_tenant_id uuid)`** (w
 
 **Deleting an organization with a run in flight:** `delete_tenant` now refuses with 55000 while any of the organization's runs is `queued` or `running`. A reservation can't be orphaned. Deleting the organization would otherwise cascade the run and its token under a worker mid-call, and its spend would be unrecordable.
 
-Every non-terminal state has a deadline the sweep enforces (section 6), so the refusal lasts at most about 11 minutes, even with a dead worker or a dead pg_net.
+Every non-terminal state has a deadline the sweep enforces (section 6), so the refusal lasts at most 16 min 10 s after the run's enqueue, even with a dead worker or a dead pg_net (section 17: this stated an 11-minute bound, which a run claimed just short of the stale limit exceeded).
 
 Once every run is terminal, deletion cascades runs, fields and tokens as today. The archived queue messages stay; they hold only a run id. The ledger rows stay (no foreign keys) and keep counting toward the global ceiling for the rest of the month. A new organization still starts with a fresh per-organization sum.
 
@@ -359,9 +359,9 @@ The unit test asserts 180 < 240 < 300 ≤ 600.
 
 | State | Enforced by | Outcome | Latest |
 |---|---|---|---|
-| `queued` (never claimed) | sweep (d), or the enqueue reaper | expired at 0, message archived | 10 min + 60 s after the enqueue |
-| `running`, claimed through the queue | sweep (a), or the claim on a second read | abandoned at the estimate, message archived | 300 s + 60 s after the claim |
-| `running`, old path (no message) | sweep (c), or the enqueue reaper | abandoned at the estimate | 10 min + 60 s after the open |
+| `queued` (never claimed) | sweep (d), or the enqueue reaper | expired at 0, message archived | 10 min + 60 s after the enqueue (+ the sweep's 5 s lock wait since `20260925000005`) |
+| `running`, claimed through the queue | sweep (a), or the claim on a second read | abandoned at the estimate, message archived | 300 s + 60 s after the claim (+ 5 s for the claim and 5 s for the lock wait since `20260925000005`); a claim can come just short of 10 min after the enqueue, so 16 min 10 s after the enqueue at most |
+| `running`, old path (no message) | sweep (c), or the enqueue reaper | abandoned at the estimate | 10 min + 60 s after the open (+ 5 s since `20260925000005`) |
 
 These deadlines also bound how long a dead run holds its estimate against the ceilings and how long `delete_tenant` waits. A dead pg_net worker leaves runs queued, and step (d) still releases them, because pg_cron doesn't depend on pg_net.
 
@@ -699,4 +699,5 @@ A review of section 16's fixes (V1 to V12) found what is fixed here, one commit 
 6. **`complete_document_upload` checks its caller before it locks the row** (V3), as the enqueue, open and close have since section 16's fix 5; before, anyone with a document's id could hold its row and make the claim and the sweep skip its run. `extraction_queue.sql` (6c) calls every RPC that locks a document or a run as a refused caller and requires the rows' `xmax` unchanged, and fails on a function in `public` it doesn't cover.
 7. **The sweep waits for a run past its deadline, in the lock order** (V4). Every sweep candidate is past a deadline, and NOWAIT let whoever held its document or run at each tick (a rename in bursts) keep it in flight indefinitely. The sweep now takes all its candidates' documents in id order, then their runs in id order, each wait at most its 5 s `lock_timeout`, then reaps. A waiter queues behind the holder, so a briefly held row is had; one held past 5 s is left for the next tick. Two two-session cases hold a stale run's document, briefly and past the timeout; the sweep's case against a finish now waits for the finish and keeps its result.
 8. **The page gives Extract back once a run is overdue** (V5). With the page's clock gone (section 16, fix 14), a document stayed "Extracting" with Extract disabled for as long as the database kept its run in flight, so when the sweep wasn't ending runs the enqueue reaper, the backstop for that case, couldn't be reached from the page, and every tab polled. Now `overdueAt` (`src/lib/extraction/deadlines.ts`) gives each run in flight a hard bound from its own timestamps: past both the sweep's deadline and the reaper's, plus a tick. Before it Extract stays disabled; past it the document shows as stalled, polling stops, and Extract comes back, whose enqueue reaps the run.
+9. **The in-flight bound is 16 min 10 s, stated in one place** (V6). The 11-minute bound sections 4 and 6 stated added the stale limit and a tick, but a run can still be claimed just short of the stale limit and is then hidden for 300 s from its claim. `IN_FLIGHT_BOUND_MS` in `src/lib/extraction/deadlines.ts` computes it from the config (10 min + 5 s claim + 300 s + 60 s tick + 5 s lock wait), `tests/unit/deadlines.test.ts` checks it against every run state and that SECURITY.md, CLAUDE.md, README.md and this document state it; the error catalog's "ended within 17 minutes" is derived from it.
 

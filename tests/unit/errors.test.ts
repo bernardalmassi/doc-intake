@@ -29,6 +29,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
 import { describe, expect, it } from "vitest";
 import { ANTHROPIC_MODEL_ENV_VAR, EXTRACTION_LIMITS, inputTokensPerCall, largestCountWithin, PROVIDER_ENV_VAR, withCountMargin } from "@/lib/extraction/config";
+import { IN_FLIGHT_BOUND_MS } from "@/lib/extraction/deadlines";
 import { describeError, ProviderError, type ProviderResponse } from "@/lib/extraction/providers/types";
 import { interpretAnthropicMessage, interpretOpenAIResponse } from "@/lib/extraction/providers/interpret";
 import { runExtraction } from "@/lib/extraction/run";
@@ -739,7 +740,9 @@ describe("the catalog", () => {
     expect(ERROR_CATALOG["extraction.already_running"].message).toContain(`${EXTRACTION_LIMITS.staleRunMinutes} minutes`);
     expect(ERROR_CATALOG["extraction.record_failed"].message).toContain(`${EXTRACTION_LIMITS.staleRunMinutes} minutes`);
     expect(ERROR_CATALOG["extraction.expired"].message).toContain(`${EXTRACTION_LIMITS.staleRunMinutes} minutes`);
-    expect(ERROR_CATALOG["tenant.delete_extraction_running"].message).toContain(`${EXTRACTION_LIMITS.staleRunMinutes + 1} minutes`);
+    // the longest a run stays in flight, rounded up (deadlines.ts): 16 min 10 s
+    expect(ERROR_CATALOG["tenant.delete_extraction_running"].message).toContain(`${Math.ceil(IN_FLIGHT_BOUND_MS / 60_000)} minutes`);
+    expect(ERROR_CATALOG["tenant.delete_extraction_running"].message).toContain("within 17 minutes");
   });
 
   it("can't be changed at runtime", () => {

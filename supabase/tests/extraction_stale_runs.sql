@@ -19,7 +19,7 @@ create temp table checks (n serial, step text, result text);
 do $t$
 begin
   if exists (select 1 from pgmq.q_extraction) or exists (select 1 from public.extraction_runs where status in ('queued', 'running')) then
-    raise exception 'the extraction queue is not idle (a suite run in progress, or one killed less than about 11 minutes ago); run test:db again once the sweep has ended it';
+    raise exception 'the extraction queue is not idle (a suite run in progress, or one killed less than 16 min 10 s ago); run test:db again once the sweep has ended it';
   end if;
 end $t$;
 

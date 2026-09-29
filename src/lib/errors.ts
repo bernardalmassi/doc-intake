@@ -46,6 +46,7 @@
 
 import type { WeakPasswordReasons } from "@supabase/supabase-js";
 import { ANTHROPIC_MODEL_ENV_VAR, DEFAULT_MODELS, EXTRACTION_LIMITS, PROVIDER_ENV_VAR, type ProviderName } from "@/lib/extraction/config";
+import { IN_FLIGHT_BOUND_MS } from "@/lib/extraction/deadlines";
 import type { ProviderErrorKind } from "@/lib/extraction/providers/types";
 import { isSupportedMimeType, SUPPORTED_MIME_TYPES, type SupportedMimeType } from "@/lib/extraction/sniff";
 import { MAX_PASSWORD_BYTES, MIN_PASSWORD_LENGTH } from "@/lib/password";
@@ -65,6 +66,8 @@ export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 export const UPLOAD_MIME_TYPES: readonly SupportedMimeType[] = SUPPORTED_MIME_TYPES;
 
 const STALE_MINUTES = EXTRACTION_LIMITS.staleRunMinutes;
+// the longest a run stays in flight, rounded up (src/lib/extraction/deadlines.ts)
+const IN_FLIGHT_BOUND_MINUTES = Math.ceil(IN_FLIGHT_BOUND_MS / 60_000);
 
 // Catalog ----------------------------------------------------------------
 
@@ -174,7 +177,7 @@ const CATALOG = {
   // every run in flight has a deadline the queue's sweep enforces: the
   // stale limit, plus a minute for the sweep's next tick
   "tenant.delete_extraction_running": {
-    message: `An extraction is still running in this organization. Try again when it finishes; one that is stuck is ended within ${STALE_MINUTES + 1} minutes.`,
+    message: `An extraction is still running in this organization. Try again when it finishes; one that is stuck is ended within ${IN_FLIGHT_BOUND_MINUTES} minutes.`,
     retryable: true,
   },
   "account.delete_owns_organization": {

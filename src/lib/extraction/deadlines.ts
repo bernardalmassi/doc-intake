@@ -35,6 +35,25 @@ const VISIBILITY_MS = EXTRACTION_LIMITS.workerVisibilitySeconds * 1000;
 // a tick of the sweep, and its wait for the run's locks
 const SWEEP_SLACK_MS = SWEEP_INTERVAL_MS + SWEEP_LOCK_TIMEOUT_MS;
 
+// The longest a run stays in flight, from its enqueue, while the sweep runs:
+// a queued run can still be claimed just short of the stale limit (10 min),
+// its claim can take CLAIM_TIMEOUT_MS (5 s), its message then stays hidden
+// for the visibility timeout (300 s), and the sweep ends it within a tick
+// (60 s) plus its wait for the run's locks (5 s): 16 min 10 s. A queued run
+// never claimed ends by 11 min 5 s, and so does one opened by the old path.
+// A tick in which other candidates' locks are also held that long takes 5 s
+// more for each. SECURITY.md, CLAUDE.md, README.md and docs/worker-design.md
+// state this figure; tests/unit/deadlines.test.ts computes it and checks
+// they do.
+export const IN_FLIGHT_BOUND_MS = STALE_MS + CLAIM_TIMEOUT_MS + VISIBILITY_MS + SWEEP_SLACK_MS;
+
+// "16 min 10 s": a bound as the docs state it.
+export function formatBound(ms: number): string {
+  const minutes = Math.floor(ms / 60_000);
+  const seconds = Math.round((ms % 60_000) / 1000);
+  return seconds === 0 ? `${minutes} min` : `${minutes} min ${seconds} s`;
+}
+
 export function inFlight(run: Pick<RunTimes, "status">): boolean {
   return run.status === "queued" || run.status === "running";
 }

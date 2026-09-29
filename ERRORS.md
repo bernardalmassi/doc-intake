@@ -63,7 +63,7 @@ Every failure a user can hit, the code `src/lib/errors.ts` gives it, and the mes
 | A non-admin renames the organization or changes its slug | zero rows; 42501 | `tenant.update_not_allowed` | no | Only an admin can change this organization's name or web address. |
 | A non-owner deletes the organization | 42501 from `delete_tenant` | `tenant.delete_not_owner` | no | Only an owner can delete this organization. |
 | Deleting an organization whose documents still have files | 55000 "remove the tenant's files from storage before deleting it" from `delete_tenant` | `tenant.delete_has_files` | no | This organization still has documents with files. Delete them first, then delete the organization. |
-| Deleting an organization while one of its runs is queued or running (every such run has a deadline the queue's sweep enforces) | 55000 "an extraction is in progress for this tenant" from `delete_tenant` | `tenant.delete_extraction_running` | yes | An extraction is still running in this organization. Try again when it finishes; one that is stuck is ended within 11 minutes. |
+| Deleting an organization while one of its runs is queued or running (every such run has a deadline the queue's sweep enforces) | 55000 "an extraction is in progress for this tenant" from `delete_tenant` | `tenant.delete_extraction_running` | yes | An extraction is still running in this organization. Try again when it finishes; one that is stuck is ended within 17 minutes. |
 | Deleting your account while you own an organization | 55000 from `delete_own_account` | `account.delete_owns_organization` | no | You still own an organization. Delete it, or make another member an owner and have them remove you, before deleting your account. |
 
 ## Members and roles

@@ -30,7 +30,7 @@ begin
   end if;
   -- the claims and sweeps below must see this test's rows only
   if exists (select 1 from pgmq.q_extraction) or exists (select 1 from public.extraction_runs where status in ('queued', 'running')) then
-    raise exception 'the extraction queue is not idle (a suite run in progress, or one killed less than about 11 minutes ago); run test:db again once the sweep has ended it';
+    raise exception 'the extraction queue is not idle (a suite run in progress, or one killed less than 16 min 10 s ago); run test:db again once the sweep has ended it';
   end if;
 end $t$;
 insert into checks (step, result) values ('no Vault pair and no pgmq_public on the test project; the queue is idle', 'ok');

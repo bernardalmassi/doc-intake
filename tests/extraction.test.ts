@@ -262,7 +262,7 @@ beforeAll(async () => {
   // nothing may be waiting in the queue: the runner would claim it
   const idle = await runLocalWorker(only(never()));
   if (idle.kind !== "idle") {
-    throw new Error(`the test project's extraction queue isn't empty (${idle.kind}); wait for its sweep, about 11 minutes`);
+    throw new Error(`the test project's extraction queue isn't empty (${idle.kind}); wait for its sweep, up to 16 min 10 s`);
   }
 });
 
