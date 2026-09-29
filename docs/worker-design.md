@@ -200,7 +200,7 @@ A reap is still rolled back if the same open is refused by the hourly limit. In 
 
 ### Ceilings: ledger plus in-flight estimates
 
-One private function, **`private.check_extraction_limits(p_tenant_id uuid, p_reaped_run_id uuid)`**, holds the ceiling check. `open_extraction_run` (until migration 3) and `enqueue_extraction_run` both call it, so the two can't drift. It also holds the advisory lock and the hourly limit.
+One private function, **`private.check_extraction_limits(p_tenant_id uuid)`** (with a second parameter, the run the caller's reaper had just ended, to leave out of its sums, until `20260925000005` removed it: section 17), holds the ceiling check. `open_extraction_run` (until migration 3) and `enqueue_extraction_run` both call it, so the two can't drift. It also holds the advisory lock and the hourly limit.
 
 - **In-flight runs** are every run with status `queued` or `running`, the old path's included. Each counts at its abandoned estimate, `private.abandoned_estimate(page_count)`: the rule in section 2, 0.136548 USD for one page and 1.66144 USD from 44 pages.
 - **Tenant ceiling:** refuse with 53400 when the tenant's ledger sum for the UTC month plus the tenant's in-flight estimates is at or above 1 USD.
@@ -473,7 +473,7 @@ Users sign in with the publishable key. Only the local runner uses `SUPABASE_TES
 - **`extraction_stale_runs.sql`, updated:**
   - a claimed run older than 10 minutes is reaped by the enqueue reaper at the estimate, in both the run and the ledger, and its message is archived
   - a never-claimed run is `expired` at 0
-  - the reaped run is left out of the same enqueue's sums
+  - the reaped run is left out of the same enqueue's sums (until `20260925000005`: section 17)
   - a late finish with the reaped token is refused
 - **New `extraction_queue.sql`:**
   - **No persistent Vault pair:** before anything else, the test project's Vault has no `extraction_worker_url`, and no `pgmq_public` exists.
@@ -695,3 +695,4 @@ A review of section 16's fixes (V1 to V12) found what is fixed here, one commit 
 2. **A count is taken as 5 % more** wherever it stands for a bill: against the call's and the run's bounds, and when a call with no answer is charged (`withCountMargin`, `config.ts`).
 3. **A finish with no token is refused**, before any lock, as the close is: a null token and the nil uuid get the same `42501` as a wrong one.
 4. **The claim times out in the database.** `claim_extraction_run` runs under its own `transaction_timeout` of 5 s: one held up longer is ended and rolled back whole, instead of committing after its worker has gone. The worker waits 8 s for the answer. A `statement_timeout` on the function wouldn't apply to the call in progress; this does, and stops when the function returns (measured). A two-session case holds the token table and requires the database to end the claim.
+5. **The enqueue counts the run its reaper just ended** (V2). `check_extraction_limits` used to leave that run's ledger row out, because a refusal would roll the reap back; but the run was no longer in flight either, so it was counted nowhere, and a ceiling could be passed by two estimates. Now it counts every row. If that refuses the enqueue, the reap rolls back with it, the run stays in flight at its estimate, and the sweep ends it on its next tick. The function lost its second parameter.

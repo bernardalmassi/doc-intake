@@ -72,7 +72,7 @@ begin
   begin
     insert into private.extraction_spend (kind, tenant_id, run_id, cost_usd)
     values ('charge', v_tenant, gen_random_uuid(), v_limits.tenant_monthly_ceiling_usd - v_existing - v_charge);
-    perform private.check_extraction_limits(v_tenant, null);
+    perform private.check_extraction_limits(v_tenant);
     -- rolls the row back
     raise exception 'passed' using errcode = 'P0001';
   exception

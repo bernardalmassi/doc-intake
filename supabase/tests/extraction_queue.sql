@@ -683,7 +683,7 @@ begin
           - (select coalesce(sum(s.cost_usd), 0) from private.extraction_spend s
              where s.tenant_id = v_tenant and s.created_at >= v_month_start));
   begin
-    perform private.check_extraction_limits(v_tenant, null);
+    perform private.check_extraction_limits(v_tenant);
     raise exception 'a run in flight since last month was left out of this month''s check';
   exception when sqlstate '53400' then
     if sqlerrm not like 'this organization has reached its monthly extraction spend ceiling%' then
@@ -805,7 +805,7 @@ begin
     ('public.delete_tenant(uuid)', false, true, false),
     ('private.extraction_charge(text,text,integer,integer)', false, false, false),
     ('private.abandoned_estimate(integer)', false, false, false),
-    ('private.check_extraction_limits(uuid,uuid)', false, false, false),
+    ('private.check_extraction_limits(uuid)', false, false, false),
     ('private.reap_extraction_run(uuid,text)', false, false, false),
     ('private.lock_extraction_run(uuid,boolean)', false, false, false),
     ('private.wake_extraction_worker()', false, false, false),

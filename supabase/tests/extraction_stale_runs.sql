@@ -238,10 +238,15 @@ begin
   perform private.reap_extraction_run(r.id, 'test') from public.extraction_runs r
   where r.document_id = 'c3c3c3c3-0000-4000-8000-000000000004' and r.status = 'queued';
 
-  -- 8. the reaped run is left out of the same enqueue's sums: with the
-  --    ledger just under the tenant ceiling, the reap's charge takes the
-  --    tenant over it, and the enqueue that reaped still proceeds; the next
-  --    one is refused
+  -- 8. the reaped run counts in the same enqueue's sums (20260925000005):
+  --    with the ledger just under the tenant ceiling, the reap's charge
+  --    takes the tenant over it, so the enqueue that reaped is refused, and
+  --    the refusal rolls the reap back with it: the stale run is still in
+  --    flight, with its token and no ledger row. The sweep then ends it on
+  --    its next tick, once its message's visibility timeout has passed, and
+  --    the next enqueue is refused too. Before, the reaped run's row was
+  --    left out, so the reaping enqueue passed, and the run was counted
+  --    nowhere (the review's V2).
   insert into private.extraction_spend (kind, tenant_id, run_id, cost_usd)
   values ('charge', 'b2b2b2b2-0000-4000-8000-000000000003', gen_random_uuid(),
           v_limits.tenant_monthly_ceiling_usd - v_expected / 2);
@@ -250,21 +255,39 @@ begin
   if v_claim.run_id is distinct from v_sums_a then
     raise exception 'expected to claim %, got %', v_sums_a, v_claim.run_id;
   end if;
-  -- the run's own estimate counts while it is in flight, so take it out of
-  -- the picture: only the reap's ledger row is under test
   update public.extraction_runs set claimed_at = now() - make_interval(mins => v_minutes) - interval '1 second'
   where id = v_sums_a;
-  perform public.enqueue_extraction_run('c3c3c3c3-0000-4000-8000-000000000006', 1);
-  insert into checks (step, result) values ('the reaped run is left out of the sums of the enqueue that reaped it',
+  begin
+    perform public.enqueue_extraction_run('c3c3c3c3-0000-4000-8000-000000000006', 1);
+    raise exception 'the enqueue that reaped a run passed a check that left the reaped run out';
+  exception when sqlstate '53400' then
+    insert into checks (step, result) values ('the reaped run counts in the sums of the enqueue that reaped it', sqlerrm);
+  end;
+  select * into v_run from public.extraction_runs where id = v_sums_a;
+  if v_run.status <> 'running'
+     or not exists (select 1 from private.extraction_run_tokens t where t.run_id = v_sums_a)
+     or exists (select 1 from private.extraction_spend s where s.run_id = v_sums_a)
+     or (select count(*) from public.extraction_runs r where r.document_id = 'c3c3c3c3-0000-4000-8000-000000000006') <> 1 then
+    raise exception 'the refused enqueue kept its reap or its run: status %', v_run.status;
+  end if;
+  insert into checks (step, result) values ('the refusal rolled the reap back: the stale run still in flight, its token kept, no ledger row', 'ok');
+  -- the sweep's next tick, once the claimed message's visibility timeout
+  -- has passed
+  update pgmq.q_extraction q set vt = now() - interval '1 second' where q.msg_id = v_run.queue_msg_id;
+  perform private.sweep_extraction_queue();
+  select * into v_run from public.extraction_runs where id = v_sums_a;
+  select * into v_spend from private.extraction_spend where run_id = v_sums_a;
+  if v_run.status <> 'failed' or v_spend.kind is distinct from 'abandoned' or v_spend.cost_usd is distinct from v_expected then
+    raise exception 'the sweep did not end the stale run at the estimate: % / % / %', v_run.status, v_spend.kind, v_spend.cost_usd;
+  end if;
+  insert into checks (step, result) values ('the sweep ended it on its next tick, at the estimate',
     (select sum(cost_usd)::text from private.extraction_spend where tenant_id = 'b2b2b2b2-0000-4000-8000-000000000003')
     || ' USD in the ledger afterwards');
-  perform private.reap_extraction_run(r.id, 'test') from public.extraction_runs r
-  where r.document_id = 'c3c3c3c3-0000-4000-8000-000000000006' and r.status = 'queued';
   begin
     perform public.enqueue_extraction_run('c3c3c3c3-0000-4000-8000-000000000007', 1);
-    raise exception 'the reap''s charge did not count from the next enqueue on';
+    raise exception 'the reap''s charge did not count on the next enqueue';
   exception when sqlstate '53400' then
-    insert into checks (step, result) values ('the reap''s charge counts from the next enqueue on', sqlerrm);
+    insert into checks (step, result) values ('the next enqueue is refused too', sqlerrm);
   end;
 end $t$;
 

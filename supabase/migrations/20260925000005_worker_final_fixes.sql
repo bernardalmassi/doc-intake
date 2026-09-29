@@ -348,3 +348,259 @@ $$;
 -- sets one, which extraction_queue.sql checks. Mirrored in config.ts as
 -- CLAIM_TIMEOUT_MS; queue-migration.test.ts checks the two agree.
 alter function public.claim_extraction_run() set transaction_timeout = '5s';
+
+-- 5. The enqueue's check counts the run its reaper just reaped (V2) ----------------
+
+-- check_extraction_limits took the id of a run the caller's reaper had just
+-- ended and left that run's ledger row out of its sums, because a refusal
+-- would roll the reap back too. But the run was no longer in flight either,
+-- so it was counted nowhere: a stale run of up to 1.66144 USD, abandoned by
+-- the very enqueue that then passed the check, let a tenant, or the whole
+-- project, go past a ceiling by that run's estimate as well as the new
+-- run's (the review's V2; SECURITY.md said "at most one estimate"). Now the
+-- check counts every ledger row, the reaped run's included. When that
+-- refuses the enqueue, the refusal rolls the reap back with it: the stale
+-- run stays in flight, counted at its estimate as before, and the sweep ends
+-- it on its next tick (step (a) or (c) for a claimed or old-path run, (d)
+-- for a queued one), after which the admin can enqueue again.
+--
+-- A new signature, with no reaped-run parameter; enqueue and open call it,
+-- and the old one is dropped (it is private: no deployed app calls it).
+create function private.check_extraction_limits(p_tenant_id uuid)
+returns void language plpgsql security definer set search_path = '' as $$
+declare
+  v_limits      public.extraction_limits;
+  v_month_start timestamptz := date_trunc('month', now(), 'UTC');
+  v_total       numeric;
+  v_recent_runs integer;
+begin
+  -- one check at a time, project wide
+  perform pg_advisory_xact_lock(hashtext('public.extraction_runs'));
+
+  select l.* into v_limits from public.extraction_limits l;
+
+  -- the tenant's ledger this month plus its runs in flight, in one snapshot
+  select (select coalesce(sum(s.cost_usd), 0)
+          from private.extraction_spend s
+          where s.tenant_id = p_tenant_id
+            and s.created_at >= v_month_start)
+       + (select coalesce(sum(e.cost_usd), 0)
+          from public.extraction_runs r
+          cross join lateral private.abandoned_estimate(r.page_count) e
+          where r.tenant_id = p_tenant_id
+            and r.status in ('queued', 'running'))
+  into v_total;
+
+  if v_total >= v_limits.tenant_monthly_ceiling_usd then
+    raise exception 'this organization has reached its monthly extraction spend ceiling (% USD), counting extractions in progress',
+      v_limits.tenant_monthly_ceiling_usd
+      using errcode = '53400';
+  end if;
+
+  -- the same across every tenant, in one snapshot
+  select (select coalesce(sum(s.cost_usd), 0)
+          from private.extraction_spend s
+          where s.created_at >= v_month_start)
+       + (select coalesce(sum(e.cost_usd), 0)
+          from public.extraction_runs r
+          cross join lateral private.abandoned_estimate(r.page_count) e
+          where r.status in ('queued', 'running'))
+  into v_total;
+
+  if v_total >= v_limits.global_monthly_ceiling_usd then
+    raise exception 'the monthly extraction spend ceiling across all organizations has been reached (% USD), counting extractions in progress',
+      v_limits.global_monthly_ceiling_usd
+      using errcode = '53400';
+  end if;
+
+  select count(*) into v_recent_runs
+  from public.extraction_runs r
+  where r.tenant_id = p_tenant_id
+    and r.started_at > now() - interval '1 hour';
+
+  if v_recent_runs >= v_limits.hourly_run_limit then
+    raise exception 'this organization has reached its limit of % extraction runs per hour',
+      v_limits.hourly_run_limit
+      using errcode = '54000';
+  end if;
+end;
+$$;
+
+revoke execute on function private.check_extraction_limits(uuid) from public, anon, authenticated;
+
+-- As in 20260925000004, except for the check above.
+create or replace function public.enqueue_extraction_run(p_document_id uuid, p_page_count integer)
+returns uuid
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_user_id   uuid := (select auth.uid());
+  v_tenant_id uuid;
+  v_doc       public.documents;
+  v_limits    public.extraction_limits;
+  v_run_id    uuid;
+  v_msg_id    bigint;
+  v_stale_id  uuid;
+begin
+  if v_user_id is null then
+    raise exception 'authentication required' using errcode = '42501';
+  end if;
+
+  -- the caller, before any lock
+  select d.tenant_id into v_tenant_id from public.documents d where d.id = p_document_id;
+  if v_tenant_id is null or not private.is_tenant_admin(v_tenant_id) then
+    raise exception 'document not found or you are not an admin of its organization'
+      using errcode = '42501';
+  end if;
+
+  -- the tenant, then the document (20260925000003)
+  perform 1 from public.tenants t where t.id = v_tenant_id for key share;
+
+  -- lock the document so two enqueues for it are ordered
+  select d.* into v_doc from public.documents d
+  where d.id = p_document_id
+  for update;
+
+  -- again under the lock: one error for missing and not-admin, so the RPC
+  -- can't be used to probe ids
+  if not found or v_doc.tenant_id is distinct from v_tenant_id or not private.is_tenant_admin(v_doc.tenant_id) then
+    raise exception 'document not found or you are not an admin of its organization'
+      using errcode = '42501';
+  end if;
+
+  if v_doc.status = 'uploading' then
+    raise exception 'the document has no file yet' using errcode = '55000';
+  end if;
+
+  select l.* into v_limits from public.extraction_limits l;
+
+  -- the backstop for this document: a run still in flight past
+  -- stale_run_minutes (from its claim if it has one) is ended
+  select r.id into v_stale_id
+  from public.extraction_runs r
+  where r.document_id = v_doc.id
+    and r.status in ('queued', 'running')
+    and coalesce(r.claimed_at, r.started_at) < now() - make_interval(mins => v_limits.stale_run_minutes)
+  order by r.started_at
+  limit 1;
+
+  if v_stale_id is not null then
+    perform private.reap_extraction_run(v_stale_id,
+      format('not finished after %s minutes; ended by a later extraction', v_limits.stale_run_minutes));
+    select d.* into v_doc from public.documents d where d.id = p_document_id;
+  end if;
+
+  if v_doc.status = 'processing' then
+    raise exception 'an extraction is already running for this document'
+      using errcode = '55000';
+  end if;
+
+  -- the ledger this counts includes the row the reap above just wrote: a
+  -- refusal raises, rolling the reap back with everything else, and the
+  -- sweep ends the run on its next tick
+  perform private.check_extraction_limits(v_doc.tenant_id);
+
+  -- the page count is the caller's, clamped; the worker recounts it and
+  -- refuses a run whose file doesn't match before any model call
+  insert into public.extraction_runs
+    (tenant_id, document_id, started_by, status, previous_document_status, page_count)
+  values (v_doc.tenant_id, v_doc.id, v_user_id, 'queued', v_doc.status,
+          case when p_page_count is null then null
+               else least(greatest(p_page_count, 1), v_limits.max_pages_per_document) end)
+  returning id into v_run_id;
+
+  update public.documents set status = 'processing' where id = v_doc.id;
+
+  select m into v_msg_id from pgmq.send('extraction', jsonb_build_object('run_id', v_run_id)) m;
+  update public.extraction_runs set queue_msg_id = v_msg_id where id = v_run_id;
+
+  perform private.wake_extraction_worker();
+
+  return v_run_id;
+end;
+$$;
+
+-- As in 20260925000004, except for the check above.
+create or replace function public.open_extraction_run(p_document_id uuid, p_page_count integer)
+returns table (run_id uuid, close_token uuid)
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_user_id   uuid := (select auth.uid());
+  v_tenant_id uuid;
+  v_doc       public.documents;
+  v_limits    public.extraction_limits;
+  v_run_id    uuid;
+  v_token     uuid := gen_random_uuid();
+  v_stale_id  uuid;
+begin
+  if v_user_id is null then
+    raise exception 'authentication required' using errcode = '42501';
+  end if;
+
+  -- the caller, before any lock
+  select d.tenant_id into v_tenant_id from public.documents d where d.id = p_document_id;
+  if v_tenant_id is null or not private.is_tenant_admin(v_tenant_id) then
+    raise exception 'document not found or you are not an admin of its organization'
+      using errcode = '42501';
+  end if;
+
+  -- the tenant, then the document (20260925000003)
+  perform 1 from public.tenants t where t.id = v_tenant_id for key share;
+
+  -- lock the document so two opens for it are ordered
+  select d.* into v_doc from public.documents d
+  where d.id = p_document_id
+  for update;
+
+  -- again under the lock: one error for missing and not-admin
+  if not found or v_doc.tenant_id is distinct from v_tenant_id or not private.is_tenant_admin(v_doc.tenant_id) then
+    raise exception 'document not found or you are not an admin of its organization'
+      using errcode = '42501';
+  end if;
+
+  if v_doc.status = 'uploading' then
+    raise exception 'the document has no file yet' using errcode = '55000';
+  end if;
+
+  select l.* into v_limits from public.extraction_limits l;
+
+  -- a run of this document still in flight past stale_run_minutes (from its
+  -- claim if it has one) is ended, and the document released
+  select r.id into v_stale_id
+  from public.extraction_runs r
+  where r.document_id = v_doc.id
+    and r.status in ('queued', 'running')
+    and coalesce(r.claimed_at, r.started_at) < now() - make_interval(mins => v_limits.stale_run_minutes)
+  order by r.started_at
+  limit 1;
+
+  if v_stale_id is not null then
+    perform private.reap_extraction_run(v_stale_id,
+      format('not finished after %s minutes; ended by a later extraction', v_limits.stale_run_minutes));
+    select d.* into v_doc from public.documents d where d.id = p_document_id;
+  end if;
+
+  if v_doc.status = 'processing' then
+    raise exception 'an extraction is already running for this document'
+      using errcode = '55000';
+  end if;
+
+  -- counting the reap above, as the enqueue does
+  perform private.check_extraction_limits(v_doc.tenant_id);
+
+  -- the page count is the caller's, clamped; null stays null (unknown)
+  insert into public.extraction_runs
+    (tenant_id, document_id, started_by, status, previous_document_status, page_count)
+  values (v_doc.tenant_id, v_doc.id, v_user_id, 'running', v_doc.status,
+          case when p_page_count is null then null
+               else least(greatest(p_page_count, 1), v_limits.max_pages_per_document) end)
+  returning id into v_run_id;
+
+  insert into private.extraction_run_tokens (run_id, token) values (v_run_id, v_token);
+
+  update public.documents set status = 'processing' where id = v_doc.id;
+
+  return query select v_run_id, v_token;
+end;
+$$;
+
+drop function private.check_extraction_limits(uuid, uuid);
