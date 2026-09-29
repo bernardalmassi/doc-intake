@@ -11,7 +11,13 @@ import { SCREENS } from "./screens";
 // account. /dev/states lists the screens; /dev/states?screen=<id> renders
 // one exactly as its route does. A production build answers 404.
 
-export const metadata: Metadata = { title: "States", robots: { index: false, follow: false } };
+// The metadata answers 404 too: a static `metadata` export would still ship
+// "States" in the production 404's payload, and the tab would take that
+// title after hydration instead of the not-found page's.
+export function generateMetadata(): Metadata {
+  if (process.env.NODE_ENV === "production") notFound();
+  return { title: "States", robots: { index: false, follow: false } };
+}
 
 export default async function StatesPage({ searchParams }: PageProps<"/dev/states">) {
   if (process.env.NODE_ENV === "production") notFound();
