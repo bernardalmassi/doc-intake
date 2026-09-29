@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // npm run test:db: runs every file in supabase/tests (the stale-run reaper
 // and the extraction queue, each inside begin; ... rollback;), then the
-// two-session tests in supabase/tests/sessions (the lock order, and a
-// ceiling check racing a finish), against the TEST
+// two-session tests in supabase/tests/sessions (the lock order, a ceiling
+// check racing a finish, and a claim held up past its own timeout), against the TEST
 // project from .env.test, never the app's, through the Supabase CLI's
 // Management API access. The CLI stays linked to the app's project: `db
 // query` takes --project-ref only together with --linked, and then queries
@@ -107,6 +107,11 @@ function failure(result) {
 // still running), and the other session neither waited nor kept anything.
 // The third case races a ceiling check against a finish (finish-table.sql
 // instead of finish.sql): the check must count the run exactly once.
+//
+// A case may also name its own first session (`first`, in place of
+// finish.sql), take its report from that session (`reportFrom: "first"`),
+// expect the database to end the second session with an error matching
+// `endedBy`, and skip check.sql, which checks the finish (`check: false`).
 const CASES = [
   {
     name: "a finish holds its run while the sweep runs at the message's visibility timeout",
@@ -150,6 +155,25 @@ const CASES = [
       [Number(r.rows_left) === 0, "the check's ledger row was committed"],
     ],
   },
+  {
+    name: "a claim stuck behind a lock is ended by its own timeout, and its claim rolls back whole",
+    setup: "setup-second.sql",
+    first: "hold-tokens.sql",
+    session: "claim-stuck.sql",
+    endedBy: /25P04|terminating connection due to transaction timeout/,
+    reportFrom: "first",
+    check: false,
+    ok: "the database ended the stuck claim at its timeout and rolled back its read, its status and its token",
+    expect: (r) => [
+      [r.waited === true, "the claim never waited on session H's lock"],
+      [r.ended_while_held === true, "the claim's session was not ended while session H held the table (it has no timeout of its own)"],
+      [r.claim_returned === false, "the claim returned"],
+      [Number(r.waited_ms) >= 3000 && Number(r.waited_ms) <= 9000, "the claim was not ended about 5 s into its wait"],
+      [r.run_status === "queued", "the second run is not queued again"],
+      [Number(r.read_ct) === 0 && r.visible === true, "the claim's read of the message was not rolled back"],
+      [r.has_token === false, "the second run kept a claim token"],
+    ],
+  },
 ];
 
 // One case: cleanup, setup, the two sessions, the check, cleanup again.
@@ -173,31 +197,41 @@ async function runCase(testCase) {
       problems.push(second.rows ? `${testCase.setup} did not leave a queued run: ${JSON.stringify(second.rows)}` : failure(second));
     } else {
       let sent;
-      const finishSent = new Promise((resolve) => (sent = resolve));
-      const running = query(testCase.finish ?? "finish.sql", sent);
+      const firstFile = testCase.first ?? testCase.finish ?? "finish.sql";
+      const firstSent = new Promise((resolve) => (sent = resolve));
+      const running = query(firstFile, sent);
       const [finish, other] = await Promise.all([
         running,
-        finishSent.then((ok) =>
+        firstSent.then((ok) =>
           ok
             ? query(testCase.session)
-            : { file: testCase.session, status: null, rows: null, text: "not started: finish.sql ended before sending its query" },
+            : { file: testCase.session, status: null, rows: null, text: `not started: ${firstFile} ended before sending its query` },
         ),
       ]);
       for (const session of [finish, other]) {
         if (/deadlock detected|40P01/i.test(session.text)) problems.push(`${session.file}: a deadlock was reported`);
+        if (session === other && testCase.endedBy) {
+          if (session.rows) problems.push(`${testCase.session} returned, but the database should have ended its session`);
+          else if (!testCase.endedBy.test(session.text)) problems.push(failure(session));
+          else console.error(`  ${testCase.session}: ended by the database, as expected`);
+          continue;
+        }
         if (!session.rows) problems.push(failure(session));
       }
-      const report = other.rows?.[0];
-      if (other.rows && !report) problems.push(`${testCase.session} reported nothing`);
+      const reporter = testCase.reportFrom === "first" ? finish : other;
+      const report = reporter.rows?.[0];
+      if (reporter.rows && !report) problems.push(`${reporter.file} reported nothing`);
       if (report) {
         for (const [ok, problem] of testCase.expect(report)) if (!ok) problems.push(`${problem}: ${JSON.stringify(report)}`);
-        console.error(`  ${testCase.session}: ${JSON.stringify(report)}`);
+        console.error(`  ${reporter.file}: ${JSON.stringify(report)}`);
       }
-      if (finish.rows) console.error(`  finish.sql: ${JSON.stringify(finish.rows[0] ?? null)}`);
+      if (finish.rows && reporter !== finish) console.error(`  ${firstFile}: ${JSON.stringify(finish.rows[0] ?? null)}`);
 
-      const check = await query("check.sql");
-      if (check.rows) console.error(`  check.sql: ${JSON.stringify(check.rows[0] ?? null)}`);
-      else problems.push(failure(check));
+      if (testCase.check !== false) {
+        const check = await query("check.sql");
+        if (check.rows) console.error(`  check.sql: ${JSON.stringify(check.rows[0] ?? null)}`);
+        else problems.push(failure(check));
+      }
     }
   } finally {
     const after = await query("cleanup.sql");
@@ -205,7 +239,7 @@ async function runCase(testCase) {
   }
 
   for (const problem of problems) console.error(`  FAILED: ${problem}`);
-  if (problems.length === 0) console.error("  ok: the finish committed with its result, no deadlock, the message archived once");
+  if (problems.length === 0) console.error(`  ok: ${testCase.ok ?? "the finish committed with its result, no deadlock, the message archived once"}`);
   return problems.length === 0;
 }
 

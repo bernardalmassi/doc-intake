@@ -866,6 +866,32 @@ begin
     || ', authenticated ' || has_function_privilege('authenticated', 'net.http_post(text,jsonb,jsonb,jsonb,integer)', 'execute'));
 end $t$;
 
+-- 10. The claim's own timeout (20260925000005) ---------------------------------
+
+-- The claim runs under a transaction_timeout of its own, so a claim held up
+-- past it rolls back instead of leaving a run claimed with nobody on it (the
+-- two-session stuck-claim case in test:db exercises it). A function's
+-- setting doesn't re-arm a timer already running, so no role the API or the
+-- worker connects as may set a transaction_timeout of its own.
+do $t$
+declare
+  v_config text[];
+begin
+  select p.proconfig into v_config from pg_proc p
+  where p.oid = 'public.claim_extraction_run()'::regprocedure;
+  if not ('transaction_timeout=5s' = any (coalesce(v_config, '{}'))) then
+    raise exception 'claim_extraction_run has no transaction_timeout of 5s: %', v_config;
+  end if;
+  if exists (select 1 from pg_roles r
+             where r.rolname in ('authenticator', 'service_role', 'authenticated', 'anon', 'postgres')
+               and exists (select 1 from unnest(coalesce(r.rolconfig, '{}')) c where c like 'transaction_timeout=%'))
+     or exists (select 1 from pg_db_role_setting s, unnest(s.setconfig) c where c like 'transaction_timeout=%') then
+    raise exception 'a role or database sets a transaction_timeout, which would hold the claim to that one instead';
+  end if;
+  insert into checks (step, result) values
+    ('the claim runs under its own 5 s transaction_timeout, and no role or database sets one that would override it', array_to_string(v_config, ', '));
+end $t$;
+
 select step, result from checks order by n;
 
 rollback;

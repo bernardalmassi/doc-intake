@@ -14,7 +14,9 @@
 //     two-session case in supabase/tests/sessions races one against a finish)
 //   - the live claim locks a run's document and the run before it reads the
 //     run's message, and skips at most 5 runs it can't lock (the two-session
-//     claim case exercises it)
+//     claim case exercises it), and runs under its own transaction_timeout,
+//     the one config.ts mirrors (the two-session stuck-claim case exercises
+//     it)
 //
 // Needs no database.
 
@@ -22,7 +24,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { EXTRACTION_LIMITS, PRICING } from "@/lib/extraction/config";
+import { CLAIM_TIMEOUT_MS, EXTRACTION_LIMITS, PRICING } from "@/lib/extraction/config";
 import { parseMigrations } from "../helpers/sql-raises";
 
 const dir = fileURLToPath(new URL("../../supabase/migrations/", import.meta.url));
@@ -133,5 +135,15 @@ describe("the live claim", () => {
   it("skips a run it can't lock and tries the next, at most 5 times", () => {
     expect(body).toMatch(/exception when lock_not_available then[\s\S]*?v_skipped := v_skipped \|\| v_candidate\.msg_id;[\s\S]*?cardinality\(v_skipped\) >= 5/);
     expect(body).toContain("q.msg_id <> all (v_skipped)");
+  });
+
+  it("runs under its own transaction_timeout, the one config.ts mirrors, set after its last definition", () => {
+    // a later create or replace would reset the function's settings
+    const definitions = [...all.matchAll(/create (?:or replace )?function public\.claim_extraction_run\(/gi)];
+    const settings = [...all.matchAll(/alter function public\.claim_extraction_run\(\) set transaction_timeout = '(\d+)s';/gi)];
+    expect(definitions.length).toBeGreaterThan(0);
+    expect(settings.length).toBeGreaterThan(0);
+    expect(settings.at(-1)!.index).toBeGreaterThan(definitions.at(-1)!.index);
+    expect(Number(settings.at(-1)![1]) * 1000).toBe(CLAIM_TIMEOUT_MS);
   });
 });

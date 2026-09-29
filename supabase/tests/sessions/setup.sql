@@ -14,6 +14,8 @@
 --   claim.sql
 --   (or finish-table.sql with limits.sql: a ceiling check while the finish
 --   commits, 20260925000004)
+--   (or hold-tokens.sql with claim-stuck.sql, after setup-second.sql: a
+--   claim held up past its own timeout, 20260925000005; no check.sql)
 --   check.sql     what the database recorded
 --   cleanup.sql   again, whatever happened
 --

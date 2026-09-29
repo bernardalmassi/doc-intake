@@ -324,3 +324,27 @@ begin
   return v_run;
 end;
 $$;
+
+-- 4. A claim that doesn't finish in time rolls back ------------------------------
+
+-- The claim had no time limit of its own: service_role, which the worker
+-- calls it as, has no statement timeout. A claim held up long enough (behind
+-- a migration's table lock, say) could commit after the worker invoking it
+-- was gone: the run claimed, its message hidden for the visibility timeout,
+-- nobody working on it, and the sweep abandoning it later at the estimate
+-- though no model was called.
+--
+-- A statement_timeout set on a function does not apply to the call already
+-- running (measured on the test project, 2026-09-27: a call ran 2.5 s past a
+-- 1 s limit). A transaction_timeout does: PostgreSQL 17 arms it when the
+-- function's setting takes effect and disarms it when the function returns
+-- (measured too), so it bounds exactly the claim's own run. When it fires
+-- the database ends the session (25P04), which rolls the claim back whole:
+-- the message's read, the run's status and its token. The worker waits 8 s
+-- for the claim's answer (CLAIM_REQUEST_TIMEOUT_MS), longer than this, so by
+-- the time it gives up the claim has committed or rolled back. A caller
+-- already running under a transaction_timeout of its own keeps that one (a
+-- function's setting doesn't re-arm a running timer; measured); no API role
+-- sets one, which extraction_queue.sql checks. Mirrored in config.ts as
+-- CLAIM_TIMEOUT_MS; queue-migration.test.ts checks the two agree.
+alter function public.claim_extraction_run() set transaction_timeout = '5s';

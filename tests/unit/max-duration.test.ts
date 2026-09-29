@@ -1,6 +1,7 @@
 // The time bounds a queued run lives under (docs/worker-design.md, section
-// 6): its model calls, each counted first (3 x (15 s + 60 s)), the worker
-// route's maxDuration, which
+// 6): the claim (the worker's wait for it, longer than the database's own
+// timeout on it), its model calls, each counted first (3 x (15 s + 60 s)),
+// the worker route's maxDuration, which
 // bounds after() too, the claimed message's visibility timeout, and the
 // stale limit the sweep and the reaper go by. Each must outlast the one
 // before it: a delivery must finish inside its function, and no second
@@ -14,6 +15,8 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  CLAIM_REQUEST_TIMEOUT_MS,
+  CLAIM_TIMEOUT_MS,
   DOWNLOAD_TIMEOUT_MS,
   EXTRACTION_LIMITS,
   FINISH_ATTEMPT_TIMEOUT_MS,
@@ -54,13 +57,21 @@ describe("the queue's time bounds", () => {
     expect(route).toBeLessThan(HOST_MAX_SECONDS);
   });
 
+  it("give the claim a timeout in the database and a longer wait in the worker", () => {
+    // the database ends a claim after CLAIM_TIMEOUT_MS; the worker waits
+    // longer, so when it gives up the claim has committed or rolled back
+    expect(CLAIM_REQUEST_TIMEOUT_MS).toBeGreaterThan(CLAIM_TIMEOUT_MS);
+    const worker = readFileSync(join(root, "src/lib/extraction/worker.ts"), "utf8");
+    expect(worker).toContain('supabase.rpc("claim_extraction_run").abortSignal(AbortSignal.timeout(CLAIM_REQUEST_TIMEOUT_MS))');
+  });
+
   it("leave the finish at least two full attempts before the worker's deadline", () => {
-    // what the download, the calls and their counts can take at most, then the finish
-    // retries until the deadline (delivery.ts): the route's maxDuration less
-    // the margin
+    // what the claim, the download, the calls and their counts can take at
+    // most, then the finish retries until the deadline (delivery.ts): the
+    // route's maxDuration less the margin
     const route = literalMaxDuration(ROUTE) ?? 0;
     const modelMs = EXTRACTION_LIMITS.maxCallsPerRun * (TOKEN_COUNT_TIMEOUT_MS + PROVIDER_TIMEOUT_MS);
-    const finishWindowMs = route * 1000 - WORKER_DEADLINE_MARGIN_MS - DOWNLOAD_TIMEOUT_MS - modelMs;
+    const finishWindowMs = route * 1000 - WORKER_DEADLINE_MARGIN_MS - CLAIM_REQUEST_TIMEOUT_MS - DOWNLOAD_TIMEOUT_MS - modelMs;
     expect(finishWindowMs).toBeGreaterThanOrEqual(2 * FINISH_ATTEMPT_TIMEOUT_MS);
     // and the route computes the deadline from its own maxDuration
     expect(readFileSync(join(root, ROUTE), "utf8")).toContain("maxDuration * 1000 - WORKER_DEADLINE_MARGIN_MS");

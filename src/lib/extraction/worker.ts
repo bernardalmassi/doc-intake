@@ -21,6 +21,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { classifyStorageError } from "../errors";
 import { log, type Logger } from "../log";
 import { registerSecret } from "../redact";
+import { CLAIM_REQUEST_TIMEOUT_MS } from "./config";
 import { deliver, type DeliveryResult, type DownloadedFile, type ProviderPair } from "./delivery";
 import { isAuthorizedWorkerCall } from "./worker-auth";
 import { workerProjectUrl } from "./worker-target";
@@ -83,7 +84,10 @@ export async function processOneDelivery({
       auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     });
 
-    const claimed = await supabase.rpc("claim_extraction_run");
+    // the database ends a claim after CLAIM_TIMEOUT_MS (its transaction_timeout,
+    // 20260925000005); this waits a little longer, so when it gives up the
+    // claim has committed or rolled back
+    const claimed = await supabase.rpc("claim_extraction_run").abortSignal(AbortSignal.timeout(CLAIM_REQUEST_TIMEOUT_MS));
     if (claimed.error) {
       log.error("worker.claim_failed", failureFields(claimed.error, claimed.status));
       return { kind: "claim_failed" };

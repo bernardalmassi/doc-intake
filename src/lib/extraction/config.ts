@@ -136,6 +136,17 @@ export function largestCountWithin(limit: number): number {
   return Math.floor((limit * 100) / (100 + TOKEN_COUNT_MARGIN_PERCENT));
 }
 
+// The claim's own time (claim_extraction_run's transaction_timeout,
+// 20260925000005): a claim still running after this is ended by the
+// database, its transaction rolled back, so no run is left claimed with no
+// worker on it. A mirror; queue-migration.test.ts checks the migration.
+export const CLAIM_TIMEOUT_MS = 5_000;
+
+// How long the worker waits for the claim's answer before giving up
+// (worker.ts): longer than the claim's own timeout, so by then the claim has
+// committed or rolled back.
+export const CLAIM_REQUEST_TIMEOUT_MS = 8_000;
+
 // The worker's download of the claimed run's file (delivery.ts). One that
 // hasn't finished by then fails the run at 0 USD with no model call.
 export const DOWNLOAD_TIMEOUT_MS = 15_000;
