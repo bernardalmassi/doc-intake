@@ -37,14 +37,19 @@ begin
 end $t$;
 commit;
 
--- the claimed message's visibility timeout passes
-update pgmq.q_extraction q set vt = clock_timestamp() - interval '1 second'
+-- the claimed message's visibility timeout passes, as the sweep will see
+-- it: the sweep's steps compare vt with now(), and every transaction this
+-- file starts has the same now(), the time the file (one query message)
+-- arrived, which can be seconds before this update after the wait for
+-- session F; a vt set from clock_timestamp() then isn't past it, and the
+-- sweep finds no candidate
+update pgmq.q_extraction q set vt = now() - interval '1 second'
 from public.extraction_runs r
 where r.document_id = 'f3f3f3f3-0000-4000-8000-000000000001' and q.msg_id = r.queue_msg_id;
 commit;
 
 create temp table report as
-select q.msg_id, q.read_ct >= 1 and q.vt <= clock_timestamp() as candidate, q.xmax::text as xmax_before,
+select q.msg_id, q.read_ct >= 1 and q.vt <= now() as candidate, q.xmax::text as xmax_before,
        null::text as xmax_after, clock_timestamp() as sweep_started, null::timestamptz as sweep_returned,
        null::boolean as finish_held_locks, null::text as run_after_sweep
 from pgmq.q_extraction q
