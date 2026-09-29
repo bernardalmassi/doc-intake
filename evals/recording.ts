@@ -16,7 +16,7 @@
 // deliberate re-record.
 
 import { createHash } from "node:crypto";
-import { ANTHROPIC_THINKING, DEFAULT_MODELS, OPENAI_REASONING_EFFORT, type ProviderName } from "@/lib/extraction/config";
+import { ANTHROPIC_THINKING, DEFAULT_MODELS, OPENAI_REASONING_EFFORT, type ProviderName, withCountMargin } from "@/lib/extraction/config";
 import {
   type ExtractionProvider,
   type ExtractionRequest,
@@ -330,11 +330,12 @@ export function recordingProvider(
             : { kind: "client", status: null, message: error instanceof Error ? error.message : String(error), usage: null };
         calls.push({ fingerprint, latencyMs: now() - started, response: null, error: classified });
         // an unusable answer is billed like any other, and a call with no
-        // answer at the most it could have cost
+        // answer at the most it could have cost: its count with the count's
+        // margin (withCountMargin, as run.ts charges it) and the output cap
         if (classified.usage) charge(classified.usage);
         else if (classified.status === null) {
           if (lastCount === null) throw budget.abort("a call was sent with no count before it");
-          charge({ model: inner.model, inputTokens: lastCount, outputTokens: request.maxOutputTokens });
+          charge({ model: inner.model, inputTokens: withCountMargin(lastCount), outputTokens: request.maxOutputTokens });
         }
         throw error;
       }

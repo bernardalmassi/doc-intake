@@ -30,7 +30,13 @@ import {
   RECOUNT_HINT,
   repositoryRequests,
 } from "../../evals/token-counts";
-import { EXTRACTION_LIMITS, inputTokensPerCall, selectableAnthropicModels } from "@/lib/extraction/config";
+import {
+  EXTRACTION_LIMITS,
+  inputTokensPerCall,
+  selectableAnthropicModels,
+  TOKEN_COUNT_MARGIN_PERCENT,
+  withCountMargin,
+} from "@/lib/extraction/config";
 
 const counts = loadTokenCounts();
 
@@ -97,13 +103,15 @@ describe("the per-call input bound", () => {
     );
   });
 
-  it("lets every counted fixture, image and retry through, on every model", () => {
+  it("lets every counted fixture, image and retry through, on every model, with the count's margin", () => {
     for (const [model, byId] of Object.entries(counts.counts)) {
       for (const [id, tokens] of Object.entries(byId)) {
         const { kind, pages } = counts.requests[id];
         if (kind === "prompt") continue;
         const bound = inputTokensPerCall(pages, kind === "retry");
-        expect(tokens, `${id} on ${model}: ${tokens} tokens against ${bound}`).toBeLessThanOrEqual(bound);
+        // run.ts compares the count with its margin
+        const billable = withCountMargin(tokens);
+        expect(billable, `${id} on ${model}: ${tokens} tokens, ${billable} with the margin, against ${bound}`).toBeLessThanOrEqual(bound);
       }
     }
   });
@@ -137,6 +145,20 @@ describe("the token counter", () => {
       ["https://api.openai.com/v1/responses/input_tokens", "POST"],
     ] as const) {
       await expect(countOnlyFetch(url, { method }), `${method} ${url}`).rejects.toThrow(/only calls/);
+    }
+  });
+});
+
+describe("the count's margin", () => {
+  it("covers what Claude Sonnet 5 billed for every fixture against what it counted (equal, to the token)", () => {
+    expect(TOKEN_COUNT_MARGIN_PERCENT).toBe(5);
+    for (const fixture of FIXTURES) {
+      const recording = loadRecording(fixture, "anthropic");
+      expect(recording.requestedModel).toBe("claude-sonnet-5");
+      const billed = recording.calls[0].response?.inputTokens;
+      const counted = counts.counts["claude-sonnet-5"][`fixture:${fixture.id}`];
+      expect(billed, fixture.id).toBe(counted);
+      expect(billed!, fixture.id).toBeLessThanOrEqual(withCountMargin(counted));
     }
   });
 });

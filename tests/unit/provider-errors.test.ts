@@ -30,7 +30,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_MODELS, type ProviderName } from "@/lib/extraction/config";
+import { DEFAULT_MODELS, type ProviderName, withCountMargin } from "@/lib/extraction/config";
 import { classifyAnthropicError, classifyOpenAIError } from "@/lib/extraction/providers/classify";
 import { describeError, type ExtractionProvider, type ProviderError } from "@/lib/extraction/providers/types";
 import { runExtraction } from "@/lib/extraction/run";
@@ -284,14 +284,15 @@ describe("through the orchestrator, with real SDK errors", () => {
 
     expect(primaryFetch.requests).toHaveLength(1);
     expect(fallback.requests).toHaveLength(1);
-    // the timed-out call counts at its measured input (1000 here) and the
-    // output cap, and the run at the dearer model's rates (run.ts)
+    // the timed-out call counts at its measured input (1000 here) with the
+    // count's margin and the output cap, and the run at the dearer model's
+    // rates (run.ts)
     expect(outcome).toMatchObject({
       status: "succeeded",
       provider: "anthropic",
       model: DEFAULT_MODELS.anthropic,
       attempts: 2,
-      inputTokens: 1000 + 700,
+      inputTokens: withCountMargin(1000) + 700,
       outputTokens: 2048 + 60,
       costEstimated: true,
     });
@@ -332,7 +333,7 @@ describe("through the orchestrator, with real SDK errors", () => {
       provider: "anthropic",
       model: DEFAULT_MODELS.anthropic,
       attempts: 2,
-      inputTokens: 1000,
+      inputTokens: withCountMargin(1000),
       outputTokens: 2048,
       costEstimated: true,
       rawResponse: null,

@@ -28,7 +28,7 @@ import {
 import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
 import { describe, expect, it } from "vitest";
-import { ANTHROPIC_MODEL_ENV_VAR, EXTRACTION_LIMITS, inputTokensPerCall, PROVIDER_ENV_VAR } from "@/lib/extraction/config";
+import { ANTHROPIC_MODEL_ENV_VAR, EXTRACTION_LIMITS, inputTokensPerCall, largestCountWithin, PROVIDER_ENV_VAR, withCountMargin } from "@/lib/extraction/config";
 import { describeError, ProviderError, type ProviderResponse } from "@/lib/extraction/providers/types";
 import { interpretAnthropicMessage, interpretOpenAIResponse } from "@/lib/extraction/providers/interpret";
 import { runExtraction } from "@/lib/extraction/run";
@@ -553,8 +553,8 @@ const RUN_CASES: RunCase[] = [
   {
     label: "the first call measures over the limit: nothing sent",
     primary: [],
-    primaryCounts: [inputTokensPerCall(1) + 1],
-    stored: `too dense: its input (${inputTokensPerCall(1) + 1} tokens) is over the ${inputTokensPerCall(1)} a call may read for 1 page`,
+    primaryCounts: [largestCountWithin(inputTokensPerCall(1)) + 1],
+    stored: `too dense: its input (${largestCountWithin(inputTokensPerCall(1)) + 1} tokens, ${withCountMargin(largestCountWithin(inputTokensPerCall(1)) + 1)} with the count's 5% margin) is over the ${inputTokensPerCall(1)} a call may read for 1 page`,
     expected: "extraction.too_dense",
   },
   {
@@ -586,7 +586,7 @@ const RUN_CASES: RunCase[] = [
     primary: [new ProviderError("anthropic", "server", "Overloaded", 529)],
     fallback: [],
     fallbackCounts: [20_000],
-    stored: `anthropic server 529: Overloaded; the fallback provider was not used: its input (20000 tokens) is over the ${inputTokensPerCall(1)} a call may read for 1 page`,
+    stored: `anthropic server 529: Overloaded; the fallback provider was not used: its input (20000 tokens, 21000 with the count's 5% margin) is over the ${inputTokensPerCall(1)} a call may read for 1 page`,
     expected: "extraction.provider_unavailable",
   },
   {
@@ -594,7 +594,7 @@ const RUN_CASES: RunCase[] = [
     primary: [notJson()],
     primaryCounts: [1000, 20_000],
     stored: new RegExp(
-      `^retry after invalid response \\([\\s\\S]*\\) failed: the retry was not sent: its input \\(20000 tokens\\) is over the ${inputTokensPerCall(1, true)} a call may read for 1 page$`,
+      `^retry after invalid response \\([\\s\\S]*\\) failed: the retry was not sent: its input \\(20000 tokens, 21000 with the count's 5% margin\\) is over the ${inputTokensPerCall(1, true)} a call may read for 1 page$`,
     ),
     expected: "extraction.invalid_answer",
   },

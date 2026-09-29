@@ -112,6 +112,30 @@ export const PROVIDER_TIMEOUT_MS = 60_000;
 // many counts as calls; a count that fails or times out sends no call.
 export const TOKEN_COUNT_TIMEOUT_MS = 15_000;
 
+// The count is an estimate: Anthropic documents that the input a call is
+// billed "might differ by a small amount" from its count (OpenAI calls its
+// own exact). So a count is taken as this much more wherever it stands for
+// what a call will be billed: when it is compared with the call's bound
+// and the run's (run.ts, measure), and when a call that got no answer is
+// charged its measured input plus the output cap. On the twelve eval
+// fixtures Claude Sonnet 5's count and its bill were equal to the token
+// (evals/token-counts.json against evals/recordings/; input-bound.test.ts),
+// so 5% is room for the difference the documentation allows, not a
+// measured one; the calibrated figures' 25% headroom covers it (every
+// counted request still fits with it). Integer arithmetic, so the boundary
+// is exact.
+export const TOKEN_COUNT_MARGIN_PERCENT = 5;
+
+// A count with the margin: what the call is taken to be billed at most.
+export function withCountMargin(counted: number): number {
+  return Math.ceil((counted * (100 + TOKEN_COUNT_MARGIN_PERCENT)) / 100);
+}
+
+// The largest count whose margin still fits `limit`.
+export function largestCountWithin(limit: number): number {
+  return Math.floor((limit * 100) / (100 + TOKEN_COUNT_MARGIN_PERCENT));
+}
+
 // The worker's download of the claimed run's file (delivery.ts). One that
 // hasn't finished by then fails the run at 0 USD with no model call.
 export const DOWNLOAD_TIMEOUT_MS = 15_000;

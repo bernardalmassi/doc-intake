@@ -17,8 +17,10 @@
 // allowance), the per-call input the run's estimate assumes while it is in
 // flight (private.abandoned_estimate), and until the run's measured input
 // with it fits maxInputTokensPerRun, the estimate's cap on a whole run
-// (which binds from 44 pages). A first call over it sends nothing and fails
-// the run as too dense, at 0 USD. A count that fails
+// (which binds from 44 pages). Each count is taken with its margin
+// (withCountMargin, config.ts), since a count is an estimate of the bill.
+// A first call over it sends nothing and fails the run as too dense, at 0
+// USD. A count that fails
 // sends nothing either: on the primary's first call a timeout or 5xx
 // switches to the fallback like a failed call, and a fallback that can't
 // be measured, or measures over the bound, isn't used. A retry over the
@@ -35,8 +37,8 @@
 // every answer is billed. A call that was sent and got no answer back (a
 // timeout, a dropped connection, anything thrown without an HTTP status)
 // may still have been processed and billed, so it counts at the most it
-// could have cost: its measured input and the output cap, at the model it
-// was sent to. A call the provider refused with an HTTP status (a 4xx, a
+// could have cost: its measured input with the count's margin and the
+// output cap, at the model it was sent to. A call the provider refused with an HTTP status (a 4xx, a
 // 5xx) was not processed and adds nothing.
 //
 // finish_extraction_run prices a run at one model. When every token comes
@@ -63,6 +65,8 @@ import {
   priceForModel,
   PRICING,
   type ProviderName,
+  TOKEN_COUNT_MARGIN_PERCENT,
+  withCountMargin,
 } from "./config";
 import { describeError, ProviderError, type ExtractionProvider, type ExtractionRequest } from "./providers/types";
 import { buildJsonSchema, gateFields, retryPrompt, SYSTEM_PROMPT, userPrompt, validateExtraction, type GatedField } from "./schema";
@@ -178,11 +182,12 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
   let primaryFailure: string | null = null;
   // what the estimate assumes a whole run reads
   const runInputLimit = EXTRACTION_LIMITS.maxInputTokensPerRun;
-  // the measured input of every call sent so far
+  // the measured input of every call sent so far, each with its margin
   let inputSent = 0;
 
   // Measures a call's input with the current provider's token counting
-  // endpoint. A number that fits the limit, or why the call can't be sent.
+  // endpoint. The count with its margin, if that fits the limit, or why the
+  // call can't be sent.
   async function measure(
     request: ExtractionRequest,
   ): Promise<{ ok: true; tokens: number } | { ok: false; error: unknown } | { ok: false; over: number; why: string }> {
@@ -197,13 +202,16 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
       runLog.warn("extraction.count_failed", { provider: provider.name, model: provider.model, ...lastFailure });
       return { ok: false, error };
     }
-    // the call's own limit, then the run's: at 44 pages or more three calls
-    // at the call's limit would read more than the run's
+    // what the call may be billed; the call's own limit, then the run's: at
+    // 44 pages or more three calls at the call's limit would read more than
+    // the run's
+    const billable = withCountMargin(measured);
+    const counted = `its input (${measured} tokens, ${billable} with the count's ${TOKEN_COUNT_MARGIN_PERCENT}% margin)`;
     const why =
-      measured > inputLimit
-        ? `its input (${measured} tokens) is over the ${inputLimit} a call may read for ${pagesLabel(input.pages)}`
-        : inputSent + measured > runInputLimit
-          ? `its input (${measured} tokens) would take the run's to ${inputSent + measured}, over the ${runInputLimit} a run may read`
+      billable > inputLimit
+        ? `${counted} is over the ${inputLimit} a call may read for ${pagesLabel(input.pages)}`
+        : inputSent + billable > runInputLimit
+          ? `${counted} would take the run's to ${inputSent + billable}, over the ${runInputLimit} a run may read`
           : null;
     if (why) {
       lastFailure = { error_kind: "over_limit" };
@@ -222,7 +230,7 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
       input_tokens: measured,
       input_limit: inputLimit,
     });
-    return { ok: true, tokens: measured };
+    return { ok: true, tokens: billable };
   }
 
   // One call, switching to the fallback provider if the current one times
@@ -286,7 +294,8 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
           answered = true;
         } else if (!(error instanceof ProviderError && error.status !== undefined)) {
           // Sent, and no answer came back: the provider may have processed
-          // it and billed it, so it counts at the most it could have cost.
+          // it and billed it, so it counts at the most it could have cost,
+          // its count with the margin (measured.tokens) and the output cap.
           // An HTTP status means the provider refused it instead.
           charged = { model: provider.model, inputTokens: measured.tokens, outputTokens: request.maxOutputTokens };
           countedAtMost = true;

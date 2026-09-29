@@ -39,7 +39,7 @@ import { FIXTURES } from "../evals/fixtures";
 import { committedPdf, loadRecording } from "../evals/harness";
 import { replayProvider } from "../evals/recording";
 import { classifyRunError, isCostEstimated } from "@/lib/errors";
-import { computeCostUsd, dearestModelFor, EXTRACTION_LIMITS, MAX_OUTPUT_TOKENS, PRICING } from "@/lib/extraction/config";
+import { computeCostUsd, dearestModelFor, EXTRACTION_LIMITS, MAX_OUTPUT_TOKENS, PRICING, withCountMargin } from "@/lib/extraction/config";
 import type { ProviderPair } from "@/lib/extraction/delivery";
 import { countPages } from "@/lib/extraction/pages";
 import { ProviderError, type ExtractionProvider } from "@/lib/extraction/providers/types";
@@ -524,7 +524,7 @@ describe("runs the worker delivers", () => {
     expect(await readFields(x(), docF.id)).toEqual([]);
   });
 
-  it("a timeout falls back once: two calls, the timed-out one charged its measured input and the output cap", async () => {
+  it("a timeout falls back once: two calls, the timed-out one charged its measured input with the count's margin and the output cap", async () => {
     const id = await mustEnqueue(x(), docF.id);
     // both at gpt-5-nano's price, to keep the suite under its budget: a
     // timed-out call counts at its most (run.ts), 2 048 tokens out
@@ -538,10 +538,10 @@ describe("runs the worker delivers", () => {
       status: "succeeded",
       provider: "openai",
       attempts: 2,
-      input_tokens: 1200 + 1000,
+      input_tokens: withCountMargin(1200) + 1000,
       output_tokens: MAX_OUTPUT_TOKENS + 100,
     });
-    expect(Number(run?.cost_usd)).toBe(computeCostUsd(NANO, 1200 + 1000, MAX_OUTPUT_TOKENS + 100));
+    expect(Number(run?.cost_usd)).toBe(computeCostUsd(NANO, withCountMargin(1200) + 1000, MAX_OUTPUT_TOKENS + 100));
     expect((await readDocument(x(), docF.id))?.status).toBe("extracted");
   });
 

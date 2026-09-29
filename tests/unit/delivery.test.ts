@@ -30,8 +30,10 @@ import {
   FINISH_RETRY_FIRST_DELAY_MS,
   FINISH_RETRY_MAX_DELAY_MS,
   inputTokensPerCall,
+  largestCountWithin,
   MAX_OUTPUT_TOKENS,
   PRICING,
+  withCountMargin,
 } from "@/lib/extraction/config";
 import { deliver, isTransientFinishRefusal, preflight, type ClaimedRun, type DownloadedFile, type Finish, type ProviderPair } from "@/lib/extraction/delivery";
 import { ProviderError } from "@/lib/extraction/providers/types";
@@ -236,7 +238,8 @@ describe("the download", () => {
 
 describe("the per-call input limit", () => {
   it("is the one for the pages the worker counted: a call at it is sent, one over it isn't, and the run fails at 0", async () => {
-    const limit = inputTokensPerCall(3);
+    // the largest count whose margin fits the limit is sent, one more isn't
+    const limit = largestCountWithin(inputTokensPerCall(3));
     const sent = fakeProvider("openai", "gpt-5-nano", [answer(validJson(), "gpt-5-nano-2025-08-07")], [limit]);
     const ok = finisher();
     const run = { ...RUN, pageCount: 3 };
@@ -254,7 +257,7 @@ describe("the per-call input limit", () => {
 });
 
 describe("a call that got no answer", () => {
-  it("is finished at its measured input plus the output cap, marked estimated, and stays so if the finish is refused", async () => {
+  it("is finished at its measured input with the count's margin plus the output cap, marked estimated, and stays so if the finish is refused", async () => {
     const primary = fakeProvider("anthropic", "claude-sonnet-5", [new ProviderError("anthropic", "transport", "request timed out")], [4321]);
     const { calls, finish } = finisher([{ code: "22023" }]);
     await deliver({ run: RUN, download: file(onePage), providers: () => ({ primary, fallback: null }), finish, log, deadline: FAR });
@@ -264,7 +267,7 @@ describe("a call that got no answer", () => {
       p_provider: "anthropic",
       p_model: "claude-sonnet-5",
       p_attempts: 1,
-      p_input_tokens: 4321,
+      p_input_tokens: withCountMargin(4321),
       p_output_tokens: MAX_OUTPUT_TOKENS,
       p_cost_estimated: true,
     };

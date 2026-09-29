@@ -4,7 +4,7 @@
 // made. No model, no database, no files written.
 
 import { describe, expect, it } from "vitest";
-import { computeCostUsd, DEFAULT_MODELS, MAX_OUTPUT_TOKENS } from "@/lib/extraction/config";
+import { computeCostUsd, DEFAULT_MODELS, MAX_OUTPUT_TOKENS, withCountMargin } from "@/lib/extraction/config";
 import {
   type ExtractionProvider,
   type ExtractionRequest,
@@ -224,7 +224,7 @@ describe("the live budget", () => {
     expect(tight.calls).toBe(2);
   });
 
-  it("charges a call that got no answer at its measured input and the output cap, and one refused with a status at 0", async () => {
+  it("charges a call that got no answer at its measured input with the count's margin and the output cap, and one refused with a status at 0", async () => {
     const b = budget();
     const recorder = recordingProvider(
       fake([new ProviderError("anthropic", "transport", "request timed out")]),
@@ -233,8 +233,8 @@ describe("the live budget", () => {
       () => 0,
     );
     await runExtraction({ bytes: pdf, mimeType: "application/pdf", pages: 1, primary: recorder, fallback: null });
-    // the fake's count is 1000 (the object literal above)
-    expect(b.spentUsd).toBe(computeCostUsd(DEFAULT_MODELS.anthropic, 1000, MAX_OUTPUT_TOKENS));
+    // the fake's count is 1000 (the object literal above), 1050 with the margin
+    expect(b.spentUsd).toBe(computeCostUsd(DEFAULT_MODELS.anthropic, withCountMargin(1000), MAX_OUTPUT_TOKENS));
     expect(recorder.calls).toHaveLength(1);
 
     const refused = budget();

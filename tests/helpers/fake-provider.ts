@@ -6,7 +6,7 @@
 // A plain module, not a test file: Vitest doesn't collect it, and it
 // imports nothing that needs a secret, a database or "server-only".
 
-import type { ProviderName } from "@/lib/extraction/config";
+import { type ProviderName, withCountMargin } from "@/lib/extraction/config";
 import type { ExtractionProvider, ExtractionRequest, ProviderResponse } from "@/lib/extraction/providers/types";
 import { FIELD_NAMES } from "@/lib/extraction/schema";
 
@@ -15,6 +15,10 @@ export type FakeProvider = ExtractionProvider & { requests: ExtractionRequest[];
 // What a fake's token count says when nothing else does: well under the
 // per-call limit for one page (11 927), as real one-page fixtures are.
 export const FAKE_COUNT = 1000;
+
+// What a call counted at FAKE_COUNT is charged when it gets no answer: the
+// count with its margin (withCountMargin in config.ts), plus the output cap.
+export const FAKE_CHARGE = withCountMargin(FAKE_COUNT);
 
 // Answers from a script, one entry per call, in order: a response is
 // returned, an error is thrown (a ProviderError to act as the real provider

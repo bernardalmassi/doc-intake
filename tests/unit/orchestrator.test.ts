@@ -33,13 +33,16 @@ import {
   dearestModelFor,
   EXTRACTION_LIMITS,
   inputTokensPerCall,
+  largestCountWithin,
   MAX_OUTPUT_TOKENS,
   PRICING,
   type ProviderName,
+  TOKEN_COUNT_MARGIN_PERCENT,
+  withCountMargin,
 } from "@/lib/extraction/config";
 import { describeError, ProviderError } from "@/lib/extraction/providers/types";
 import { runExtraction } from "@/lib/extraction/run";
-import { answer, FAKE_COUNT, fakeProvider, pdfBytes, validJson } from "../helpers/fake-provider";
+import { answer, FAKE_CHARGE, fakeProvider, pdfBytes, validJson } from "../helpers/fake-provider";
 import { BAD_DATE, HAIKU, MAX_CALLS, NANO, NANO_SNAPSHOT, SERVED, scripted, scripts, STEPS } from "../helpers/scripted-providers";
 
 
@@ -121,7 +124,7 @@ describe("orchestrator (fake providers)", () => {
       provider: "anthropic",
       model: "claude-haiku-4-5-20251001",
       attempts: 2,
-      inputTokens: FAKE_COUNT + 700,
+      inputTokens: FAKE_CHARGE + 700,
       outputTokens: MAX_OUTPUT_TOKENS + 60,
       costEstimated: true,
     });
@@ -146,8 +149,12 @@ describe("orchestrator (fake providers)", () => {
 });
 
 describe("measuring before every call", () => {
-  // what the estimate assumes one call of a one-page document reads
+  // what the estimate assumes one call of a one-page document reads, and
+  // the largest count whose margin (withCountMargin) fits it
   const ONE_PAGE = inputTokensPerCall(1);
+  const AT_LIMIT = largestCountWithin(ONE_PAGE);
+  const over = (count: number, limit: number, pages = "1 page") =>
+    `its input (${count} tokens, ${withCountMargin(count)} with the count's ${TOKEN_COUNT_MARGIN_PERCENT}% margin) is over the ${limit} a call may read for ${pages}`;
 
   it("counts every call with the request it then sends, and sends one that fits", async () => {
     const primary = fakeProvider("anthropic", HAIKU, [answer("{ nope", HAIKU, 1000, 100), answer(validJson(), HAIKU, 1300, 150)]);
@@ -159,18 +166,31 @@ describe("measuring before every call", () => {
     expect(primary.counted).toEqual(primary.requests);
   });
 
-  it("sends a call whose input is exactly the limit, and is 5 998 tokens plus 5 929 a page, at most 598 898", async () => {
+  it("sends a call whose count with its margin is exactly the limit, and is 5 998 tokens plus 5 929 a page, at most 598 898", async () => {
     expect(ONE_PAGE).toBe(11_927);
     expect(inputTokensPerCall(20)).toBe(124_578);
     expect(inputTokensPerCall(100)).toBe(EXTRACTION_LIMITS.maxInputTokensPerCall);
-    const primary = fakeProvider("anthropic", HAIKU, [answer(validJson())], [ONE_PAGE]);
+    expect(withCountMargin(AT_LIMIT)).toBeLessThanOrEqual(ONE_PAGE);
+    expect(withCountMargin(AT_LIMIT + 1)).toBeGreaterThan(ONE_PAGE);
+    const primary = fakeProvider("anthropic", HAIKU, [answer(validJson())], [AT_LIMIT]);
     const outcome = await runExtraction({ ...input, primary, fallback: null });
     expect(outcome.status).toBe("succeeded");
     expect(primary.requests).toHaveLength(1);
   });
 
+  it("takes a count as 5% more, so a count exactly at the limit is over it (the count is an estimate)", async () => {
+    expect(TOKEN_COUNT_MARGIN_PERCENT).toBe(5);
+    expect(withCountMargin(1000)).toBe(1050);
+    expect(withCountMargin(1001)).toBe(1052);
+    const primary = fakeProvider("anthropic", HAIKU, [answer(validJson())], [ONE_PAGE]);
+    const outcome = await runExtraction({ ...input, primary, fallback: null });
+    expect(primary.requests).toHaveLength(0);
+    expect(outcome).toMatchObject({ status: "failed", attempts: 0, inputTokens: 0 });
+    if (outcome.status === "failed") expect(outcome.error).toBe(`too dense: ${over(ONE_PAGE, ONE_PAGE)}`);
+  });
+
   it("sends nothing for a document whose first call measures over the limit: too dense, at 0, and no fallback", async () => {
-    const primary = fakeProvider("anthropic", HAIKU, [answer(validJson())], [ONE_PAGE + 1]);
+    const primary = fakeProvider("anthropic", HAIKU, [answer(validJson())], [AT_LIMIT + 1]);
     const fallback = fakeProvider("openai", NANO, [answer(validJson(), NANO_SNAPSHOT)]);
     const outcome = await runExtraction({ ...input, primary, fallback });
 
@@ -180,14 +200,14 @@ describe("measuring before every call", () => {
     // no call, no model, no tokens: finish_extraction_run records 0 USD
     expect(outcome).toMatchObject({ status: "failed", provider: null, model: null, attempts: 0, inputTokens: 0, outputTokens: 0 });
     if (outcome.status === "failed") {
-      expect(outcome.error).toBe(`too dense: its input (${ONE_PAGE + 1} tokens) is over the ${ONE_PAGE} a call may read for 1 page`);
+      expect(outcome.error).toBe(`too dense: ${over(AT_LIMIT + 1, ONE_PAGE)}`);
       expect(classifyRunError(outcome.error)).toBe("extraction.too_dense");
       expect(userFacingError("extraction.too_dense").retryable).toBe(false);
     }
   });
 
   it("measures against the document's own pages", async () => {
-    const counted = inputTokensPerCall(3);
+    const counted = largestCountWithin(inputTokensPerCall(3));
     const sent = fakeProvider("anthropic", HAIKU, [answer(validJson())], [counted]);
     expect((await runExtraction({ ...input, pages: 3, primary: sent, fallback: null })).status).toBe("succeeded");
     const refused = fakeProvider("anthropic", HAIKU, [answer(validJson())], [counted]);
@@ -222,7 +242,7 @@ describe("measuring before every call", () => {
 
   it.each([
     ["can't be measured", [new ProviderError("openai", "transport", "request timed out")], "its input could not be measured (openai transport: request timed out)"],
-    ["measures over the limit", [ONE_PAGE + 1], `its input (${ONE_PAGE + 1} tokens) is over the ${ONE_PAGE} a call may read for 1 page`],
+    ["measures over the limit", [AT_LIMIT + 1], over(AT_LIMIT + 1, ONE_PAGE)],
   ] as const)("a fallback that %s isn't used for the run", async (_, counts, why) => {
     const primary = fakeProvider("anthropic", HAIKU, [timedOut("anthropic")]);
     const fallback = fakeProvider("openai", NANO, [answer(validJson(), NANO_SNAPSHOT)], [...counts]);
@@ -240,7 +260,10 @@ describe("measuring before every call", () => {
   it("sends a validation retry that reads up to the retry allowance more than a first call may (V1)", async () => {
     const retryLimit = inputTokensPerCall(1, true);
     expect(retryLimit).toBe(ONE_PAGE + EXTRACTION_LIMITS.retryInputTokens);
-    const primary = fakeProvider("anthropic", HAIKU, [answer("{ nope", HAIKU, 1000, 100), answer(validJson())], [ONE_PAGE, retryLimit]);
+    const primary = fakeProvider("anthropic", HAIKU, [answer("{ nope", HAIKU, 1000, 100), answer(validJson())], [
+      AT_LIMIT,
+      largestCountWithin(retryLimit),
+    ]);
     const outcome = await runExtraction({ ...input, primary, fallback: null });
     expect(primary.requests).toHaveLength(2);
     expect(outcome).toMatchObject({ status: "succeeded", attempts: 2 });
@@ -248,16 +271,15 @@ describe("measuring before every call", () => {
 
   it("doesn't send a retry that measures over the limit: the run fails with the invalid answer it has", async () => {
     const retryLimit = inputTokensPerCall(1, true);
-    const primary = fakeProvider("anthropic", HAIKU, [answer("{ nope", HAIKU, 1000, 100), answer(validJson())], [ONE_PAGE, retryLimit + 1]);
+    const retryCount = largestCountWithin(retryLimit) + 1;
+    const primary = fakeProvider("anthropic", HAIKU, [answer("{ nope", HAIKU, 1000, 100), answer(validJson())], [AT_LIMIT, retryCount]);
     const outcome = await runExtraction({ ...input, primary, fallback: null });
 
     expect(primary.requests).toHaveLength(1);
     expect(primary.counted).toHaveLength(2);
     expect(outcome).toMatchObject({ status: "failed", attempts: 1, inputTokens: 1000, outputTokens: 100, rawResponse: "{ nope" });
     if (outcome.status === "failed") {
-      expect(outcome.error).toMatch(
-        new RegExp(`\\) failed: the retry was not sent: its input \\(${retryLimit + 1} tokens\\) is over the ${retryLimit} a call may read for 1 page$`),
-      );
+      expect(outcome.error.endsWith(`) failed: the retry was not sent: ${over(retryCount, retryLimit)}`)).toBe(true);
       expect(classifyRunError(outcome.error)).toBe("extraction.invalid_answer");
     }
   });
@@ -287,7 +309,7 @@ describe("a call that was sent and got no answer", () => {
     ["lost its connection", new ProviderError("anthropic", "transport", "connection failed")],
     ["threw with no HTTP status", new TypeError("terminated")],
     ["came back with no usage", new ProviderError("anthropic", "client", "the response carried no usage, so its cost is unknown")],
-  ])("%s: counts at its measured input plus the output cap, never at 0", async (_, failure) => {
+  ])("%s: counts at its measured input with the count's margin plus the output cap, never at 0", async (_, failure) => {
     const primary = fakeProvider("anthropic", HAIKU, [failure], [5321]);
     const outcome = await runExtraction({ ...input, primary, fallback: null });
 
@@ -298,7 +320,8 @@ describe("a call that was sent and got no answer", () => {
       // the model it was sent to: no answer said which served it
       model: HAIKU,
       attempts: 1,
-      inputTokens: 5321,
+      // 5 321 counted, 5 588 with the margin: what the call may have been billed
+      inputTokens: withCountMargin(5321),
       outputTokens: MAX_OUTPUT_TOKENS,
       costEstimated: true,
     });
@@ -323,7 +346,7 @@ describe("a call that was sent and got no answer", () => {
       status: "succeeded",
       provider: "anthropic",
       model: HAIKU,
-      inputTokens: 2700 + 6000,
+      inputTokens: withCountMargin(2700) + 6000,
       outputTokens: MAX_OUTPUT_TOKENS + 500,
       costEstimated: true,
     });
@@ -333,7 +356,7 @@ describe("a call that was sent and got no answer", () => {
     const primary = fakeProvider("anthropic", HAIKU, [timedOut("anthropic")]);
     const fallback = fakeProvider("openai", NANO, [answer(validJson(), "gpt-9-unpriced", 700, 60)]);
     const outcome = await runExtraction({ ...input, primary, fallback });
-    const dearest = dearestModelFor(FAKE_COUNT + 700, MAX_OUTPUT_TOKENS + 60);
+    const dearest = dearestModelFor(FAKE_CHARGE + 700, MAX_OUTPUT_TOKENS + 60);
     expect(outcome).toMatchObject({ status: "succeeded", provider: PRICING[dearest].provider, model: dearest, costEstimated: true });
   });
 });
@@ -362,7 +385,7 @@ describe("fallback", () => {
       provider: "anthropic",
       model: HAIKU,
       attempts: 2,
-      inputTokens: FAKE_COUNT + 700,
+      inputTokens: FAKE_CHARGE + 700,
       outputTokens: MAX_OUTPUT_TOKENS + 60,
       costEstimated: true,
     });
@@ -395,7 +418,7 @@ describe("fallback", () => {
     expect(outcome).toMatchObject({ status: "failed", provider: "anthropic", model: HAIKU, attempts: 1, rawResponse: null });
     // a timeout may have been billed, a 503 was not
     const timedOutCall = failure.kind === "transport";
-    expect(outcome.inputTokens).toBe(timedOutCall ? FAKE_COUNT : 0);
+    expect(outcome.inputTokens).toBe(timedOutCall ? FAKE_CHARGE : 0);
     expect(outcome.outputTokens).toBe(timedOutCall ? MAX_OUTPUT_TOKENS : 0);
     expect(outcome.costEstimated).toBe(timedOutCall);
     if (outcome.status === "failed") {
@@ -428,7 +451,7 @@ describe("fallback", () => {
       provider: "anthropic",
       model: HAIKU,
       attempts: 2,
-      inputTokens: FAKE_COUNT * (fallbackCounts ? 2 : 1),
+      inputTokens: FAKE_CHARGE * (fallbackCounts ? 2 : 1),
       outputTokens: MAX_OUTPUT_TOKENS * (fallbackCounts ? 2 : 1),
       costEstimated: true,
       rawResponse: null,
@@ -452,7 +475,7 @@ describe("fallback", () => {
       provider: "anthropic",
       model: HAIKU,
       attempts: 2,
-      inputTokens: 2 * FAKE_COUNT,
+      inputTokens: 2 * FAKE_CHARGE,
       outputTokens: 2 * MAX_OUTPUT_TOKENS,
       costEstimated: true,
     });
@@ -485,7 +508,7 @@ describe("fallback", () => {
       status: "failed",
       provider: "anthropic",
       attempts: 1,
-      inputTokens: countedAtMost ? FAKE_COUNT : 0,
+      inputTokens: countedAtMost ? FAKE_CHARGE : 0,
       outputTokens: countedAtMost ? MAX_OUTPUT_TOKENS : 0,
       costEstimated: countedAtMost,
       rawResponse: null,
@@ -574,7 +597,7 @@ describe("validation retry", () => {
       provider: "anthropic",
       model: HAIKU,
       attempts: 2,
-      inputTokens: 1000 + (timedOutRetry ? FAKE_COUNT : 0),
+      inputTokens: 1000 + (timedOutRetry ? FAKE_CHARGE : 0),
       outputTokens: 100 + (timedOutRetry ? MAX_OUTPUT_TOKENS : 0),
       costEstimated: timedOutRetry,
       rawResponse: "{ nope",
@@ -604,7 +627,7 @@ describe("validation retry", () => {
       provider: "anthropic",
       model: HAIKU,
       attempts: 3,
-      inputTokens: FAKE_COUNT + 1500,
+      inputTokens: FAKE_CHARGE + 1500,
       outputTokens: MAX_OUTPUT_TOKENS + 130,
       costEstimated: true,
     });
@@ -619,7 +642,7 @@ describe("validation retry", () => {
       status: "failed",
       provider: "anthropic",
       attempts: 2,
-      inputTokens: 1000 + FAKE_COUNT,
+      inputTokens: 1000 + FAKE_CHARGE,
       outputTokens: 100 + MAX_OUTPUT_TOKENS,
       costEstimated: true,
       rawResponse: "{ nope",
@@ -647,7 +670,7 @@ describe("validation retry", () => {
       provider: "anthropic",
       model: HAIKU,
       attempts: 3,
-      inputTokens: FAKE_COUNT + 700 + FAKE_COUNT,
+      inputTokens: FAKE_CHARGE + 700 + FAKE_CHARGE,
       outputTokens: MAX_OUTPUT_TOKENS + 60 + MAX_OUTPUT_TOKENS,
       costEstimated: true,
       rawResponse: "{ nope",
@@ -724,7 +747,7 @@ describe("unusable answers", () => {
       provider: "anthropic",
       model: HAIKU,
       attempts: 2,
-      inputTokens: FAKE_COUNT + 40_000,
+      inputTokens: FAKE_CHARGE + 40_000,
       outputTokens: MAX_OUTPUT_TOKENS + 2048,
       costEstimated: true,
     });
@@ -765,10 +788,12 @@ describe("bounds", () => {
 
         // Every billed call is counted, valid, invalid or unusable, as the
         // provider reported it; a call that timed out counts at its
-        // measured input (the scripted count is 1000 + its index) plus the
-        // output cap; a 5xx or 4xx counts nothing.
+        // measured input (the scripted count is 1000 + its index) with the
+        // count's margin, plus the output cap; a 5xx or 4xx counts nothing.
         const charged = calls.map((c, i) =>
-          c.step === "timeout" ? { input: 1000 + i, output: MAX_OUTPUT_TOKENS } : { input: c.inputTokens, output: c.outputTokens },
+          c.step === "timeout"
+            ? { input: withCountMargin(1000 + i), output: MAX_OUTPUT_TOKENS }
+            : { input: c.inputTokens, output: c.outputTokens },
         );
         expect(outcome.inputTokens, label).toBe(charged.reduce((sum, c) => sum + c.input, 0));
         expect(outcome.outputTokens, label).toBe(charged.reduce((sum, c) => sum + c.output, 0));
