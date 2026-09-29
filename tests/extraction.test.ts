@@ -318,6 +318,7 @@ describe("configuration", () => {
     expect(data!.max_input_tokens_per_call).toBe(EXTRACTION_LIMITS.maxInputTokensPerCall);
     expect(data!.prompt_input_tokens).toBe(EXTRACTION_LIMITS.promptInputTokens);
     expect(data!.input_tokens_per_page).toBe(EXTRACTION_LIMITS.inputTokensPerPage);
+    expect(data!.retry_input_tokens).toBe(EXTRACTION_LIMITS.retryInputTokens);
     expect(data!.max_pages_per_document).toBe(EXTRACTION_LIMITS.maxPagesPerDocument);
     expect(data!.abandoned_run_price_model).toBe(EXTRACTION_LIMITS.abandonedRunPriceModel);
     // how long a claimed message stays invisible (20260925000002)

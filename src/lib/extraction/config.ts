@@ -28,9 +28,18 @@ export const EXTRACTION_LIMITS = {
   // derivation.
   maxCallsPerRun: 3,
   maxOutputTokensPerCall: 2048,
-  maxInputTokensPerCall: 304_500,
-  promptInputTokens: 4500,
-  inputTokensPerPage: 3000,
+  // The input bound a call is held to (inputTokensPerCall below): the
+  // prompt, a figure per page, and an allowance the validation retry adds
+  // for the answer it resends. Each is the most Anthropic's token counting
+  // endpoint counted plus 25%, over every selectable Anthropic model, the
+  // eval fixtures, their retries, a full-resolution phone photo and a 150
+  // dpi scan (evals/token-counts.json, 2026-09-29; migration
+  // 20260925000005; tests/unit/input-bound.test.ts derives them again).
+  // The per-call cap is the prompt plus the most pages a document may have.
+  maxInputTokensPerCall: 598_898,
+  promptInputTokens: 5998,
+  inputTokensPerPage: 5929,
+  retryInputTokens: 1773,
   // Anthropic's per-request PDF page limit; also what an unknown count is
   // charged as
   maxPagesPerDocument: 100,
@@ -209,7 +218,8 @@ export function dearestModelFor(inputTokens: number, outputTokens: number): stri
 // (check_extraction_limits), for a document of `pages` pages (null:
 // unknown, charged as the most a document can have): at most
 // maxCallsPerRun calls, each sending the prompt plus every page (and no
-// more than a call can take), each capped at maxOutputTokensPerCall out, at
+// more than a call can take), one of them the validation retry with its
+// allowance on top, each capped at maxOutputTokensPerCall out, at
 // abandonedRunPriceModel's price. The same formula as
 // private.abandoned_estimate; the database's number is the one that counts.
 export function abandonedRunUsage(pages: number | null): { inputTokens: number; outputTokens: number; pages: number } {
@@ -217,22 +227,28 @@ export function abandonedRunUsage(pages: number | null): { inputTokens: number; 
   const counted = Math.min(Math.max(1, pages ?? limits.maxPagesPerDocument), limits.maxPagesPerDocument);
   return {
     pages: counted,
-    inputTokens: Math.min(limits.maxCallsPerRun * inputTokensPerCall(counted), limits.maxInputTokensPerRun),
+    inputTokens: Math.min(
+      limits.maxCallsPerRun * inputTokensPerCall(counted) + limits.retryInputTokens,
+      limits.maxInputTokensPerRun,
+    ),
     outputTokens: Math.min(limits.maxCallsPerRun * limits.maxOutputTokensPerCall, limits.maxOutputTokensPerRun),
   };
 }
 
 // The most one call may read for a document of `pages` pages (null:
 // unknown, counted as the most a document can have): the prompt plus every
-// page, and no more than a call can take. It is what the estimate above
-// assumes each call reads, so the orchestrator measures every call's input
-// with the provider's token counting endpoint before sending it and sends
-// none that reads more (run.ts). The same formula as the input_per_call of
-// private.abandoned_estimate.
-export function inputTokensPerCall(pages: number | null): number {
+// page, and no more than a call can take; the validation retry
+// (`retry`), which resends the answer it corrects, that plus
+// retryInputTokens. It is what the estimate above assumes each call reads,
+// so the orchestrator measures every call's input with the provider's
+// token counting endpoint before sending it and sends none that reads more
+// (run.ts). The same formula as the input_per_call of
+// private.abandoned_estimate, which adds the retry allowance once.
+export function inputTokensPerCall(pages: number | null, retry = false): number {
   const limits = EXTRACTION_LIMITS;
   const counted = Math.min(Math.max(1, pages ?? limits.maxPagesPerDocument), limits.maxPagesPerDocument);
-  return Math.min(limits.promptInputTokens + counted * limits.inputTokensPerPage, limits.maxInputTokensPerCall);
+  const first = Math.min(limits.promptInputTokens + counted * limits.inputTokensPerPage, limits.maxInputTokensPerCall);
+  return retry ? first + limits.retryInputTokens : first;
 }
 
 export function abandonedRunCostUsd(pages: number | null): number {

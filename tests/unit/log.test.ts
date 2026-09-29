@@ -38,7 +38,7 @@ import {
 import { runExtraction } from "@/lib/extraction/run";
 import { FIELD_NAMES } from "@/lib/extraction/schema";
 import { ERROR_CODES } from "@/lib/errors";
-import { PRICING } from "@/lib/extraction/config";
+import { inputTokensPerCall, PRICING } from "@/lib/extraction/config";
 import {
   defaultLogSink,
   log,
@@ -1033,7 +1033,7 @@ describe("an extraction run logs counts and kinds, never content", () => {
       provider: "anthropic",
       model: "claude-haiku-4-5-20251001",
       input_tokens: 1000,
-      input_limit: 7500,
+      input_limit: inputTokensPerCall(1),
     });
     expect(parsed[1].fields).toMatchObject({
       run_id: RUN_ID,
@@ -1098,7 +1098,7 @@ describe("an extraction run logs counts and kinds, never content", () => {
     ]);
     expect(parsed[1].fields).toMatchObject({ provider: "anthropic", attempt: 1, error_kind: "server", http_status: 529 });
     expect(parsed[2].fields).toMatchObject({ from_provider: "anthropic", to_provider: "openai", error_kind: "server" });
-    expect(parsed[3].fields).toMatchObject({ provider: "openai", input_tokens: 1000, input_limit: 7500 });
+    expect(parsed[3].fields).toMatchObject({ provider: "openai", input_tokens: 1000, input_limit: inputTokensPerCall(1) });
     expect(parsed[5].fields).toEqual({ run_id: RUN_ID, provider: "openai", retry: 1, error_kind: "validation" });
     expect(parsed[8].fields).toMatchObject({ run_status: "succeeded", attempts: 3, fallback_used: true, provider: "openai" });
     expectNoContent();

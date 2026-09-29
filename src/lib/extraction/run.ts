@@ -13,11 +13,12 @@
 //
 // No call is sent until its input has been measured with the provider's
 // token counting endpoint and fits inputTokensPerCall for the document's
-// pages (config.ts), the per-call input the run's estimate assumes while it
-// is in flight (private.abandoned_estimate), and until the run's measured
-// input with it fits maxInputTokensPerRun, the estimate's cap on a whole
-// run (which binds from 88 pages). A first call over it sends
-// nothing and fails the run as too dense, at 0 USD. A count that fails
+// pages (config.ts; for the validation retry, that plus the retry
+// allowance), the per-call input the run's estimate assumes while it is in
+// flight (private.abandoned_estimate), and until the run's measured input
+// with it fits maxInputTokensPerRun, the estimate's cap on a whole run
+// (which binds from 44 pages). A first call over it sends nothing and fails
+// the run as too dense, at 0 USD. A count that fails
 // sends nothing either: on the primary's first call a timeout or 5xx
 // switches to the fallback like a failed call, and a fallback that can't
 // be measured, or measures over the bound, isn't used. A retry over the
@@ -175,8 +176,7 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
   // fallback fails too the error says why both did; cleared once an answer
   // arrives, so a later failed retry isn't reported as a double failure
   let primaryFailure: string | null = null;
-  // what the estimate assumes one call reads, and a whole run
-  const inputLimit = inputTokensPerCall(input.pages);
+  // what the estimate assumes a whole run reads
   const runInputLimit = EXTRACTION_LIMITS.maxInputTokensPerRun;
   // the measured input of every call sent so far
   let inputSent = 0;
@@ -186,6 +186,9 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
   async function measure(
     request: ExtractionRequest,
   ): Promise<{ ok: true; tokens: number } | { ok: false; error: unknown } | { ok: false; over: number; why: string }> {
+    // what the estimate assumes this call reads: a first call's bound, or
+    // the retry's, which resends the answer it corrects
+    const inputLimit = inputTokensPerCall(input.pages, request.previousAttempt !== undefined);
     let measured: number;
     try {
       measured = await provider.countInputTokens(request);
@@ -194,7 +197,7 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
       runLog.warn("extraction.count_failed", { provider: provider.name, model: provider.model, ...lastFailure });
       return { ok: false, error };
     }
-    // the call's own limit, then the run's: at 88 pages or more three calls
+    // the call's own limit, then the run's: at 44 pages or more three calls
     // at the call's limit would read more than the run's
     const why =
       measured > inputLimit

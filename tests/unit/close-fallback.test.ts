@@ -157,5 +157,11 @@ describe("isCostEstimated", () => {
       "abandoned: still running after 10 minutes; failed by a later open";
     expect(isCostEstimated(reaped)).toBe(true);
     expect(classifyRunError(reaped)).toBe("extraction.abandoned");
+    // and as it states the retry allowance since 20260925000005
+    const withRetry =
+      "cost estimated at claude-sonnet-5 prices (abandoned; at most 3 calls of 11927 tokens in, 1773 more on the retry, " +
+      "and 2048 out, for 1 page): abandoned: claimed but not finished within 300 seconds";
+    expect(isCostEstimated(withRetry)).toBe(true);
+    expect(classifyRunError(withRetry)).toBe("extraction.abandoned");
   });
 });

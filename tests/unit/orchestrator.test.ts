@@ -159,9 +159,9 @@ describe("measuring before every call", () => {
     expect(primary.counted).toEqual(primary.requests);
   });
 
-  it("sends a call whose input is exactly the limit, and is 4 500 tokens plus 3 000 a page, at most 304 500", async () => {
-    expect(ONE_PAGE).toBe(7500);
-    expect(inputTokensPerCall(20)).toBe(64_500);
+  it("sends a call whose input is exactly the limit, and is 5 998 tokens plus 5 929 a page, at most 598 898", async () => {
+    expect(ONE_PAGE).toBe(11_927);
+    expect(inputTokensPerCall(20)).toBe(124_578);
     expect(inputTokensPerCall(100)).toBe(EXTRACTION_LIMITS.maxInputTokensPerCall);
     const primary = fakeProvider("anthropic", HAIKU, [answer(validJson())], [ONE_PAGE]);
     const outcome = await runExtraction({ ...input, primary, fallback: null });
@@ -237,15 +237,27 @@ describe("measuring before every call", () => {
     }
   });
 
+  it("sends a validation retry that reads up to the retry allowance more than a first call may (V1)", async () => {
+    const retryLimit = inputTokensPerCall(1, true);
+    expect(retryLimit).toBe(ONE_PAGE + EXTRACTION_LIMITS.retryInputTokens);
+    const primary = fakeProvider("anthropic", HAIKU, [answer("{ nope", HAIKU, 1000, 100), answer(validJson())], [ONE_PAGE, retryLimit]);
+    const outcome = await runExtraction({ ...input, primary, fallback: null });
+    expect(primary.requests).toHaveLength(2);
+    expect(outcome).toMatchObject({ status: "succeeded", attempts: 2 });
+  });
+
   it("doesn't send a retry that measures over the limit: the run fails with the invalid answer it has", async () => {
-    const primary = fakeProvider("anthropic", HAIKU, [answer("{ nope", HAIKU, 1000, 100), answer(validJson())], [ONE_PAGE, ONE_PAGE + 1]);
+    const retryLimit = inputTokensPerCall(1, true);
+    const primary = fakeProvider("anthropic", HAIKU, [answer("{ nope", HAIKU, 1000, 100), answer(validJson())], [ONE_PAGE, retryLimit + 1]);
     const outcome = await runExtraction({ ...input, primary, fallback: null });
 
     expect(primary.requests).toHaveLength(1);
     expect(primary.counted).toHaveLength(2);
     expect(outcome).toMatchObject({ status: "failed", attempts: 1, inputTokens: 1000, outputTokens: 100, rawResponse: "{ nope" });
     if (outcome.status === "failed") {
-      expect(outcome.error).toMatch(/\) failed: the retry was not sent: its input \(7501 tokens\) is over the 7500 a call may read for 1 page$/);
+      expect(outcome.error).toMatch(
+        new RegExp(`\\) failed: the retry was not sent: its input \\(${retryLimit + 1} tokens\\) is over the ${retryLimit} a call may read for 1 page$`),
+      );
       expect(classifyRunError(outcome.error)).toBe("extraction.invalid_answer");
     }
   });

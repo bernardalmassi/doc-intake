@@ -84,20 +84,20 @@ The function is **`public.open_extraction_run(p_document_id uuid, p_page_count i
 
 ### How abandoned runs are priced
 
-The rule comes from `20260918000003`, with the price model changed in `...0004` and the per-call cap in `20260919000001`:
+The rule comes from `20260918000003`, with the price model changed in `...0004`, the per-call cap in `20260919000001`, and the figures and the retry allowance calibrated from real counts in `20260925000005` (SECURITY.md, "Stale runs"):
 
 | Term | Rule |
 |---|---|
 | pages | `clamp(coalesce(page_count, 100), 1, 100)` |
-| input per call | `min(4 500 + 3 000 × pages, 304 500)` |
-| input | `min(3 × input per call, 800 000)` |
+| input per call | `min(5 998 + 5 929 × pages, 598 898)`; the validation retry may read 1 773 more |
+| input | `min(3 × input per call + 1 773, 800 000)` |
 | output | `min(3 × 2 048, 8 192)` = 6 144 |
 | price | `claude-sonnet-5`, $2 in / $10 out per million |
 
 Examples:
-- 1 page: 22 500 in / 6 144 out = **0.10644 USD**
-- 20 pages: 0.44844 USD
-- 88 pages or more, or unknown: 1.66144 USD
+- 1 page: 37 554 in / 6 144 out = **0.136548 USD**
+- 20 pages: 0.812454 USD
+- 44 pages or more, or unknown: 1.66144 USD
 
 The run's error is marked `cost estimated at claude-sonnet-5 prices (abandoned; ...): abandoned: ...`. Tokens, provider and model stay null on the run. The app-side mirror is `abandonedRunUsage` / `abandonedRunCostUsd` in `config.ts`.
 
@@ -202,7 +202,7 @@ A reap is still rolled back if the same open is refused by the hourly limit. In 
 
 One private function, **`private.check_extraction_limits(p_tenant_id uuid, p_reaped_run_id uuid)`**, holds the ceiling check. `open_extraction_run` (until migration 3) and `enqueue_extraction_run` both call it, so the two can't drift. It also holds the advisory lock and the hourly limit.
 
-- **In-flight runs** are every run with status `queued` or `running`, the old path's included. Each counts at its abandoned estimate, `private.abandoned_estimate(page_count)`: the rule in section 2, 0.10644 USD for one page and 1.66144 USD from 88 pages.
+- **In-flight runs** are every run with status `queued` or `running`, the old path's included. Each counts at its abandoned estimate, `private.abandoned_estimate(page_count)`: the rule in section 2, 0.136548 USD for one page and 1.66144 USD from 44 pages.
 - **Tenant ceiling:** refuse with 53400 when the tenant's ledger sum for the UTC month plus the tenant's in-flight estimates is at or above 1 USD.
 - **Global ceiling:** refuse with 53400 when the ledger sum for the month across all tenants plus every in-flight estimate is at or above 3 USD.
 - **The new run's own estimate is not added**, so a 100-page document can still run on a fresh organization.

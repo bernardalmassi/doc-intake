@@ -78,12 +78,14 @@ declare
   v_price    public.extraction_model_prices;
   v_sums_a   uuid;
 begin
-  -- the estimate for a one-page run, from the formula in 20260918000003:
-  -- max_calls_per_run calls of the prompt plus one page in and the output
-  -- cap out, at abandoned_run_price_model's price
+  -- the estimate for a one-page run, from the formula in 20260918000003
+  -- with the retry allowance of 20260925000005: max_calls_per_run calls of
+  -- the prompt plus one page in, the retry's allowance on top, and the
+  -- output cap out, at abandoned_run_price_model's price
   select p.* into v_price from public.extraction_model_prices p where p.model = v_limits.abandoned_run_price_model;
   v_expected := round((
-      v_limits.max_calls_per_run * (v_limits.prompt_input_tokens + v_limits.input_tokens_per_page) * v_price.input_usd_per_million
+      (v_limits.max_calls_per_run * (v_limits.prompt_input_tokens + v_limits.input_tokens_per_page) + v_limits.retry_input_tokens)
+        * v_price.input_usd_per_million
     + v_limits.max_calls_per_run * v_limits.max_output_tokens_per_call * v_price.output_usd_per_million) / 1000000, 8);
   -- what a real run of the same document cost: its recorded tokens at the
   -- price of the model that served it (evals/recordings/
@@ -151,7 +153,8 @@ begin
   select * into v_spend from private.extraction_spend where run_id = v_first;
   if v_spend.kind is distinct from 'abandoned' or v_spend.cost_usd is distinct from v_expected
      or v_spend.model is distinct from v_limits.abandoned_run_price_model
-     or v_spend.input_tokens is distinct from v_limits.max_calls_per_run * (v_limits.prompt_input_tokens + v_limits.input_tokens_per_page) then
+     or v_spend.input_tokens is distinct from
+          v_limits.max_calls_per_run * (v_limits.prompt_input_tokens + v_limits.input_tokens_per_page) + v_limits.retry_input_tokens then
     raise exception 'the ledger must hold the estimate for the reaped run: % / % / % / %',
       v_spend.kind, v_spend.cost_usd, v_spend.model, v_spend.input_tokens;
   end if;

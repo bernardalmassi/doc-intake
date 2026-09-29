@@ -13,7 +13,7 @@ import { FIELD_NAMES } from "@/lib/extraction/schema";
 export type FakeProvider = ExtractionProvider & { requests: ExtractionRequest[]; counted: ExtractionRequest[] };
 
 // What a fake's token count says when nothing else does: well under the
-// per-call limit for one page (7 500), as real one-page fixtures are.
+// per-call limit for one page (11 927), as real one-page fixtures are.
 export const FAKE_COUNT = 1000;
 
 // Answers from a script, one entry per call, in order: a response is

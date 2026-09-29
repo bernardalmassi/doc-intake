@@ -28,7 +28,7 @@ import {
 import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
 import { describe, expect, it } from "vitest";
-import { ANTHROPIC_MODEL_ENV_VAR, EXTRACTION_LIMITS, PROVIDER_ENV_VAR } from "@/lib/extraction/config";
+import { ANTHROPIC_MODEL_ENV_VAR, EXTRACTION_LIMITS, inputTokensPerCall, PROVIDER_ENV_VAR } from "@/lib/extraction/config";
 import { describeError, ProviderError, type ProviderResponse } from "@/lib/extraction/providers/types";
 import { interpretAnthropicMessage, interpretOpenAIResponse } from "@/lib/extraction/providers/interpret";
 import { runExtraction } from "@/lib/extraction/run";
@@ -553,8 +553,8 @@ const RUN_CASES: RunCase[] = [
   {
     label: "the first call measures over the limit: nothing sent",
     primary: [],
-    primaryCounts: [7501],
-    stored: "too dense: its input (7501 tokens) is over the 7500 a call may read for 1 page",
+    primaryCounts: [inputTokensPerCall(1) + 1],
+    stored: `too dense: its input (${inputTokensPerCall(1) + 1} tokens) is over the ${inputTokensPerCall(1)} a call may read for 1 page`,
     expected: "extraction.too_dense",
   },
   {
@@ -585,15 +585,17 @@ const RUN_CASES: RunCase[] = [
     label: "primary 5xx, the fallback measures over the limit: the fallback isn't used",
     primary: [new ProviderError("anthropic", "server", "Overloaded", 529)],
     fallback: [],
-    fallbackCounts: [9000],
-    stored: "anthropic server 529: Overloaded; the fallback provider was not used: its input (9000 tokens) is over the 7500 a call may read for 1 page",
+    fallbackCounts: [20_000],
+    stored: `anthropic server 529: Overloaded; the fallback provider was not used: its input (20000 tokens) is over the ${inputTokensPerCall(1)} a call may read for 1 page`,
     expected: "extraction.provider_unavailable",
   },
   {
     label: "invalid, then the retry measures over the limit: not sent",
     primary: [notJson()],
-    primaryCounts: [1000, 9000],
-    stored: /^retry after invalid response \([\s\S]*\) failed: the retry was not sent: its input \(9000 tokens\) is over the 7500 a call may read for 1 page$/,
+    primaryCounts: [1000, 20_000],
+    stored: new RegExp(
+      `^retry after invalid response \\([\\s\\S]*\\) failed: the retry was not sent: its input \\(20000 tokens\\) is over the ${inputTokensPerCall(1, true)} a call may read for 1 page$`,
+    ),
     expected: "extraction.invalid_answer",
   },
   {
