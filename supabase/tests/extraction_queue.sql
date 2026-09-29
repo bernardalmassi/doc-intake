@@ -417,6 +417,7 @@ declare
   v_claim  record;
   v_limits public.extraction_limits := (select l from public.extraction_limits l);
   v_run    public.extraction_runs;
+  v_case   text;
 begin
   -- reuses organization 8's second document, ended above
   v_run_id := public.enqueue_extraction_run('e3e3e3e3-0000-4000-8000-00000000008b', 1);
@@ -449,10 +450,30 @@ begin
     raise exception 'a finish with a wrong claim token was accepted';
   exception when sqlstate '42501' then null;
   end;
-  if (select status from public.extraction_runs where id = v_run_id) <> 'running' then
-    raise exception 'a refused finish changed the run';
+  -- no token, or an empty one (20260925000005): the nil uuid is refused as
+  -- none, and '' is not a uuid at all, so PostgREST refuses it before the
+  -- call (22P02). Before, a null token passed "v_token <> p_claim_token".
+  foreach v_case in array array['no token', 'the nil uuid'] loop
+    begin
+      perform public.finish_extraction_run(v_run_id,
+        case v_case when 'no token' then null else '00000000-0000-0000-0000-000000000000'::uuid end,
+        'failed', null, null, 0, 0, 5, 0, false, 'finished with ' || v_case, null, null);
+      raise exception 'a finish with % was accepted', v_case;
+    exception when sqlstate '42501' then null;
+    end;
+  end loop;
+  begin
+    perform public.finish_extraction_run(v_run_id, ''::uuid, 'failed', null, null, 0, 0, 5, 0, false, 'x', null, null);
+    raise exception 'a finish with an empty token was accepted';
+  exception when sqlstate '22P02' then null;
+  end;
+  if (select status from public.extraction_runs where id = v_run_id) <> 'running'
+     or not exists (select 1 from private.extraction_run_tokens t where t.run_id = v_run_id and t.token = v_claim.claim_token)
+     or exists (select 1 from private.extraction_spend s where s.run_id = v_run_id) then
+    raise exception 'a refused finish changed the run, its token or the ledger';
   end if;
-  insert into checks (step, result) values ('a finish is refused with fields on a failure, an unpriced model, the wrong provider or the wrong token', 'ok');
+  insert into checks (step, result) values
+    ('a finish is refused with fields on a failure, an unpriced model, the wrong provider, the wrong token, no token or an empty one', 'ok');
 
   -- absurd token counts are clamped, so one run's cost is bounded
   perform public.finish_extraction_run(v_run_id, v_claim.claim_token, 'failed', 'openai', 'gpt-5-nano',

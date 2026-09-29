@@ -180,7 +180,7 @@ A reap is still rolled back if the same open is refused by the hourly limit. In 
    - Any failure finishes the run as failed with no model call (model null, 0 tokens). A count forged at enqueue therefore never reaches a model.
 7. **`runExtraction`** runs with the same calls as today. It gets no filename.
 8. **`rpc("finish_extraction_run", ...)`** does the following in one transaction:
-   - checks the token and that the run is `running`
+   - checks the token (refusing none, before any lock, since `20260925000005`) and that the run is `running`
    - computes the cost with the same SQL rule
    - writes fields and document status exactly as `close_extraction_run` does
    - updates the run, including `cost_usd` as the display copy
@@ -671,7 +671,7 @@ Run against `20260925000002`'s functions, both cases failed with `40P01 deadlock
 Two adversarial reviews of this branch found ways past the design above. What changed, in the order of the fixes (each its own commit on `worker`):
 
 1. **Every call is measured before it is sent.** The orchestrator counts each call's input with the provider's token counting endpoint and sends it only if it fits `inputTokensPerCall(pages)`, the per-call input the estimate assumes (section 2), and keeps the run within the estimate's 800 000 cap. A first call over it fails the run as `extraction.too_dense` at 0 USD; a fallback that can't be measured isn't used; a retry over it isn't sent. Counts add up to 3 × 15 s, so the route's `maxDuration` is 280 (section 6's bounds become 225 < 280 < 300 ≤ 600).
-2. **A call with no answer costs its maximum.** It is recorded at its measured input with the count's 5 % margin plus the output cap (`20260925000005`: the count is an estimate, so it is also taken as 5 % more where it is compared with the bounds); tokens from two models are priced at the dearer; either way the ledger row is `estimate`.
+2. **A call with no answer costs its maximum.** It is recorded at its measured input plus the output cap (with the count's margin since `20260925000005`, section 17); tokens from two models are priced at the dearer; either way the ledger row is `estimate`.
 3. **One snapshot per ceiling.** `check_extraction_limits` reads each ceiling's ledger and in-flight sums in one statement, so a finish between them is counted once (section 4 assumed this; two statements broke it). A third two-session case races a check against a finish.
 4. **A finish that gets no answer is retried**, unchanged, with backoff, until the route's deadline; only a definite refusal goes to `failedCloseAttempts` (section 4, step 8).
 5. **The claim locks in order and skips busy runs.** It lists visible messages without locks, takes a candidate's document and run with NOWAIT, then reads that message: the order of section 15, message last. A held run is skipped and the next tried, up to 5. Enqueue, open and close check the caller before any row lock.
@@ -686,3 +686,11 @@ Two adversarial reviews of this branch found ways past the design above. What ch
 14. **The page polls through a Server Action**, stops only when two renders agree nothing is in flight, skips failed refreshes, never overlaps, and shows a run as stalled only from the database's terminal state (section 9's timer is gone).
 
 SECURITY.md has the claims these make, each with the test that proves it.
+
+## 17. Final fixes (`20260925000005` and the worker, 2026-09-29)
+
+A review of section 16's fixes (V1 to V12) found what is fixed here, one commit per item on `worker`, in this order:
+
+1. **The per-call bound is calibrated from real counts** (V1). Section 2's 4 500 + 3 000 a page came from sparse text PDFs; enforced, it refused most photos and scans on Sonnet 5, and many one-page retries. The figures are now Anthropic's free counts of the prompt, the fixtures, their retries, a phone photo and a 150 dpi scan, each maximum plus 25 %: 5 998 + 5 929 a page, the retry 1 773 more (`evals/token-counts.json`, `npm run eval -- --count`, `input-bound.test.ts`). The estimate is three first calls plus the retry allowance; one page is 0.136548 USD, and the per-run clamp binds from 44 pages.
+2. **A count is taken as 5 % more** wherever it stands for a bill: against the call's and the run's bounds, and when a call with no answer is charged (`withCountMargin`, `config.ts`).
+3. **A finish with no token is refused**, before any lock, as the close is: a null token and the nil uuid get the same `42501` as a wrong one.
