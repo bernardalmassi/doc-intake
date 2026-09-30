@@ -26,7 +26,7 @@ function run(status: string): RunRow {
   };
 }
 
-function entry(status: string, runs: string[] = [], staleRun = false, staleUpload = false): DocumentEntry {
+function entry(status: string, runs: string[] = [], overdue = false, staleUpload = false): DocumentEntry {
   return {
     document: {
       id: "doc",
@@ -40,10 +40,9 @@ function entry(status: string, runs: string[] = [], staleRun = false, staleUploa
     // newest first, as buildEntries sorts them
     runs: runs.map(run),
     fields: [],
-    staleRun,
     staleUpload,
     stalled: false,
-    overdue: false,
+    overdue,
     extraction: null,
   };
 }
@@ -65,7 +64,7 @@ describe("documentState", () => {
     expect(documentState(entry("processing", ["running"]))).toBe("running");
   });
 
-  it("reads a stalled extraction as failed", () => {
+  it("reads an extraction still in flight past its hard bound as failed", () => {
     expect(documentState(entry("processing", ["running"], true))).toBe("failed");
   });
 
@@ -125,18 +124,18 @@ describe("an upload's age", () => {
   const at = (minutes: number, status = "uploading") =>
     buildEntries([row(status)], [], [], created + minutes * 60_000)[0]!;
 
-  it("is uploading until the row is ten minutes old, and never finished after", () => {
-    expect(UPLOAD_STALE_MINUTES).toBe(10);
-    expect(documentState(at(2))).toBe("uploading");
-    expect(documentState(at(10))).toBe("uploading");
-    expect(at(10.01).staleUpload).toBe(true);
-    expect(documentState(at(10.01))).toBe("failed");
-    expect(failedExit(at(10.01))).toBe("delete");
+  it("is uploading until the row is UPLOAD_STALE_MINUTES old, and never finished after", () => {
+    const past = UPLOAD_STALE_MINUTES + 0.01;
+    expect(documentState(at(UPLOAD_STALE_MINUTES / 5))).toBe("uploading");
+    expect(documentState(at(UPLOAD_STALE_MINUTES))).toBe("uploading");
+    expect(at(past).staleUpload).toBe(true);
+    expect(documentState(at(past))).toBe("failed");
+    expect(failedExit(at(past))).toBe("delete");
   });
 
   it("only ever applies to a row that is uploading", () => {
-    expect(at(60, "pending").staleUpload).toBe(false);
-    expect(documentState(at(60, "pending"))).toBe("ready");
+    expect(at(UPLOAD_STALE_MINUTES * 6, "pending").staleUpload).toBe(false);
+    expect(documentState(at(UPLOAD_STALE_MINUTES * 6, "pending"))).toBe("ready");
   });
 });
 
@@ -156,7 +155,7 @@ describe("failedExit", () => {
     return { ...failed, runs: [{ ...failed.runs[0], error_code: code }] };
   }
 
-  it("retries what the catalog says can be retried, and a stalled run", () => {
+  it("retries what the catalog says can be retried, and an overdue run", () => {
     expect(failedExit(failedWith("extraction.invalid_answer"))).toBe("extract");
     expect(failedExit(failedWith("extraction.provider_timeout"))).toBe("extract");
     expect(failedExit(failedWith("extraction.not_configured"))).toBe("extract");

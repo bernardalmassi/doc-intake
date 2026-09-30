@@ -24,7 +24,7 @@ async function answer(outcome: Outcome, ms: number): Promise<FormState> {
 }
 
 export function FixtureOperations({
-  extract = { message: "Extraction finished." },
+  extract = {},
   remove = {},
   download = null,
   children,

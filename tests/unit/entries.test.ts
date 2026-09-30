@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import { buildEntries, extractionsInFlight, extractMode } from "@/app/app/[slug]/entries";
 import type { DocumentRow, RunRow } from "@/app/app/[slug]/types";
 import type { ErrorCode } from "@/lib/errors";
+import { IN_FLIGHT_BOUND_MS, overdueAt } from "@/lib/extraction/deadlines";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const NOW = Date.parse("2026-09-25T12:00:00Z");
@@ -42,8 +43,11 @@ function run(status: string, startedMinutesAgo: number, claimedMinutesAgo: numbe
   };
 }
 
-// rendered at NOW
-const entry = (document: DocumentRow, runs: RunRow[]) => buildEntries([document], runs, [], NOW)[0];
+// rendered at NOW, or at `now`
+const entry = (document: DocumentRow, runs: RunRow[], now = NOW) => buildEntries([document], runs, [], now)[0];
+// the bounds from src/lib/extraction/deadlines.ts, never a literal here
+const BOUND_MINUTES = IN_FLIGHT_BOUND_MS / 60_000;
+const due = (r: RunRow) => overdueAt(r)!;
 
 describe("an extraction's state on the page", () => {
   it("is queued until a worker claims the run, then running", () => {
@@ -52,20 +56,24 @@ describe("an extraction's state on the page", () => {
   });
 
   it("keeps Extract disabled until the run's hard bound, and past it shows the run stalled and gives Extract back (V5)", () => {
-    // queued: overdue 12 min 5 s after its enqueue (deadlines.test.ts)
-    const young = entry(doc("processing"), [run("queued", 12)]);
+    // queued at NOW: overdue at overdueAt (deadlines.test.ts), not a millisecond before
+    const queued = run("queued", 0);
+    const young = entry(doc("processing"), [queued], due(queued) - 1);
     expect(young).toMatchObject({ extraction: "queued", overdue: false });
     expect(extractMode(young)).toBe("running");
-    const old = entry(doc("processing"), [run("queued", 13)]);
+    const old = entry(doc("processing"), [queued], due(queued));
     expect(old).toMatchObject({ extraction: "queued", overdue: true, stalled: false });
     expect(extractMode(old)).toBe("again");
-    // claimed: overdue 11 min after its claim, however long it was queued
-    expect(entry(doc("processing"), [run("running", 30, 10)])).toMatchObject({ extraction: "running", overdue: false });
-    expect(entry(doc("processing"), [run("running", 30, 12)])).toMatchObject({ extraction: "running", overdue: true });
-    // a day-old run the database still has in flight is overdue
-    expect(entry(doc("processing"), [run("running", 24 * 60, 24 * 60)])).toMatchObject({ overdue: true });
+    // claimed at NOW after a whole bound in the queue: overdue from its
+    // claim, however long it was queued
+    const claimed = run("running", BOUND_MINUTES, 0);
+    expect(due(claimed)).toBeGreaterThan(NOW);
+    expect(entry(doc("processing"), [claimed], due(claimed) - 1)).toMatchObject({ extraction: "running", overdue: false });
+    expect(entry(doc("processing"), [claimed], due(claimed))).toMatchObject({ extraction: "running", overdue: true });
+    // a run the database still has in flight twice the bound after its claim is overdue
+    expect(entry(doc("processing"), [run("running", 2 * BOUND_MINUTES, 2 * BOUND_MINUTES)])).toMatchObject({ overdue: true });
     // with no render time (the design preview's fixtures), nothing is
-    expect(buildEntries([doc("processing")], [run("queued", 24 * 60)], [])[0]).toMatchObject({ overdue: false });
+    expect(buildEntries([doc("processing")], [run("queued", 2 * BOUND_MINUTES)], [])[0]).toMatchObject({ overdue: false });
   });
 
   it("gives Extract as first or again when nothing is in flight", () => {
@@ -97,10 +105,11 @@ describe("extractionsInFlight", () => {
   it("is true while any run is queued or running and not overdue, and false otherwise, so polling stops at the bound", () => {
     expect(extractionsInFlight(buildEntries([doc("processing")], [run("queued", 1)], [], NOW))).toBe(true);
     expect(extractionsInFlight(buildEntries([doc("processing")], [run("running", 3, 1)], [], NOW))).toBe(true);
-    expect(extractionsInFlight(buildEntries([doc("processing")], [run("queued", 12)], [], NOW))).toBe(true);
+    const queued = run("queued", 0);
+    expect(extractionsInFlight(buildEntries([doc("processing")], [queued], [], due(queued) - 1))).toBe(true);
     // past its hard bound: shown stalled, no longer polled for
-    expect(extractionsInFlight(buildEntries([doc("processing")], [run("queued", 13)], [], NOW))).toBe(false);
-    expect(extractionsInFlight(buildEntries([doc("processing")], [run("queued", 24 * 60)], [], NOW))).toBe(false);
+    expect(extractionsInFlight(buildEntries([doc("processing")], [queued], [], due(queued)))).toBe(false);
+    expect(extractionsInFlight(buildEntries([doc("processing")], [run("queued", 2 * BOUND_MINUTES)], [], NOW))).toBe(false);
     expect(extractionsInFlight(buildEntries([doc("extracted")], [run("succeeded", 1)], [], NOW))).toBe(false);
     expect(extractionsInFlight(buildEntries([doc("pending")], [run("failed", 12, 11, "d1", "extraction.abandoned")], [], NOW))).toBe(false);
     expect(extractionsInFlight([])).toBe(false);

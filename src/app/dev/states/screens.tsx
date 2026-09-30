@@ -552,8 +552,8 @@ export const SCREENS: Screen[] = [
   {
     id: "org-extract-finished",
     group: "Document actions",
-    title: "Click Extract: finished",
-    render: () => <OrgPage ids={[READY_ID]} extract={{ message: "Extraction finished." }} />,
+    title: "Click Extract: queued, as the real action answers (the static rows don't change, so the line reads ready again)",
+    render: () => <OrgPage ids={[READY_ID]} extract={{}} />,
   },
   {
     id: "org-extract-refused-budget",
@@ -588,7 +588,7 @@ export const SCREENS: Screen[] = [
   {
     id: "org-extract-again-finished",
     group: "Document actions",
-    title: "Click Extract again in the done document's runs row (open the line, then the second [data-action=extract]): finished",
+    title: "Click Extract again in the done document's runs row (open the line, then the second [data-action=extract]): queued",
     render: () => <OrgPage ids={[DONE_ID]} />,
   },
   {

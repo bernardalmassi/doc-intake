@@ -1,6 +1,8 @@
 // The one state a document card shows, of seven, worked out from what the
-// page reads today: the document's status, its latest run and whether that
-// run, or an upload, has gone stale. Pure, and presentation only: the
+// page reads today: the document's status, its latest run, whether that
+// run is overdue (still in flight past the hard bound its own timestamps
+// give it, src/lib/extraction/deadlines.ts) and whether an upload has gone
+// stale. Pure, and presentation only: the
 // database keeps its own statuses, and nothing here decides what anyone
 // may do.
 //
@@ -13,8 +15,9 @@
 //   running       an extraction is in progress
 //   done          extracted, every field read with enough confidence
 //   needs-review  extracted, and at least one field is Low
-//   failed        no usable result: the latest extraction failed, it
-//                 stalled, or the upload never finished
+//   failed        no usable result: the latest extraction failed, the
+//                 database ended it as abandoned or expired, it is
+//                 overdue, or the upload never finished
 
 import type { ErrorCode } from "@/lib/errors";
 import type { DocumentEntry } from "./types";
@@ -37,9 +40,9 @@ export type StatedEntry = DocumentEntry & { state?: DocumentState };
 export function documentState({
   document,
   runs,
-  staleRun,
+  overdue,
   staleUpload,
-}: Pick<DocumentEntry, "document" | "runs" | "staleRun" | "staleUpload">): DocumentState {
+}: Pick<DocumentEntry, "document" | "runs" | "overdue" | "staleUpload">): DocumentState {
   const latest = runs[0];
   switch (document.status) {
     // The row exists and its file hasn't arrived. Another member's page, or
@@ -53,9 +56,10 @@ export function documentState({
       // A failed extraction puts the document back to pending.
       return latest?.status === "failed" ? "failed" : "ready";
     case "processing":
-      // Running longer than the stale limit: the next Extract click fails
-      // it and starts again, so it reads as failed, with that exit.
-      return staleRun ? "failed" : "running";
+      // In flight past its hard bound: the database should have ended it
+      // by now, and the next Extract click ends it and starts again
+      // (extractMode in entries.ts), so it reads as failed, with that exit.
+      return overdue ? "failed" : "running";
     case "extracted":
       return "done";
     case "needs_review":
@@ -77,7 +81,7 @@ export function stateOf(entry: StatedEntry): DocumentState {
 
 // What a failed line offers, from what its failure says to do:
 //   extract   retrying can work (the catalog calls it retryable), or it
-//             stalled, or nothing says why
+//             is overdue, or nothing says why
 //   delete    there is nothing to extract: the upload never finished, or
 //             the file isn't what its type says ("Upload it again")
 //   download  the service can't or won't read it ("Review it yourself")
@@ -87,9 +91,9 @@ export type FailedExit = "extract" | "delete" | "download";
 
 const REVIEW_YOURSELF = new Set<ErrorCode>(["extraction.provider_rejected", "extraction.refused", "extraction.truncated"]);
 
-export function failedExit({ document, runs, staleRun }: Pick<DocumentEntry, "document" | "runs" | "staleRun">): FailedExit {
+export function failedExit({ document, runs, overdue }: Pick<DocumentEntry, "document" | "runs" | "overdue">): FailedExit {
   if (document.status === "uploading") return "delete";
-  if (staleRun) return "extract";
+  if (overdue) return "extract";
   const code = runs[0]?.status === "failed" ? runs[0].error_code : null;
   if (code === "extraction.file_type_mismatch") return "delete";
   if (code !== null && REVIEW_YOURSELF.has(code)) return "download";

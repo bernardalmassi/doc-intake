@@ -90,9 +90,6 @@ export type DocumentEntry = {
   runs: RunRow[];
   // in the order of FIELDS in src/lib/extraction/schema.ts
   fields: FieldRow[];
-  // processing, but its run has been running longer than the database's
-  // stale limit, so the next Extract click fails it and starts again
-  staleRun: boolean;
   // uploading, and the row is older than UPLOAD_STALE_MINUTES
   // (document-state.ts), so its upload never finished
   staleUpload: boolean;

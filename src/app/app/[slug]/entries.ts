@@ -1,4 +1,3 @@
-import { EXTRACTION_LIMITS } from "@/lib/extraction/config";
 import { inFlight, isOverdue } from "@/lib/extraction/deadlines";
 import { FIELDS } from "@/lib/extraction/schema";
 import { UPLOAD_STALE_MINUTES } from "./document-state";
@@ -11,7 +10,8 @@ const FIELD_ORDER = new Map(FIELDS.map((field, index) => [field.name, index]));
 // Pure, so the design preview runs the same grouping and sorting on
 // fixture rows. `now` is the time of the render (page.tsx's request time,
 // in milliseconds), against which a run still in flight is judged overdue
-// and a running extraction, or an upload, stale; with none, nothing is.
+// (src/lib/extraction/deadlines.ts) and an upload stale; with none,
+// nothing is.
 export function buildEntries(
   documents: DocumentRow[],
   runs: RunRow[],
@@ -33,7 +33,6 @@ export function buildEntries(
     fieldsByDocument.set(field.document_id, list);
   }
 
-  const staleBefore = now === null ? -Infinity : now - EXTRACTION_LIMITS.staleRunMinutes * 60_000;
   const uploadStaleBefore = now === null ? -Infinity : now - UPLOAD_STALE_MINUTES * 60_000;
 
   const entries = documents.map((document): DocumentEntry => {
@@ -44,11 +43,6 @@ export function buildEntries(
       (a, b) => (FIELD_ORDER.get(a.name) ?? FIELDS.length) - (FIELD_ORDER.get(b.name) ?? FIELDS.length),
     );
     const latest = documentRuns[0];
-    const staleRun =
-      document.status === "processing" &&
-      latest !== undefined &&
-      latest.status === "running" &&
-      Date.parse(latest.started_at) < staleBefore;
     const staleUpload = document.status === "uploading" && Date.parse(document.created_at) < uploadStaleBefore;
     const extraction =
       document.status === "processing" && latest !== undefined && (latest.status === "queued" || latest.status === "running")
@@ -56,7 +50,7 @@ export function buildEntries(
         : null;
     const stalled = latest !== undefined && isStalled(latest);
     const overdue = extraction !== null && now !== null && isOverdue(latest, now);
-    return { document, runs: documentRuns, fields: documentFields, staleRun, staleUpload, stalled, overdue, extraction };
+    return { document, runs: documentRuns, fields: documentFields, staleUpload, stalled, overdue, extraction };
   });
 
   return entries.toSorted((a, b) => {

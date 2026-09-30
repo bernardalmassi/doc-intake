@@ -82,9 +82,10 @@ export function runFailureSentence(code: ErrorCode | null): string {
 // A sentence for the notice beside a document's buttons.
 export type Explained = { text: string };
 
-// What an Extract click came back with, as one short sentence.
+// What an Extract click came back with, as one short sentence: a refusal.
+// Extract only queues a run, so an accepted click says nothing here; the
+// line reads the run from the data that comes back with it.
 export function describeExtractResult(state: FormState): (Explained & { ok: boolean }) | null {
   if (state.error) return { ok: false, text: userFacingError(state.error).message };
-  if (state.message !== undefined) return { ok: true, text: "Extraction finished." };
   return null;
 }

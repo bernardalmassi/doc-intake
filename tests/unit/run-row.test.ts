@@ -123,7 +123,7 @@ describe("runHistoryMeta with an abandoned run", () => {
 
 describe("an abandoned run's row", () => {
   const row = (run: ReturnType<typeof toRunRow>) =>
-    renderToStaticMarkup(createElement(RunHistory, { runs: [run], filename: "a.pdf", staleRun: false }))
+    renderToStaticMarkup(createElement(RunHistory, { runs: [run], filename: "a.pdf", overdue: false }))
       .replace(/<[^>]+>/g, " ")
       .replace(/&#x27;/g, "'")
       .replace(/\s+/g, " ");
@@ -158,7 +158,7 @@ describe("an abandoned run's row", () => {
 
 describe("the run table's total", () => {
   const table = (runs: ReturnType<typeof toRunRow>[]) =>
-    renderToStaticMarkup(createElement(RunHistory, { runs, filename: "a.pdf", staleRun: false }))
+    renderToStaticMarkup(createElement(RunHistory, { runs, filename: "a.pdf", overdue: false }))
       .replace(/<[^>]+>/g, " ")
       .replace(/&#x27;/g, "'")
       .replace(/\s+/g, " ");
@@ -184,7 +184,7 @@ describe("the run table's total", () => {
 
 describe("a failed run's sentence", () => {
   const row = (run: ReturnType<typeof toRunRow>) =>
-    renderToStaticMarkup(createElement(RunHistory, { runs: [run], filename: "a.pdf", staleRun: false }))
+    renderToStaticMarkup(createElement(RunHistory, { runs: [run], filename: "a.pdf", overdue: false }))
       .replace(/<[^>]+>/g, " ")
       .replace(/&#x27;/g, "'")
       .replace(/\s+/g, " ");
@@ -205,5 +205,51 @@ describe("a failed run's sentence", () => {
     expect(row(toRunRow({ ...base, attempts: 1 }))).toContain("The extraction failed, and this page can't say why.");
     // a run that didn't fail gets no sentence
     expect(row(toRunRow({ ...base, status: "succeeded", attempts: 1, cost_usd: "0.001" }))).not.toContain("can't say why");
+  });
+});
+
+describe("the queue's run states", () => {
+  const table = (runs: ReturnType<typeof toRunRow>[], overdue = false) =>
+    renderToStaticMarkup(createElement(RunHistory, { runs, filename: "a.pdf", overdue }))
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&#x27;/g, "'")
+      .replace(/\s+/g, " ");
+
+  const queued = toRunRow({ ...base, status: "queued" });
+  const claimed = toRunRow({ ...base, status: "running", claimed_at: "2026-09-18T09:00:05.000Z" });
+  // as reap_extraction_run writes it: never claimed, charged nothing
+  const expired = toRunRow({
+    ...base,
+    cost_usd: "0.00000000",
+    error: "expired: not claimed within 10 minutes; cancelled at no cost",
+  });
+
+  it("reads a queued run as queued, with every value still to come", () => {
+    const text = table([queued]);
+    expect(text).toContain("Queued In progress");
+    expect(text).toContain("Not known yet");
+    expect(text).not.toContain("Stalled");
+    expect(runHistoryMeta([queued])).toBe("Runs 1 · 0 failed · cost not known yet");
+  });
+
+  it("reads the latest run in flight past its hard bound as stalled, with nothing still to come", () => {
+    for (const run of [queued, claimed]) {
+      const text = table([run], true);
+      expect(text).toContain("Stalled Stopped responding");
+      expect(text).toContain("Not known");
+      expect(text).not.toContain("yet");
+      expect(runHistoryMeta([run], true)).toBe("Runs 1 · 0 failed · cost not known");
+    }
+    // before the bound it is still going
+    expect(table([claimed])).toContain("Running In progress");
+  });
+
+  it("reads a run the database expired as expired and never started, counted apart from failures", () => {
+    expect(expired.error_code).toBe("extraction.expired");
+    const text = table([expired]);
+    expect(text).toContain("Expired Never started");
+    expect(text).toContain(userFacingError("extraction.expired").message);
+    expect(text).not.toContain("Failed");
+    expect(runHistoryMeta([expired])).toMatch(/^Runs 1 · 0 failed · 1 expired · /);
   });
 });

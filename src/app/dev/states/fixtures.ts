@@ -374,12 +374,13 @@ function inProgressDocuments(now: number): Record<string, DocumentRow> {
 }
 
 // Runs in progress at the time of the request: one 40 seconds in, one
-// still "running" 25 minutes on, past the 10-minute stale limit.
+// claimed 25 minutes ago and still running, past its hard bound
+// (overdueAt, src/lib/extraction/deadlines.ts).
 function runningRuns(now: number): RunRow[] {
   const ago = (seconds: number) => new Date(now - seconds * 1000).toISOString();
   return [
-    run({ id: "run-4390", document_id: RUNNING_ID, status: "running", started_at: ago(40) }),
-    run({ id: "run-mandate", document_id: STALE_ID, status: "running", started_at: ago(25 * 60) }),
+    run({ id: "run-4390", document_id: RUNNING_ID, status: "running", started_at: ago(40), claimed_at: ago(40) }),
+    run({ id: "run-mandate", document_id: STALE_ID, status: "running", started_at: ago(25 * 60 + 12), claimed_at: ago(25 * 60) }),
   ];
 }
 

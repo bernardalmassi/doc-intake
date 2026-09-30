@@ -1,8 +1,8 @@
 import { errorInkRuleClass } from "@/app/ui";
-import { EXTRACTION_LIMITS } from "@/lib/extraction/config";
 import { userFacingError } from "@/lib/errors";
 import { DocumentActions, type ExtractMode } from "./document-actions";
 import { type DocumentState, failedExit, type StatedEntry, stateOf } from "./document-state";
+import { extractMode } from "./entries";
 import { ExtractionPanel } from "./extraction-panel";
 import { extractReads, fieldSummary } from "./fields";
 import { fileKind, formatBytes, formatClock, formatUtc } from "./format";
@@ -122,6 +122,9 @@ function DocumentLine({
   const low = fields.filter((field) => field.band === "low").length;
   const nameId = `document-${document.id}`;
   const again: ExtractMode = runs.length > 0 ? "again" : "first";
+  // Extract again in the runs row: disabled while an extraction is in
+  // flight, until it is past its hard bound (extractMode)
+  const inRuns = extractMode(entry);
   const hasFields = fields.length > 0;
 
   const actions = { id: document.id, slug, filename: document.filename, storagePath: document.storage_path };
@@ -204,19 +207,19 @@ function DocumentLine({
 
         {runs.length > 0 ? (
           <RunsToggle
-            summary={runHistoryMeta(runs)}
+            summary={runHistoryMeta(runs, entry.overdue)}
             action={
               extractInRuns ? (
                 <DocumentActions
                   {...actions}
                   canDownload={false}
                   canDelete={false}
-                  extract={{ mode: "again", primary: false }}
+                  extract={{ mode: inRuns, primary: false }}
                 />
               ) : undefined
             }
           >
-            <RunHistory runs={runs} filename={document.filename} staleRun={entry.staleRun} />
+            <RunHistory runs={runs} filename={document.filename} overdue={entry.overdue} />
           </RunsToggle>
         ) : (
           <p
@@ -356,15 +359,18 @@ function Detail({
 // Why a document has no usable result, in the catalog's words or the
 // page's own, and, for a member, who can do something about it.
 function failureReason(entry: DocumentEntry, canManage: boolean): string {
-  const { document, runs, staleRun } = entry;
+  const { document, runs, overdue } = entry;
   if (document.status === "uploading") {
     return `The upload never finished, so there is no file. ${
       canManage ? "Delete this entry, then upload the file again." : "An admin can delete this entry."
     }`;
   }
-  if (staleRun) {
-    return `Stopped responding after ${EXTRACTION_LIMITS.staleRunMinutes} minutes.${
-      canManage ? " Extract again to restart it." : " An admin can restart it."
+  // Still in flight past the hard bound its own timestamps give it: the
+  // database should have ended it by now. Extract again ends it and
+  // queues a new one.
+  if (overdue) {
+    return `This extraction should have finished by now and hasn't.${
+      canManage ? " Extract again ends it and starts a new one." : " Only an admin can extract it again."
     }`;
   }
   const exit = failedExit(entry);
