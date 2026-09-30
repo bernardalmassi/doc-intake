@@ -118,7 +118,7 @@ Two faces, four sizes, nothing under 12px, tabular figures on the whole body.
 
 ### Motion and focus
 
-- One motion: when a line opens, its contents arrive, fading in and settling 4px, 160ms, ease-out, once per opening. Nothing moves under reduced motion. No transition on `all`, no hover lift, no colour transition.
+- One motion, the landing's: when a line opens, its contents arrive, fading in where they stand, 120ms, ease-out, once per opening. Opacity only. Nothing moves under reduced motion. No transition on `all`, no hover lift, no colour transition.
 - One focus ring: 2px signal, 2px out, on every control. Tab order is reading order, with no positive tabindex. Every target is at least 24px.
 
 ### Never ship

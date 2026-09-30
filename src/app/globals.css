@@ -289,14 +289,15 @@
     }
   }
 
-  /* The one motion: what a line opens onto arrives, 4px from above to its
-     place and from clear to solid, 160ms ease-out, once per opening (an
-     animation starts when the hidden attribute goes). On arrival the line
-     that needs review opens the same way. Nothing loops; with reduced
-     motion it is simply there. */
+  /* The one motion, the landing's (its readout's arrive, in
+     landing.module.css): what a line opens onto arrives from clear to
+     solid, in place, 120ms ease-out, once per opening (an animation starts
+     when the hidden attribute goes). On arrival the line that needs review
+     opens the same way. Nothing loops; with reduced motion it isn't
+     applied at all, as on the landing, and the contents are simply there. */
   @media (prefers-reduced-motion: no-preference) {
     .ledger-arrive:not([hidden]) {
-      animation: ledger-arrive 160ms cubic-bezier(0, 0, 0.2, 1) 1 both;
+      animation: ledger-arrive 120ms ease-out both;
     }
 
     /* In a closed <details> (the organizations list's Create fold) it has
@@ -310,10 +311,8 @@
 @keyframes ledger-arrive {
   from {
     opacity: 0;
-    transform: translateY(-4px);
   }
   to {
     opacity: 1;
-    transform: none;
   }
 }
