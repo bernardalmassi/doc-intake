@@ -224,19 +224,29 @@ describe("the queue's run states", () => {
     error: "expired: not claimed within 10 minutes; cancelled at no cost",
   });
 
-  it("reads a queued run as queued, with every value still to come", () => {
+  it("reads a queued run as queued and not started yet, with every other value still to come", () => {
     const text = table([queued]);
-    expect(text).toContain("Queued In progress");
+    expect(text).toContain("Queued In progress Not started yet");
     expect(text).toContain("Not known yet");
+    expect(text).not.toContain("18 Sep 2026");
     expect(text).not.toContain("Stalled");
     expect(runHistoryMeta([queued])).toBe("Runs 1 · 0 failed · cost not known yet");
   });
 
+  it("dates a run from its claim, when a worker started it, not from its enqueue", () => {
+    const text = table([claimed]);
+    expect(text).toContain("Running In progress 18 Sep 2026, 09:00");
+    const html = renderToStaticMarkup(createElement(RunHistory, { runs: [claimed], filename: "a.pdf", overdue: false }));
+    expect(html).toContain('dateTime="2026-09-18T09:00:05.000Z"');
+  });
+
   it("reads the latest run in flight past its hard bound as stalled, with nothing still to come", () => {
-    for (const run of [queued, claimed]) {
-      const text = table([run], true);
-      expect(text).toContain("Stalled Stopped responding");
-      expect(text).toContain("Not known");
+    const stalledClaimed = table([claimed], true);
+    expect(stalledClaimed).toContain("Stalled Stopped responding");
+    expect(stalledClaimed).toContain("Not known");
+    const stalledQueued = table([queued], true);
+    expect(stalledQueued).toContain("Stalled No model call Not started");
+    for (const [text, run] of [[stalledClaimed, claimed], [stalledQueued, queued]] as const) {
       expect(text).not.toContain("yet");
       expect(runHistoryMeta([run], true)).toBe("Runs 1 · 0 failed · cost not known");
     }
@@ -244,12 +254,33 @@ describe("the queue's run states", () => {
     expect(table([claimed])).toContain("Running In progress");
   });
 
-  it("reads a run the database expired as expired and never started, counted apart from failures", () => {
+  it("reads a run the database expired as expired, never started and nothing spent, counted apart from failures", () => {
     expect(expired.error_code).toBe("extraction.expired");
     const text = table([expired]);
-    expect(text).toContain("Expired Never started");
+    expect(text).toContain("Expired No model call Never started");
+    expect(text).toContain("Nothing spent");
     expect(text).toContain(userFacingError("extraction.expired").message);
     expect(text).not.toContain("Failed");
-    expect(runHistoryMeta([expired])).toMatch(/^Runs 1 · 0 failed · 1 expired · /);
+    expect(text).not.toContain("$0.0000");
+    expect(runHistoryMeta([expired])).toBe("Runs 1 · 0 failed · 1 expired · nothing spent");
+  });
+
+  it("reads a run that stopped before any model call, stored at 0 USD, as nothing spent and no tokens, never $0.0000", () => {
+    for (const error of [
+      `${RUN_ERROR_MARKERS.typeMismatch}application/pdf) does not match its type`,
+      `${RUN_ERROR_MARKERS.tooDense}its input (9 999 tokens) is over the limit`,
+      `${RUN_ERROR_MARKERS.pageCountMismatch}3 counted, 2 requested`,
+    ]) {
+      const preflight = toRunRow({ ...base, cost_usd: "0.00000000", input_tokens: 0, output_tokens: 0, latency_ms: 412, error });
+      const text = table([preflight]);
+      expect(text, error).toContain("Failed No model call");
+      expect(text, error).toContain("None None Nothing spent 0.4 s");
+      expect(text, error).not.toContain("$0.0000");
+      expect(runHistoryMeta([preflight]), error).toBe("Runs 1 · 1 failed · nothing spent");
+    }
+    // beside a paid run, the total is the paid run's
+    const paid = toRunRow({ ...base, status: "succeeded", attempts: 1, cost_usd: "0.01000000" });
+    const preflight = toRunRow({ ...base, cost_usd: "0.00000000", input_tokens: 0, output_tokens: 0, error: `${RUN_ERROR_MARKERS.tooDense}x` });
+    expect(runHistoryMeta([preflight, paid])).toBe("Runs 2 · 1 failed · $0.0100");
   });
 });

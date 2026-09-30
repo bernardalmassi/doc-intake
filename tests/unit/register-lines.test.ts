@@ -167,3 +167,28 @@ describe("the register while the page polls", () => {
     expect(html).toMatch(/<div aria-live="polite" class="sr-only"><\/div>/);
   });
 });
+
+describe("Extract again in the runs row", () => {
+  // a document read once, extracted again: the fields stay while the new run is in flight
+  const done = run("succeeded", { id: "r-done", started_at: iso(T0 - 600_000), claimed_at: iso(T0 - 590_000), attempts: 1, cost_usd: "0.01" });
+  const fields: FieldRow[] = [
+    { document_id: "d1", name: "title", value: "Invoice", confidence: "0.950", band: "high", source_text: "INVOICE", clarifying_question: null },
+  ];
+
+  it("shows when nothing is in flight", () => {
+    const { html } = lines(at([doc("extracted")], [done], T0, fields));
+    expect(html).toContain('data-action="extract"');
+  });
+
+  it("isn't there while a run is queued or running, and comes back past its bound", () => {
+    const queued = run("queued");
+    for (const inFlight of [queued, run("running", { claimed_at: iso(T0 + 5_000) })]) {
+      const { html } = lines(at([doc("processing")], [inFlight, done], T0 + 30_000, fields));
+      expect(html, inFlight.status).not.toContain('data-action="extract"');
+    }
+    const late = lines(at([doc("processing")], [queued, done], overdueAt(queued)!, fields));
+    expect(late.html).toContain('data-doc-state="failed"');
+    // once, as the line's exit
+    expect(late.html.match(/data-action="extract"/g)).toHaveLength(1);
+  });
+});

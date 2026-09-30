@@ -126,9 +126,6 @@ function DocumentLine({
   const low = fields.filter((field) => field.band === "low").length;
   const nameId = `document-${document.id}`;
   const again: ExtractMode = runs.length > 0 ? "again" : "first";
-  // Extract again in the runs row: disabled while an extraction is in
-  // flight, until it is past its hard bound (extractMode)
-  const inRuns = extractMode(entry);
   const hasFields = fields.length > 0;
 
   const actions = { id: document.id, slug, filename: document.filename, storagePath: document.storage_path };
@@ -158,9 +155,13 @@ function DocumentLine({
   // What the exit already offers isn't offered again in the File row, and
   // Extract again stays in the runs row when the exit is something else,
   // so a failure that says retrying won't help never leaves a dead end.
+  // Not while a run is in flight, until it is past its hard bound
+  // (extractMode): until then Extract would only be refused. Past it, the
+  // line's exit is Extract again, so it isn't offered twice.
   const deleteOnLine = canManage && failed === "delete";
   const downloadOnLine = failed === "download";
-  const extractInRuns = canManage && hasFile && (hasFields || (failed !== null && failed !== "extract"));
+  const extractInRuns =
+    canManage && hasFile && extractMode(entry) !== "running" && failed !== "extract" && (hasFields || failed !== null);
   const latest = runs[0];
 
   return (
@@ -219,7 +220,7 @@ function DocumentLine({
                   {...actions}
                   canDownload={false}
                   canDelete={false}
-                  extract={{ mode: inRuns, primary: false }}
+                  extract={{ mode: "again", primary: false }}
                 />
               ) : undefined
             }

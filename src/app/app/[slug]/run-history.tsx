@@ -46,11 +46,16 @@ export function isExpired(run: RunRow): boolean {
 //              or a run that made model calls and was closed without its
 //              usage (the Extract action did that before it charged
 //              estimates)
-//   none       no model call was made (a file whose contents didn't match
-//              its type), so nothing was spent
+//   none       nothing was spent: no model call was made (a file whose
+//              contents didn't match its type, a run the worker's checks
+//              stopped, one too dense to send, one that expired), or the
+//              database priced the run at exactly 0. The worker stores 0
+//              for those, the path before it stored no cost; either way it
+//              reads "Nothing spent", never $0.0000.
 type CostState = "recorded" | "estimated" | "unknown" | "none";
 
 function costState(run: RunRow): CostState {
+  if (run.cost_usd !== null && !run.cost_estimated && Number(run.cost_usd) === 0) return "none";
   if (run.cost_usd !== null) return run.cost_estimated ? "estimated" : "recorded";
   if (inFlight(run) || run.error_code === "extraction.abandoned" || run.attempts > 0) return "unknown";
   return "none";
@@ -70,6 +75,8 @@ function runTotals(runs: RunRow[]) {
     rounding: Math.abs(printed - Math.round(total * 10_000)) / 10_000,
     estimated: states.filter((state) => state === "estimated").length,
     unknown: states.filter((state) => state === "unknown").length,
+    // every known cost is none: the total is nothing spent, not $0.0000
+    nothingSpent: states.every((state) => state === "none" || state === "unknown"),
   };
 }
 
@@ -79,7 +86,7 @@ function runTotals(runs: RunRow[]) {
 // known is said, never counted as zero. Set in the label face, so it reads
 // in capitals.
 export function runHistoryMeta(runs: RunRow[], overdue = false): string {
-  const { total, estimated, unknown } = runTotals(runs);
+  const { total, estimated, unknown, nothingSpent } = runTotals(runs);
   // An abandoned or expired run is counted as that, as its row reads, not
   // as failed.
   const abandoned = runs.filter(isAbandoned).length;
@@ -96,7 +103,7 @@ export function runHistoryMeta(runs: RunRow[], overdue = false): string {
     estimated > 0 ? `${estimated} estimated` : null,
     unknown > 0 ? `${unknown} not known` : null,
   ].filter(Boolean);
-  return `${head} · ${formatUsd(total)}${notes.map((note) => ` · ${note}`).join("")}`;
+  return `${head} · ${nothingSpent ? "nothing spent" : formatUsd(total)}${notes.map((note) => ` · ${note}`).join("")}`;
 }
 
 // The register's columns, continued: the first is the state column (the
@@ -123,11 +130,17 @@ const num = "xl:text-right";
 // the hard bound its own timestamps give it (DocumentEntry): it reads as
 // stalled, and none of its values will arrive "yet".
 export function RunHistory({ runs, filename, overdue }: { runs: RunRow[]; filename: string; overdue: boolean }) {
-  const { total, rounding, estimated, unknown } = runTotals(runs);
-  // No cost known for any run: the total says so in words, as the summary
-  // line does, rather than printing $0.0000 beside "cost not known yet".
+  const { total, rounding, estimated, unknown, nothingSpent } = runTotals(runs);
+  // No cost known for any run, or none spent: the total says so in words,
+  // as the summary line does, rather than printing $0.0000.
   const totalText =
-    runs.length > 0 && unknown === runs.length ? (stillGoing(runs, overdue) ? "Not known yet" : "Not known") : formatUsd(total);
+    runs.length > 0 && unknown === runs.length
+      ? stillGoing(runs, overdue)
+        ? "Not known yet"
+        : "Not known"
+      : nothingSpent
+        ? "Nothing spent"
+        : formatUsd(total);
 
   return (
     <table role="table" className="w-full text-left text-small max-xl:block">
@@ -192,7 +205,7 @@ export function RunHistory({ runs, filename, overdue }: { runs: RunRow[]; filena
                   <span className="block">{describeAttempts(run, stalled)}</span>
                 </td>
                 <td role="cell" data-label="Started (UTC)" className={`${td} whitespace-nowrap`}>
-                  <time dateTime={run.started_at}>{formatUtc(run.started_at, { zone: false })}</time>
+                  <Started run={run} stalled={stalled} />
                 </td>
                 <td role="cell" data-label="Model" className={`${td} max-xl:col-span-2`}>
                   {run.provider || run.model ? (
@@ -201,7 +214,13 @@ export function RunHistory({ runs, filename, overdue }: { runs: RunRow[]; filena
                       {run.model && <span className="block [overflow-wrap:break-word] xl:whitespace-nowrap">{run.model}</span>}
                     </>
                   ) : (
-                    <span>{going ? "Not known yet" : isAbandoned(run) || stalled ? "Not recorded" : "No model answered"}</span>
+                    <span>
+                      {going
+                        ? "Not known yet"
+                        : isAbandoned(run) || (stalled && run.status !== "queued")
+                          ? "Not recorded"
+                          : "No model answered"}
+                    </span>
                   )}
                 </td>
                 <td role="cell" data-label="Tokens in" className={`${td} ${num}`}>
@@ -268,10 +287,21 @@ export function RunHistory({ runs, filename, overdue }: { runs: RunRow[]; filena
   );
 }
 
+// When a worker started the run: its claim. A run no worker has claimed
+// says so ("Not started yet", "Never started" once the database expired
+// it, "Not started" past its hard bound); a run from before the queue has
+// no claim and started when it was opened.
+function Started({ run, stalled }: { run: RunRow; stalled: boolean }) {
+  if (isExpired(run)) return <>Never started</>;
+  if (run.status === "queued") return <>{stalled ? "Not started" : "Not started yet"}</>;
+  const started = run.claimed_at ?? run.started_at;
+  return <time dateTime={started}>{formatUtc(started, { zone: false })}</time>;
+}
+
 function describeAttempts(run: RunRow, stalled: boolean): string {
   if (isAbandoned(run)) return run.cost_estimated ? "Charged its estimate" : "Stopped responding";
-  if (isExpired(run)) return "Never started";
-  if (stalled) return "Stopped responding";
+  if (isExpired(run)) return "No model call";
+  if (stalled) return run.status === "queued" ? "No model call" : "Stopped responding";
   if (run.attempts === 0) return inFlight(run) ? "In progress" : "No model call";
   return `${run.attempts} ${run.attempts === 1 ? "call" : "calls"}`;
 }
@@ -302,11 +332,14 @@ function Cost({ run, going }: { run: RunRow; going: boolean }) {
 // tokens that were never recorded, and an abandoned run recorded none, nor
 // has a stalled one yet, so they read as not known, not as 0.
 function Tokens({ run, count, going, stalled }: { run: RunRow; count: number | null; going: boolean; stalled: boolean }) {
-  if (stalled || isAbandoned(run) || (run.model === null && run.attempts > 0 && !going)) {
+  if ((stalled && run.status !== "queued") || isAbandoned(run) || (run.model === null && run.attempts > 0 && !going)) {
     return <>Not known</>;
   }
-  if (count !== null) return <>{formatCount(count)}</>;
-  return <>{going ? "Not known yet" : "None"}</>;
+  if (going) return <>{count === null ? "Not known yet" : formatCount(count)}</>;
+  // No model call, so no tokens: the worker stores 0 for them, the path
+  // before it stored none.
+  if (run.attempts === 0 || count === null) return <>None</>;
+  return <>{formatCount(count)}</>;
 }
 
 // Whether any run is still going: in flight, and not the latest run past
