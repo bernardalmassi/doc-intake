@@ -24,6 +24,7 @@ import {
   FixtureOrganizationForm,
 } from "./fixture-forms";
 import { FixtureOperations, type Outcome } from "./fixture-operations";
+import { FixturePoll } from "./fixture-poll";
 import {
   ALL_IDS,
   DONE_ID,
@@ -35,6 +36,7 @@ import {
   NEEDS_REVIEW_ID,
   organization,
   organizations,
+  pollFrames,
   READY_ID,
   RUNNING_ID,
   SIX_STATE_IDS,
@@ -483,6 +485,24 @@ export const SCREENS: Screen[] = [
       <PreviewPending target="sign-out">
         <OrgPage ids={SIX_STATE_IDS} />
       </PreviewPending>
+    ),
+  },
+  {
+    id: "org-poll",
+    group: "Organization page",
+    title:
+      "The six documents, refreshed as a poll would, every 6 s, twice: queued becomes running and then done, running finishes as needs review. Lines keep their places, open lines stay open, an armed Delete stays armed, nothing opens itself, and each change is said once",
+    render: () => (
+      <SignedIn>
+        <FixtureOperations>
+          <FixturePoll
+            intervalMs={6_000}
+            frames={pollFrames().map((entries) => (
+              <OrganizationView key="page" organization={organization} role="owner" entries={entries} />
+            ))}
+          />
+        </FixtureOperations>
+      </SignedIn>
     ),
   },
   { id: "org-empty", group: "Organization page", title: "Owner, no documents yet", render: () => <OrgPage ids={[]} /> },

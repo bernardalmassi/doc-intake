@@ -147,9 +147,9 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
   let notice: Notice = null;
   if (last === "extract") {
     const result = describeExtractResult(extractState);
-    // In the register the line's detail prints this; the notice still
-    // says it to a screen reader.
-    if (extracting) notice = { tone: "progress", text: QUEUING, quiet: setExtracting !== null };
+    // In the register the line's detail prints this and the register says
+    // the line is queued, so the notice says nothing more.
+    if (extracting) notice = setExtracting === null ? { tone: "progress", text: QUEUING } : null;
     else if (result) notice = { tone: result.ok ? "done" : "error", text: result.text };
   } else if (last === "delete") {
     if (deleting) notice = { tone: "progress", text: "Deleting…", quiet: true };

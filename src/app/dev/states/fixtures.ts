@@ -401,6 +401,69 @@ export function entriesFor(ids: string[]): DocumentEntry[] {
   );
 }
 
+// The six documents as the page reads them now, then as two refreshes
+// while it polls would: first the queued run is claimed and the running
+// one finishes as needs review (which the server sorts first), then the
+// first finishes as done. For org-poll, which swaps them in place as a
+// refresh does.
+export function pollFrames(): DocumentEntry[][] {
+  const now = Date.now();
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const ids = new Set(SIX_STATE_IDS);
+  const baseRuns = [...runs, ...runningRuns(now)].filter((r) => r.document_id !== null && ids.has(r.document_id));
+  const baseFields = fields.filter((f) => ids.has(f.document_id));
+  const baseDocuments = SIX_STATE_IDS.map((id) => documents[id]);
+  const withStatus = (list: DocumentRow[], id: string, status: string) =>
+    list.map((d) => (d.id === id ? { ...d, status } : d));
+  const replaceRun = (list: RunRow[], id: string, patch: Partial<RunRow>) =>
+    list.map((r) => (r.id === id ? { ...r, ...patch } : r));
+  // what the running credit note's run finds: one Low field, the rest High
+  const creditFields = fieldsFor(RUNNING_ID, [
+    ["document_type", "credit note", 0.95, "high", "CREDIT NOTE"],
+    ["sender_name", "Northgate Fixings & Supply Co.", 0.93, "high", "NORTHGATE FIXINGS & SUPPLY CO."],
+    ["reference_number", "CN-4390", 0.52, "low", "Ref CN-4390 / INV 4471-B", "Two references are printed together. Is CN-4390 this credit note's own?"],
+    ["total_amount", "112.80", 0.91, "high", "CREDIT TOTAL 112.80"],
+    ["currency", "GBP", 0.95, "high", "GBP"],
+  ]);
+  const deliveryFields = fieldsFor(QUEUED_ID, [
+    ["document_type", "delivery note", 0.94, "high", "DELIVERY NOTE"],
+    ["reference_number", "88231", 0.92, "high", "No. 88231"],
+  ]);
+  const finished = (id: string, started: string, claimed: string) => ({
+    status: "succeeded",
+    provider: "anthropic",
+    model: "claude-sonnet-5",
+    attempts: 1,
+    input_tokens: 6_102,
+    output_tokens: 512,
+    cost_usd: "0.01732200",
+    latency_ms: 7_120,
+    started_at: started,
+    claimed_at: claimed,
+    id,
+  });
+
+  const second = {
+    documents: withStatus(baseDocuments, RUNNING_ID, "needs_review"),
+    runs: replaceRun(
+      replaceRun(baseRuns, "run-88231", { status: "running", claimed_at: iso(now) }),
+      "run-4390",
+      finished("run-4390", iso(now - 52_000), iso(now - 40_000)),
+    ),
+    fields: [...baseFields, ...creditFields],
+  };
+  const third = {
+    documents: withStatus(second.documents, QUEUED_ID, "extracted"),
+    runs: replaceRun(second.runs, "run-88231", finished("run-88231", iso(now - 12_000), iso(now))),
+    fields: [...second.fields, ...deliveryFields],
+  };
+  return [
+    buildEntries(baseDocuments, baseRuns, baseFields, now),
+    buildEntries(second.documents, second.runs, second.fields, now),
+    buildEntries(third.documents, third.runs, third.fields, now),
+  ];
+}
+
 // One document per state: ready, queued, running, done, needs review,
 // failed.
 export const SIX_STATE_IDS = [NEEDS_REVIEW_ID, DONE_ID, READY_ID, QUEUED_ID, RUNNING_ID, FAILED_ID];

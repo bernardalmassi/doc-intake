@@ -6,7 +6,7 @@ import { extractMode } from "./entries";
 import { ExtractionPanel } from "./extraction-panel";
 import { extractReads, fieldSummary } from "./fields";
 import { fileKind, formatBytes, formatClock, formatUtc } from "./format";
-import { Elapsed, LedgerLine, LineDetail, LineStateMark, Register, RegisterKey, RunsToggle } from "./ledger";
+import { Elapsed, LedgerLine, LineDetail, LineStateMark, Register, RegisterKey, RunsToggle, StableOrder } from "./ledger";
 import { DOCUMENTS_HEADING_ID, runFailureSentence, UNKNOWN_RUN_FAILURE } from "./messages";
 import { RunHistory, runHistoryMeta } from "./run-history";
 import { StateMark } from "./state-glyph";
@@ -49,17 +49,21 @@ export function DocumentList({ entries, slug, canManage }: ListProps) {
             <EmptyDocuments canManage={canManage} />
           ) : (
             <ul className="border-t border-ink">
-              {stated.map(({ entry, state }) => (
-                <li key={entry.document.id}>
-                  <DocumentLine
-                    entry={entry}
-                    state={state}
-                    slug={slug}
-                    canManage={canManage}
-                    explainExtract={canManage && entry === firstReady?.entry}
-                  />
-                </li>
-              ))}
+              {/* The order the page arrived with, kept while it polls: a
+                  line never moves under the reader (StableOrder). */}
+              <StableOrder ids={stated.map(({ entry }) => entry.document.id)}>
+                {stated.map(({ entry, state }) => (
+                  <li key={entry.document.id}>
+                    <DocumentLine
+                      entry={entry}
+                      state={state}
+                      slug={slug}
+                      canManage={canManage}
+                      explainExtract={canManage && entry === firstReady?.entry}
+                    />
+                  </li>
+                ))}
+              </StableOrder>
             </ul>
           )}
         </div>
@@ -174,6 +178,7 @@ function DocumentLine({
           <>
             <LineStateMark
               id={document.id}
+              filename={document.filename}
               state={state}
               count={state === "needs-review" ? low : undefined}
               className="md:w-44 md:shrink-0"

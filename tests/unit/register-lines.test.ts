@@ -8,7 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DocumentList } from "@/app/app/[slug]/document-list";
 import { buildEntries, extractionsInFlight } from "@/app/app/[slug]/entries";
-import { EXTRACT_REQUESTED } from "@/app/app/[slug]/ledger";
+import { EXTRACT_REQUESTED, keepOrder, noteShown } from "@/app/app/[slug]/ledger";
 import { type DocumentOperations, OperationsProvider } from "@/app/app/[slug]/operations";
 import type { DocumentEntry, DocumentRow, FieldRow, RunRow } from "@/app/app/[slug]/types";
 import type { ErrorCode } from "@/lib/errors";
@@ -130,5 +130,40 @@ describe("a line's extraction states", () => {
     expect(extractionsInFlight(at([doc("processing")], [queued], overdueAt(queued)! - 1))).toBe(true);
     expect(extractionsInFlight(at([doc("processing")], [queued], overdueAt(queued)!))).toBe(false);
     expect(lines(at([doc("processing")], [queued], overdueAt(queued)!)).html).toContain('data-doc-state="failed"');
+  });
+});
+
+describe("the register while the page polls", () => {
+  it("keeps the order it arrived with, whatever the server's sort says later", () => {
+    // d3 finished as needs review, which the server sorts first
+    expect(keepOrder(["d1", "d2", "d3"], ["d3", "d1", "d2"])).toEqual(["d1", "d2", "d3"]);
+    // a deleted line leaves
+    expect(keepOrder(["d1", "d2", "d3"], ["d1", "d3"])).toEqual(["d1", "d3"]);
+    // a new line goes where the server put it among the others
+    expect(keepOrder(["d1", "d2"], ["d1", "new", "d2"])).toEqual(["d1", "new", "d2"]);
+    expect(keepOrder(["d1", "d2"], ["new", "d2", "d1"])).toEqual(["new", "d1", "d2"]);
+    expect(keepOrder(["d2", "d1"], ["d1", "a", "b", "d2"])).toEqual(["d2", "d1", "a", "b"]);
+    // nothing kept yet: the server's order
+    expect(keepOrder([], ["d3", "d1"])).toEqual(["d3", "d1"]);
+  });
+
+  it("says a line's state once when it changes, and nothing on arrival or when nothing changed", () => {
+    const shown = new Map<string, string>();
+    // the page's load, and a new line later: only noted
+    expect(noteShown(shown, "d1", "queued:")).toBe(false);
+    expect(noteShown(shown, "d2", "done:")).toBe(false);
+    // a refresh that changed nothing
+    expect(noteShown(shown, "d1", "queued:")).toBe(false);
+    // queued to running: said once
+    expect(noteShown(shown, "d1", "running:")).toBe(true);
+    expect(noteShown(shown, "d1", "running:")).toBe(false);
+    expect(noteShown(shown, "d1", "needs-review:2")).toBe(true);
+    expect(noteShown(shown, "d2", "done:")).toBe(false);
+  });
+
+  it("renders its polite region empty on arrival", () => {
+    const { html } = lines(at([doc("processing")], [run("queued")], T0 + 12_000));
+    // on arrival the region is there and empty
+    expect(html).toMatch(/<div aria-live="polite" class="sr-only"><\/div>/);
   });
 });

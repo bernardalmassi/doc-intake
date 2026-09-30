@@ -1,15 +1,27 @@
 "use client";
 
-import { createContext, useCallback, useContext, useId, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  Children,
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { DOCUMENT_STATES, type DocumentState } from "./document-state";
 import { ChevronRightIcon } from "./icons";
 import { STATE_GLYPHS, STATE_WORDS, StateGlyph, StateMark } from "./state-glyph";
 
 // The register's moving parts, and only those: whether a line is open,
 // whether its run history is, which lines have an Extract request in
-// flight, and the running clock. Everything they show is rendered on the
-// server and passed in, so no field label, schema or catalog text is sent
-// to the browser a second time.
+// flight, the order the lines keep while the page polls, what is said
+// when a line's state changes, and the running clock. Everything they
+// show is rendered on the server and passed in, so no field label, schema
+// or catalog text is sent to the browser a second time.
 
 // ------------------------------------------------------ extract in flight
 
@@ -25,6 +37,25 @@ export const EXTRACT_REQUESTED: DocumentState = "queued";
 const ExtractingContext = createContext<ReadonlySet<string>>(new Set());
 const SetExtractingContext = createContext<((id: string, on: boolean) => void) | null>(null);
 
+// A line reports the state it shows, and the register says it once it
+// changes (StateAnnouncer). Null outside a register.
+type Report = (id: string, shown: string, words: string) => void;
+const ReportContext = createContext<Report | null>(null);
+
+// The last few things said, oldest first: enough that two lines changing
+// in one refresh are both read, few enough that the region stays small.
+const SAID_KEPT = 4;
+
+// Notes what a line shows and whether that is news. A line's first report
+// is its state on arrival (the page's load, or a new upload's line) and is
+// only noted; a later one that differs is news, once; one that doesn't
+// (a re-render that changed nothing) isn't.
+export function noteShown(shown: Map<string, string>, id: string, state: string): boolean {
+  const before = shown.get(id);
+  shown.set(id, state);
+  return before !== undefined && before !== state;
+}
+
 export function Register({ children }: { children: React.ReactNode }) {
   const [extracting, setIds] = useState<ReadonlySet<string>>(() => new Set());
   const setExtracting = useCallback((id: string, on: boolean) => {
@@ -36,11 +67,75 @@ export function Register({ children }: { children: React.ReactNode }) {
       return next;
     });
   }, []);
+
+  // What each line showed last (noteShown), and what has been said, in
+  // words, in the polite region below.
+  const shown = useRef(new Map<string, string>());
+  const said = useRef(0);
+  const [sayings, setSayings] = useState<{ key: number; words: string }[]>([]);
+  const report = useCallback<Report>((id, state, words) => {
+    if (!noteShown(shown.current, id, state)) return;
+    said.current += 1;
+    const key = said.current;
+    setSayings((list) => [...list.slice(1 - SAID_KEPT), { key, words }]);
+  }, []);
+
   return (
     <SetExtractingContext value={setExtracting}>
-      <ExtractingContext value={extracting}>{children}</ExtractingContext>
+      <ExtractingContext value={extracting}>
+        <ReportContext value={report}>{children}</ReportContext>
+      </ExtractingContext>
+      {/* Always rendered, so what is added to it is announced. */}
+      <div aria-live="polite" className="sr-only">
+        {sayings.map(({ key, words }) => (
+          <p key={key}>{words}</p>
+        ))}
+      </div>
     </SetExtractingContext>
   );
+}
+
+// ---------------------------------------------------------------- order
+
+// The lines' order across the page's refreshes. The server sorts needs
+// review first, then newest first, so a line that finishes as needs
+// review would jump to the top mid-read, and React would move the lines
+// it passed, taking focus from whatever was focused in them. So the page
+// keeps the order it arrived with: lines that stay keep their places, a
+// deleted line leaves, and a new one (an upload) goes where the server put
+// it among the others. A reload sorts afresh.
+export function keepOrder(previous: readonly string[], current: readonly string[]): string[] {
+  const present = new Set(current);
+  const order = previous.filter((id) => present.has(id));
+  const placed = new Set(order);
+  current.forEach((id, index) => {
+    if (placed.has(id)) return;
+    // after the nearest line before it, as the server has them, or first
+    let at = 0;
+    for (let before = index - 1; before >= 0; before -= 1) {
+      const found = order.indexOf(current[before]);
+      if (found >= 0) {
+        at = found + 1;
+        break;
+      }
+    }
+    order.splice(at, 0, id);
+    placed.add(id);
+  });
+  return order;
+}
+
+// The register's lines, in the order kept above. ids and children are in
+// the server's order, one child per id.
+export function StableOrder({ ids, children }: { ids: string[]; children: React.ReactNode }) {
+  const [order, setOrder] = useState<string[]>(ids);
+  const next = keepOrder(order, ids);
+  // Stored during render, as React's docs do for state that follows a
+  // prop: the next render reads it at once, and nothing is drawn twice.
+  if (next.length !== order.length || next.some((id, index) => id !== order[index])) setOrder(next);
+  const items = Children.toArray(children);
+  const byId = new Map(ids.map((id, index) => [id, items[index]]));
+  return <>{next.map((id) => byId.get(id))}</>;
 }
 
 // For DocumentActions: stable, and null outside a register.
@@ -49,22 +144,32 @@ export function useSetExtracting() {
 }
 
 // A line's state mark: the data's, or EXTRACT_REQUESTED while the line's
-// Extract request is in flight.
+// Extract request is in flight. It reports what it shows to the register,
+// which says it when it changes: "credit-note-4390.pdf: Running."
 export function LineStateMark({
   id,
+  filename,
   state,
   count,
   className,
 }: {
   id: string;
+  filename: string;
   state: DocumentState;
   count?: number;
   className?: string;
 }) {
   const requested = useContext(ExtractingContext).has(id);
-  return (
-    <StateMark state={requested ? EXTRACT_REQUESTED : state} count={requested ? undefined : count} className={className} />
-  );
+  const shown = requested ? EXTRACT_REQUESTED : state;
+  const shownCount = requested ? undefined : count;
+  const report = useContext(ReportContext);
+  const words = `${filename}: ${STATE_WORDS[shown]}${
+    shownCount === undefined ? "" : `, ${shownCount} ${shownCount === 1 ? "field" : "fields"} to check`
+  }.`;
+  useEffect(() => {
+    report?.(id, `${shown}:${shownCount ?? ""}`, words);
+  }, [report, id, shown, shownCount, words]);
+  return <StateMark state={shown} count={shownCount} className={className} />;
 }
 
 // A line's one sentence, or what is happening while its Extract request
