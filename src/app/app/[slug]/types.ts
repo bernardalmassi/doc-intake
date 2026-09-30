@@ -26,7 +26,7 @@ export type DocumentRow = {
 export type RunRecord = {
   id: string;
   document_id: string | null;
-  // running, succeeded, failed
+  // queued, running, succeeded, failed
   status: string;
   provider: string | null;
   model: string | null;
@@ -37,7 +37,12 @@ export type RunRecord = {
   cost_usd: number | string | null;
   latency_ms: number | null;
   error: string | null;
+  // when the run was enqueued, or opened before the queue
   started_at: string;
+  // when a worker claimed it; null while queued, and for runs from before
+  // the queue. Optional so rows built without it (the design preview's
+  // fixtures) still type.
+  claimed_at?: string | null;
 };
 
 // A run as the components get it: the stored error only as its code from
@@ -55,6 +60,15 @@ export function toRunRow({ error, ...run }: RunRecord): RunRow {
     error_code: error === null ? null : classifyRunError(error),
     cost_estimated: run.cost_usd !== null && isCostEstimated(error),
   };
+}
+
+// A run the database ended because nothing finished it in time: abandoned
+// (claimed, and its worker never finished) or expired (never claimed). The
+// page also calls a document stalled while its run is still in flight past
+// the hard bound its own timestamps give it (overdue in DocumentEntry,
+// src/lib/extraction/deadlines.ts); nothing else is judged by the clock.
+export function isStalled(run: Pick<RunRow, "status" | "error_code">): boolean {
+  return run.status === "failed" && (run.error_code === "extraction.abandoned" || run.error_code === "extraction.expired");
 }
 
 export type FieldRow = {
@@ -82,4 +96,17 @@ export type DocumentEntry = {
   // uploading, and the row is older than UPLOAD_STALE_MINUTES
   // (document-state.ts), so its upload never finished
   staleUpload: boolean;
+  // its latest run was ended by the database because nothing finished it
+  // in time: abandoned or expired (isStalled in entries.ts)
+  stalled: boolean;
+  // its latest run is still in flight, as the database has it, past the
+  // hard bound its own timestamps give it (overdueAt in
+  // src/lib/extraction/deadlines.ts): the database should have ended it
+  // by now. The page shows it stalled, stops polling for it and gives
+  // Extract back, whose enqueue ends it. Decided at render time, with the
+  // time page.tsx passes to buildEntries.
+  overdue: boolean;
+  // while the document is processing and its latest run is in flight:
+  // queued until a worker claims the run, running after that; otherwise null
+  extraction: "queued" | "running" | null;
 };

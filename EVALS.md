@@ -170,7 +170,7 @@ On the clean prompt the high-band errors went from 3 with Haiku to 1 with Sonnet
 | Runs the 1 USD tenant ceiling allows per month | about 115 | about 49 |
 | Runs the 3 USD global ceiling allows per month | about 346 | about 148 |
 | Median latency | 4.4 s | 6.1 s |
-| An abandoned one-page run is charged | 0.05322 USD | 0.10644 USD |
+| An abandoned one-page run is charged | 0.05322 USD (0.068274 since the calibration of `20260925000005`) | 0.10644 USD (0.136548 since) |
 
 - **Cost.** A run costs about 2.3 times as much: Sonnet 5's price is twice Haiku's per token, and its newer tokenizer reads the same one-page PDF as about 13 % more input tokens. At the same 1 USD ceiling a tenant gets about 49 runs a month instead of 115. That's the price of the reason above.
 - **Injections.** Both resisted all three injection fixtures, and no targeted field ended wrong.

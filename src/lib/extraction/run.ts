@@ -1,5 +1,6 @@
 // The model-call loop for one run. Takes providers as arguments so it can be
-// tested with fakes; the Server Action supplies the real ones.
+// tested with fakes; the queue worker (extraction/delivery.ts) supplies the
+// real ones.
 //
 //   1. call the primary provider
 //   2. on a timeout or 5xx, call the fallback provider instead: once per
@@ -10,19 +11,43 @@
 //      validation error; if that retry fails in any way, so does the run
 //   5. still invalid: the run fails and the last raw answer is kept
 //
-// Never switching after an answer means every token a run counts comes from
-// one model, the one close_extraction_run prices the whole run at. It also
-// bounds a run at three calls (primary times out, fallback answers invalid,
-// fallback retried); tests/unit/orchestrator.test.ts checks every
-// combination. The database's bounds on a run, its attempts check and token
-// clamp, allow four.
+// No call is sent until its input has been measured with the provider's
+// token counting endpoint and fits inputTokensPerCall for the document's
+// pages (config.ts; for the validation retry, that plus the retry
+// allowance), the per-call input the run's estimate assumes while it is in
+// flight (private.abandoned_estimate), and until the run's measured input
+// with it fits maxInputTokensPerRun, the estimate's cap on a whole run
+// (which binds from 44 pages). Each count is taken with its margin
+// (withCountMargin, config.ts), since a count is an estimate of the bill.
+// A first call over it sends nothing and fails the run as too dense, at 0
+// USD. A count that fails
+// sends nothing either: on the primary's first call a timeout or 5xx
+// switches to the fallback like a failed call, and a fallback that can't
+// be measured, or measures over the bound, isn't used. A retry over the
+// bound isn't sent, and the run fails with the invalid answer.
+//
+// Never switching after an answer bounds a run at three calls (primary
+// gets no answer, fallback answers invalid, fallback retried);
+// tests/unit/orchestrator.test.ts checks every combination. The database's
+// bounds on a run, its attempts check and token clamp, allow four.
 //
 // Every answer's tokens are counted: valid ones, invalid ones that were
 // retried, and unusable ones (a refusal, an answer cut off at the output
 // cap), which arrive as a ProviderError carrying the call's usage, because
-// every answer is billed. A call that gets no answer (a timeout, a 5xx)
-// reports no usage and adds nothing. The cost itself is computed by the
-// database at close from these counts and its price table.
+// every answer is billed. A call that was sent and got no answer back (a
+// timeout, a dropped connection, anything thrown without an HTTP status)
+// may still have been processed and billed, so it counts at the most it
+// could have cost: its measured input with the count's margin and the
+// output cap, at the model it was sent to. A call the provider refused with an HTTP status (a 4xx, a
+// 5xx) was not processed and adds nothing.
+//
+// finish_extraction_run prices a run at one model. When every token comes
+// from one model, that is the model. When a run has tokens from two (a
+// primary that got no answer, then the fallback), all of them are priced at
+// whichever of the two makes them cost the most, and the run is marked as
+// estimated, as it is whenever a call was counted at its maximum. The cost
+// itself is computed by the database at close from these counts and its
+// price table.
 //
 // Each call, fallback, retry and the finish writes one log line of ids,
 // counts and error kinds (src/lib/log.ts). Never a field value, the file
@@ -31,7 +56,18 @@
 import { RUN_ERROR_MARKERS } from "../errors";
 import { log, type Logger, type LogFields } from "../log";
 import { redact } from "../redact";
-import { dearestModelFor, MAX_OUTPUT_TOKENS, MAX_VALIDATION_RETRIES, PRICING, type ProviderName } from "./config";
+import {
+  dearestModelFor,
+  EXTRACTION_LIMITS,
+  inputTokensPerCall,
+  MAX_OUTPUT_TOKENS,
+  MAX_VALIDATION_RETRIES,
+  priceForModel,
+  PRICING,
+  type ProviderName,
+  TOKEN_COUNT_MARGIN_PERCENT,
+  withCountMargin,
+} from "./config";
 import { describeError, ProviderError, type ExtractionProvider, type ExtractionRequest } from "./providers/types";
 import { buildJsonSchema, gateFields, retryPrompt, SYSTEM_PROMPT, userPrompt, validateExtraction, type GatedField } from "./schema";
 import type { SupportedMimeType } from "./sniff";
@@ -41,8 +77,12 @@ export type RunInput = {
   bytes: Uint8Array;
   mimeType: SupportedMimeType;
   // Never sent to a provider: any member can choose or rename it, so it is
-  // attacker-controlled. Kept only so the caller's signature is unchanged.
-  filename: string;
+  // attacker-controlled. The worker doesn't pass one; tests do, to prove it
+  // goes nowhere.
+  filename?: string;
+  // the document's pages, as the worker counted them in its preflight:
+  // every call's input must fit inputTokensPerCall(pages)
+  pages: number;
   primary: ExtractionProvider;
   fallback: ExtractionProvider | null;
   // ids put on every log line of this run; optional so callers that don't
@@ -57,6 +97,11 @@ type Usage = {
   inputTokens: number;
   outputTokens: number;
   latencyMs: number;
+  // the cost the database will compute from these counts is an estimate,
+  // never less than the real one: a call counted at its maximum, or tokens
+  // from two models priced at the dearer's rates. The ledger records it as
+  // kind 'estimate' (finish_extraction_run's p_cost_estimated).
+  costEstimated: boolean;
 };
 
 export type RunOutcome =
@@ -85,19 +130,33 @@ type CallFailure = Pick<LogFields, "error_kind" | "error_name" | "http_status">;
 
 export async function runExtraction(input: RunInput): Promise<RunOutcome> {
   const startedAt = Date.now();
-  const usage: Usage = {
-    provider: null,
-    model: null,
-    attempts: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    latencyMs: 0,
+  // the provider last called and the model it was asked for, recorded if
+  // no call billed anything
+  let attempted: { provider: ProviderName | null; model: string | null } = { provider: null, model: null };
+  let attempts = 0;
+  // the tokens each model billed: under the id the provider reported, or,
+  // for a call that got no answer, the id it was sent to
+  const billed = new Map<string, { provider: ProviderName; inputTokens: number; outputTokens: number }>();
+  // a call counted at its maximum
+  let countedAtMost = false;
+  const bill = (provider: ProviderName, model: string, inputTokens: number, outputTokens: number) => {
+    const entry = billed.get(model) ?? { provider, inputTokens: 0, outputTokens: 0 };
+    entry.inputTokens += inputTokens;
+    entry.outputTokens += outputTokens;
+    billed.set(model, entry);
   };
   const runLog = log.with(input.logContext ?? {});
   // the last call's failure, for the finish line; null once a call succeeds
   let lastFailure: CallFailure | null = null;
   const finish = (ending: Ending): RunOutcome => {
-    const outcome: RunOutcome = { ...usage, latencyMs: Date.now() - startedAt, ...ending };
+    const recorded = recordedUsage(billed, attempted);
+    const outcome: RunOutcome = {
+      ...recorded,
+      attempts,
+      costEstimated: recorded.costEstimated || countedAtMost,
+      latencyMs: Date.now() - startedAt,
+      ...ending,
+    };
     logFinished(runLog, outcome, fallbackUsed, lastFailure);
     return outcome;
   };
@@ -121,30 +180,108 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
   // fallback fails too the error says why both did; cleared once an answer
   // arrives, so a later failed retry isn't reported as a double failure
   let primaryFailure: string | null = null;
+  // what the estimate assumes a whole run reads
+  const runInputLimit = EXTRACTION_LIMITS.maxInputTokensPerRun;
+  // the measured input of every call sent so far, each with its margin
+  let inputSent = 0;
+
+  // Measures a call's input with the current provider's token counting
+  // endpoint. The count with its margin, if that fits the limit, or why the
+  // call can't be sent.
+  async function measure(
+    request: ExtractionRequest,
+  ): Promise<{ ok: true; tokens: number } | { ok: false; error: unknown } | { ok: false; over: number; why: string }> {
+    // what the estimate assumes this call reads: a first call's bound, or
+    // the retry's, which resends the answer it corrects
+    const inputLimit = inputTokensPerCall(input.pages, request.previousAttempt !== undefined);
+    let measured: number;
+    try {
+      measured = await provider.countInputTokens(request);
+    } catch (error) {
+      lastFailure = callFailure(error);
+      runLog.warn("extraction.count_failed", { provider: provider.name, model: provider.model, ...lastFailure });
+      return { ok: false, error };
+    }
+    // what the call may be billed; the call's own limit, then the run's: at
+    // 44 pages or more three calls at the call's limit would read more than
+    // the run's
+    const billable = withCountMargin(measured);
+    const counted = `its input (${measured} tokens, ${billable} with the count's ${TOKEN_COUNT_MARGIN_PERCENT}% margin)`;
+    const why =
+      billable > inputLimit
+        ? `${counted} is over the ${inputLimit} a call may read for ${pagesLabel(input.pages)}`
+        : inputSent + billable > runInputLimit
+          ? `${counted} would take the run's to ${inputSent + billable}, over the ${runInputLimit} a run may read`
+          : null;
+    if (why) {
+      lastFailure = { error_kind: "over_limit" };
+      runLog.warn("extraction.call_not_sent", {
+        provider: provider.name,
+        model: provider.model,
+        input_tokens: measured,
+        input_limit: inputLimit,
+        error_code: "extraction.too_dense",
+      });
+      return { ok: false, over: measured, why };
+    }
+    runLog.info("extraction.input_counted", {
+      provider: provider.name,
+      model: provider.model,
+      input_tokens: measured,
+      input_limit: inputLimit,
+    });
+    return { ok: true, tokens: billable };
+  }
 
   // One call, switching to the fallback provider if the current one times
-  // out or returns a 5xx and no provider has answered yet. Records usage
-  // whatever happens.
+  // out or returns a 5xx and no provider has answered yet, measured before
+  // it is sent (measure). Records usage whatever happens.
   async function call(request: ExtractionRequest): Promise<CallResult> {
     for (;;) {
-      usage.attempts += 1;
-      usage.provider = provider.name;
-      // once a provider has answered, keep the model it said served the
-      // tokens counted so far
-      if (!answered) usage.model = provider.model;
+      const measured = await measure(request);
+      if (!measured.ok) {
+        // nothing was sent, so nothing was billed
+        const why = "over" in measured ? measured.why : `its input could not be measured (${clip(describeError(measured.error))})`;
+        if (primaryFailure) {
+          // the fallback, after the primary's first call failed
+          return { ok: false, error: `${primaryFailure}${RUN_ERROR_MARKERS.fallbackNotUsed}${why}` };
+        }
+        if ("over" in measured) {
+          // the retry goes back with the previous answer, so it can be over
+          // the limit when the first call wasn't; the run then fails with
+          // the invalid answer (the caller says the retry failed)
+          return { ok: false, error: answered ? `the retry was not sent: ${why}` : `${RUN_ERROR_MARKERS.tooDense}${why}` };
+        }
+        const failure = clip(describeError(measured.error));
+        if (!answered && measured.error instanceof ProviderError && measured.error.fallbackEligible) {
+          if (input.fallback && !fallbackUsed) {
+            runLog.warn("extraction.fallback", { from_provider: provider.name, to_provider: input.fallback.name, ...lastFailure });
+            fallbackUsed = true;
+            primaryFailure = failure;
+            provider = input.fallback;
+            continue;
+          }
+          if (!input.fallback) {
+            return { ok: false, error: `${RUN_ERROR_MARKERS.inputNotMeasured}${failure}; no fallback provider is configured` };
+          }
+        }
+        return { ok: false, error: `${RUN_ERROR_MARKERS.inputNotMeasured}${failure}` };
+      }
+
+      attempts += 1;
+      inputSent += measured.tokens;
+      attempted = { provider: provider.name, model: provider.model };
       const callStartedAt = Date.now();
       try {
         const response = await provider.extract(request);
         answered = true;
         primaryFailure = null;
-        usage.model = response.model;
-        usage.inputTokens += response.inputTokens;
-        usage.outputTokens += response.outputTokens;
+        bill(provider.name, response.model, response.inputTokens, response.outputTokens);
         lastFailure = null;
         runLog.info("extraction.call_succeeded", {
           provider: provider.name,
           model: response.model,
-          attempt: usage.attempts,
+          attempt: attempts,
           input_tokens: response.inputTokens,
           output_tokens: response.outputTokens,
           latency_ms: Date.now() - callStartedAt,
@@ -152,20 +289,26 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
         return { ok: true, text: response.text };
       } catch (error) {
         // an unusable answer (a refusal, a truncated answer) was billed too
-        const billed = error instanceof ProviderError ? error.usage : undefined;
-        if (billed) {
+        let charged = error instanceof ProviderError ? error.usage : undefined;
+        if (charged) {
           answered = true;
-          usage.model = billed.model;
-          usage.inputTokens += billed.inputTokens;
-          usage.outputTokens += billed.outputTokens;
+        } else if (!(error instanceof ProviderError && error.status !== undefined)) {
+          // Sent, and no answer came back: the provider may have processed
+          // it and billed it, so it counts at the most it could have cost,
+          // its count with the margin (measured.tokens) and the output cap.
+          // An HTTP status means the provider refused it instead.
+          charged = { model: provider.model, inputTokens: measured.tokens, outputTokens: request.maxOutputTokens };
+          countedAtMost = true;
         }
+        if (charged) bill(provider.name, charged.model, charged.inputTokens, charged.outputTokens);
         lastFailure = callFailure(error);
         runLog.warn("extraction.call_failed", {
           provider: provider.name,
-          model: billed?.model ?? provider.model,
-          attempt: usage.attempts,
+          model: charged?.model ?? provider.model,
+          attempt: attempts,
           latency_ms: Date.now() - callStartedAt,
-          ...(billed ? { input_tokens: billed.inputTokens, output_tokens: billed.outputTokens } : {}),
+          ...(charged ? { input_tokens: charged.inputTokens, output_tokens: charged.outputTokens } : {}),
+          ...(charged && !answered ? { cost_estimated: true } : {}),
           ...lastFailure,
         });
         const failure = clip(describeError(error));
@@ -222,6 +365,46 @@ export async function runExtraction(input: RunInput): Promise<RunOutcome> {
   return finish({ status: "succeeded", fields: gated.fields, documentStatus: gated.documentStatus });
 }
 
+// What finish_extraction_run is sent for the tokens the run billed: the
+// one model that billed them, or, with tokens from more than one, all of
+// them at whichever priced model makes them cost the most (the dearest on
+// file if one of them has no price here), marked as an estimate. With none,
+// the provider last called and the model it was asked for, at 0 tokens.
+function recordedUsage(
+  billed: ReadonlyMap<string, { provider: ProviderName; inputTokens: number; outputTokens: number }>,
+  attempted: { provider: ProviderName | null; model: string | null },
+): Pick<Usage, "provider" | "model" | "inputTokens" | "outputTokens" | "costEstimated"> {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  for (const entry of billed.values()) {
+    inputTokens += entry.inputTokens;
+    outputTokens += entry.outputTokens;
+  }
+  const models = [...billed.entries()];
+  if (models.length === 0) return { ...attempted, inputTokens: 0, outputTokens: 0, costEstimated: false };
+  if (models.length === 1) {
+    const [[model, entry]] = models;
+    return { provider: entry.provider, model, inputTokens, outputTokens, costEstimated: false };
+  }
+  let dearest: { model: string; provider: ProviderName; cost: number } | null = null;
+  for (const [model] of models) {
+    let price;
+    try {
+      price = priceForModel(model);
+    } catch {
+      const fallback = dearestModelFor(inputTokens, outputTokens);
+      return { provider: PRICING[fallback].provider, model: fallback, inputTokens, outputTokens, costEstimated: true };
+    }
+    const cost = inputTokens * price.inputUsdPerMillion + outputTokens * price.outputUsdPerMillion;
+    if (dearest === null || cost > dearest.cost) dearest = { model, provider: price.provider, cost };
+  }
+  return { provider: dearest!.provider, model: dearest!.model, inputTokens, outputTokens, costEstimated: true };
+}
+
+function pagesLabel(pages: number): string {
+  return pages === 1 ? "1 page" : `${pages} pages`;
+}
+
 function callFailure(error: unknown): CallFailure {
   if (error instanceof ProviderError) return { error_kind: error.kind, http_status: error.status ?? null };
   return { error_kind: "unexpected", error_name: error instanceof Error ? error.name : null };
@@ -239,6 +422,7 @@ function logFinished(logger: Logger, outcome: RunOutcome, fallbackUsed: boolean,
     output_tokens: outcome.outputTokens,
     latency_ms: outcome.latencyMs,
     fallback_used: fallbackUsed,
+    cost_estimated: outcome.costEstimated,
   };
   if (outcome.status === "succeeded") {
     const bands = { high: 0, medium: 0, low: 0 };
@@ -273,8 +457,9 @@ function failureText(error: string): string {
   return scrubbed.trim().length > 0 ? scrubbed : "unknown error";
 }
 
-// The arguments close_extraction_run takes for an outcome. Shared by the
-// Server Action and the tests so both close a run the same way. Validation
+// The outcome as the database takes it: the text-bearing arguments of
+// finish_extraction_run (toFinishParams below). Shared by the worker and the
+// tests so both record a run the same way. Validation
 // already cleaned what the model wrote; every string is made NUL-free, well
 // formed and within its column here again, whatever produced it (an error
 // message, a raw answer that failed validation), so the close can't be
@@ -310,7 +495,30 @@ export function toCloseParams(runId: string, closeToken: string, outcome: RunOut
   };
 }
 
-// What to close a run with when close_extraction_run refused to record its
+// The arguments finish_extraction_run takes (20260925000002): the close's,
+// with the claim token in place of the close token, and whether the cost is
+// an estimate (the second of failedCloseAttempts), which the ledger records
+// as kind 'estimate'.
+export function toFinishParams(runId: string, claimToken: string, outcome: RunOutcome, costEstimated: boolean) {
+  const close = toCloseParams(runId, claimToken, outcome);
+  return {
+    p_run_id: runId,
+    p_claim_token: claimToken,
+    p_status: close.p_status,
+    p_provider: close.p_provider,
+    p_model: close.p_model,
+    p_input_tokens: close.p_input_tokens,
+    p_output_tokens: close.p_output_tokens,
+    p_latency_ms: close.p_latency_ms,
+    p_attempts: close.p_attempts,
+    p_cost_estimated: costEstimated,
+    p_error: close.p_error,
+    p_raw_response: close.p_raw_response,
+    p_fields: close.p_fields,
+  };
+}
+
+// What to finish a run with when finish_extraction_run refused to record its
 // outcome: a model it has no price for, a check this code doesn't know, a
 // dropped connection. A refused close changes nothing, so the run is still
 // open and its token still valid; closing it as failed with no fields puts
@@ -341,6 +549,7 @@ export function failedCloseAttempts(outcome: RunOutcome, sqlState: string | null
     inputTokens: outcome.inputTokens,
     outputTokens: outcome.outputTokens,
     latencyMs: outcome.latencyMs,
+    costEstimated: outcome.costEstimated,
   };
   const withUsage: RunOutcome = { ...usage, status: "failed", error, rawResponse: null };
   if (usage.model === null && usage.inputTokens === 0 && usage.outputTokens === 0) return [withUsage];
@@ -350,6 +559,7 @@ export function failedCloseAttempts(outcome: RunOutcome, sqlState: string | null
     ...withUsage,
     provider: PRICING[dearest].provider,
     model: dearest,
+    costEstimated: true,
     error: `${RUN_ERROR_MARKERS.costEstimated} the dearest price on file (${identifier(sqlState, "no answer")}; served by ${identifier(usage.model, "no model")}): ${error}`,
   };
   return [withUsage, estimated];

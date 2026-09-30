@@ -44,14 +44,33 @@ describe("the abandoned-run estimate", () => {
   });
 
   it("charges an abandoned one-page run the measured figure, and a handful of them can't exhaust a tenant", () => {
-    // 3 calls of 4 500 + 3 000 tokens in and 2 048 out, at Claude Sonnet 5's
-    // 2 / 10 USD per million (0.05322 when Haiku 4.5 was the default)
-    expect(abandonedRunUsage(1)).toEqual({ pages: 1, inputTokens: 22_500, outputTokens: 6_144 });
-    expect(abandonedRunCostUsd(1)).toBe(0.10644);
+    // 3 calls of 5 998 + 5 929 tokens in, 1 773 more on the retry, and 2 048
+    // out, at Claude Sonnet 5's 2 / 10 USD per million (0.10644 before the
+    // calibration of 20260925000005, 0.05322 when Haiku 4.5 was the default)
+    expect(abandonedRunUsage(1)).toEqual({ pages: 1, inputTokens: 37_554, outputTokens: 6_144 });
+    expect(abandonedRunCostUsd(1)).toBe(0.136548);
     // The rule (SECURITY.md, "Stale runs"): a tenant can start at most the
     // hourly run limit's worth of runs an hour, and that many abandoned
     // one-page runs must leave it able to run
     expect(EXTRACTION_LIMITS.hourlyRunLimit * abandonedRunCostUsd(1)).toBeLessThan(CEILING);
+  });
+
+  // SECURITY.md, "Stale runs": the table of what a run in flight holds and
+  // an abandoned run is charged, row by row, at Sonnet 5 prices (now) and
+  // Haiku 4.5 prices (before 20260918000004)
+  it.each([
+    [1, 37_554, 0.136548, 0.068274],
+    [2, 55_341, 0.172122, 0.086061],
+    [10, 197_637, 0.456714, 0.228357],
+    [20, 375_507, 0.812454, 0.406227],
+    [43, 784_608, 1.630656, 0.815328],
+    [44, 800_000, 1.66144, 0.83072],
+    [100, 800_000, 1.66144, 0.83072],
+    [null, 800_000, 1.66144, 0.83072],
+  ] as const)("SECURITY.md's table: %s pages hold %i tokens in and 6 144 out, %f USD (Haiku %f)", (pages, input, sonnet, haiku) => {
+    expect(abandonedRunUsage(pages)).toMatchObject({ inputTokens: input, outputTokens: 6_144 });
+    expect(abandonedRunCostUsd(pages)).toBe(sonnet);
+    expect(computeCostUsd("claude-haiku-4-5-20251001", input, 6_144)).toBe(haiku);
   });
 
   it("grows with the page count instead of charging every run the same", () => {
@@ -60,7 +79,9 @@ describe("the abandoned-run estimate", () => {
     // (max_input_tokens_per_call), or the run's (max_input_tokens_per_run)
     const L = EXTRACTION_LIMITS;
     const perCallFull = Math.floor((L.maxInputTokensPerCall - L.promptInputTokens) / L.inputTokensPerPage);
-    const perRunFull = Math.floor((L.maxInputTokensPerRun / L.maxCallsPerRun - L.promptInputTokens) / L.inputTokensPerPage);
+    const perRunFull = Math.floor(
+      ((L.maxInputTokensPerRun - L.retryInputTokens) / L.maxCallsPerRun - L.promptInputTokens) / L.inputTokensPerPage,
+    );
     const capped = Math.min(perCallFull, perRunFull, L.maxPagesPerDocument);
     // the per-call cap no longer binds before the page limit (20260919000001)
     expect(perCallFull).toBe(L.maxPagesPerDocument);
@@ -69,7 +90,7 @@ describe("the abandoned-run estimate", () => {
     }
     expect(abandonedRunCostUsd(10)).toBeGreaterThan(2 * abandonedRunCostUsd(1));
     // a genuinely large document may cost most of the budget, or at Sonnet 5
-    // prices more than all of it (1.66144 USD from 88 pages, where the
+    // prices more than all of it (1.66144 USD from 44 pages, where the
     // per-run clamp binds), and does
     expect(abandonedRunCostUsd(EXTRACTION_LIMITS.maxPagesPerDocument)).toBe(1.66144);
     expect(abandonedRunCostUsd(EXTRACTION_LIMITS.maxPagesPerDocument)).toBeGreaterThan(0.5 * CEILING);

@@ -25,6 +25,9 @@ function capturingProvider(answers: string[]): ExtractionProvider & { requests: 
     name: "anthropic",
     model: "claude-haiku-4-5-20251001",
     requests,
+    async countInputTokens() {
+      return 1000;
+    },
     async extract(request): Promise<ProviderResponse> {
       requests.push(request);
       const text = answers.shift();
@@ -46,7 +49,7 @@ const pdf = new TextEncoder().encode("%PDF-1.4\n%%EOF\n");
 describe("the document's name", () => {
   it("never reaches a provider, on the first call or the retry", async () => {
     const provider = capturingProvider(["not json", "{}"]);
-    await runExtraction({ bytes: pdf, mimeType: "application/pdf", filename: HOSTILE_FILENAME, primary: provider, fallback: null });
+    await runExtraction({ bytes: pdf, mimeType: "application/pdf", pages: 1, filename: HOSTILE_FILENAME, primary: provider, fallback: null });
 
     expect(provider.requests).toHaveLength(2);
     for (const request of provider.requests) {

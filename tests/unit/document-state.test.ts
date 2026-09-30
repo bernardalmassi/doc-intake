@@ -42,6 +42,9 @@ function entry(status: string, runs: string[] = [], staleRun = false, staleUploa
     fields: [],
     staleRun,
     staleUpload,
+    stalled: false,
+    overdue: false,
+    extraction: null,
   };
 }
 

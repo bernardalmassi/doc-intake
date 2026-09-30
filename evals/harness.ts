@@ -87,6 +87,7 @@ export async function replayFixture(fixture: Fixture, provider: ProviderName): P
     bytes: committedPdf(fixture),
     mimeType: "application/pdf",
     filename: `${fixture.id}.pdf`,
+    pages: fixture.pages.length,
     primary: replay,
     fallback: null,
   });

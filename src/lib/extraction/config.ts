@@ -3,7 +3,7 @@
 // "server-only" or read API keys.
 
 // Spend ceilings and the rate limit. The database enforces these in
-// open_extraction_run (see supabase/migrations/20260918000001); the values
+// check_extraction_limits (see supabase/migrations/20260925000002); the values
 // here mirror public.extraction_limits so the app and tests can reason
 // about them, and tests/extraction.test.ts fails if the two drift apart.
 export const EXTRACTION_LIMITS = {
@@ -14,8 +14,13 @@ export const EXTRACTION_LIMITS = {
   // most 200k in and MAX_OUTPUT_TOKENS out), so a forged run's cost is bounded
   maxInputTokensPerRun: 800_000,
   maxOutputTokensPerRun: 8_192,
-  // a run still 'running' after this long is failed by the next open
+  // a run still queued or running after this long (a claimed run: after
+  // its claim) is ended by the queue's sweep or the next enqueue
   staleRunMinutes: 10,
+  // how long a claimed queue message stays invisible: longer than the
+  // worker route's maxDuration, no longer than staleRunMinutes
+  // (20260925000002)
+  workerVisibilitySeconds: 300,
   // What an abandoned run is charged (abandonedRunCostUsd below, migration
   // 20260918000003): the calls and output cap the orchestrator enforces,
   // an input bound from the document's page count, at the price of the
@@ -23,9 +28,18 @@ export const EXTRACTION_LIMITS = {
   // derivation.
   maxCallsPerRun: 3,
   maxOutputTokensPerCall: 2048,
-  maxInputTokensPerCall: 304_500,
-  promptInputTokens: 4500,
-  inputTokensPerPage: 3000,
+  // The input bound a call is held to (inputTokensPerCall below): the
+  // prompt, a figure per page, and an allowance the validation retry adds
+  // for the answer it resends. Each is the most Anthropic's token counting
+  // endpoint counted plus 25%, over every selectable Anthropic model, the
+  // eval fixtures, their retries, a full-resolution phone photo and a 150
+  // dpi scan (evals/token-counts.json, 2026-09-29; migration
+  // 20260925000005; tests/unit/input-bound.test.ts derives them again).
+  // The per-call cap is the prompt plus the most pages a document may have.
+  maxInputTokensPerCall: 598_898,
+  promptInputTokens: 5998,
+  inputTokensPerPage: 5929,
+  retryInputTokens: 1773,
   // Anthropic's per-request PDF page limit; also what an unknown count is
   // charged as
   maxPagesPerDocument: 100,
@@ -68,7 +82,7 @@ export const DEFAULT_MODELS: Record<ProviderName, string> = {
 export const ANTHROPIC_MODEL_ENV_VAR = "EXTRACTION_ANTHROPIC_MODEL";
 
 // Anthropic models that EXTRACTION_ANTHROPIC_MODEL may name: those with a
-// price on file, so close_extraction_run can price every run.
+// price on file, so finish_extraction_run can price every run.
 export function selectableAnthropicModels(): string[] {
   return Object.entries(PRICING)
     .filter(([, price]) => price.provider === "anthropic")
@@ -93,12 +107,108 @@ export const MAX_OUTPUT_TOKENS = 2048;
 // (attempts, the token clamp above) allow four.
 export const PROVIDER_TIMEOUT_MS = 60_000;
 
+// Per token count. Every call's input is counted first, with the
+// provider's token counting endpoint (run.ts), so a run makes at most as
+// many counts as calls; a count that fails or times out sends no call.
+export const TOKEN_COUNT_TIMEOUT_MS = 15_000;
+
+// The count is an estimate: Anthropic documents that the input a call is
+// billed "might differ by a small amount" from its count (OpenAI calls its
+// own exact). So a count is taken as this much more wherever it stands for
+// what a call will be billed: when it is compared with the call's bound
+// and the run's (run.ts, measure), and when a call that got no answer is
+// charged its measured input plus the output cap. On the twelve eval
+// fixtures Claude Sonnet 5's count and its bill were equal to the token
+// (evals/token-counts.json against evals/recordings/; input-bound.test.ts),
+// so 5% is room for the difference the documentation allows, not a
+// measured one; the calibrated figures' 25% headroom covers it (every
+// counted request still fits with it). Integer arithmetic, so the boundary
+// is exact.
+export const TOKEN_COUNT_MARGIN_PERCENT = 5;
+
+// A count with the margin: what the call is taken to be billed at most.
+export function withCountMargin(counted: number): number {
+  return Math.ceil((counted * (100 + TOKEN_COUNT_MARGIN_PERCENT)) / 100);
+}
+
+// The largest count whose margin still fits `limit`.
+export function largestCountWithin(limit: number): number {
+  return Math.floor((limit * 100) / (100 + TOKEN_COUNT_MARGIN_PERCENT));
+}
+
+// The claim's own time (claim_extraction_run's transaction_timeout,
+// 20260925000005): a claim still running after this is ended by the
+// database, its transaction rolled back, so no run is left claimed with no
+// worker on it. A mirror; queue-migration.test.ts checks the migration.
+export const CLAIM_TIMEOUT_MS = 5_000;
+
+// How often pg_cron runs the queue's sweep (extraction-sweep, '* * * * *',
+// 20260925000002). A mirror; queue-migration.test.ts checks the schedule.
+export const SWEEP_INTERVAL_MS = 60_000;
+
+// How long the queue's sweep waits for each lock of a run past its deadline
+// (sweep_extraction_queue's lock_timeout, 20260925000005): it waits, in the
+// lock order, instead of skipping a run someone holds, and leaves one it
+// can't have in this long for its next tick. A mirror;
+// queue-migration.test.ts checks the migration.
+export const SWEEP_LOCK_TIMEOUT_MS = 5_000;
+
+// How long the worker waits for the claim's answer before giving up
+// (worker.ts): longer than the claim's own timeout, so by then the claim has
+// committed or rolled back.
+export const CLAIM_REQUEST_TIMEOUT_MS = 8_000;
+
+// The worker's download of the claimed run's file (delivery.ts). One that
+// hasn't finished by then fails the run at 0 USD with no model call.
+export const DOWNLOAD_TIMEOUT_MS = 15_000;
+
+// The worker's finish (delivery.ts). A finish that gets no answer, or one of
+// the database's transient refusals, is sent again after a wait that
+// doubles from the first delay up to the last, each attempt given at most
+// FINISH_ATTEMPT_TIMEOUT_MS, until WORKER_DEADLINE_MARGIN_MS before the end
+// of the worker route's maxDuration. The margin leaves the function time to
+// log and return before the host stops it.
+export const FINISH_ATTEMPT_TIMEOUT_MS = 10_000;
+export const FINISH_RETRY_FIRST_DELAY_MS = 500;
+export const FINISH_RETRY_MAX_DELAY_MS = 8_000;
+export const WORKER_DEADLINE_MARGIN_MS = 10_000;
+// the shortest attempt worth making; less time than this left, no attempt
+export const FINISH_MIN_ATTEMPT_MS = 1_000;
+
 // One retry after a response that fails schema validation.
 export const MAX_VALIDATION_RETRIES = 1;
 
 // Reasoning models bill their reasoning as output tokens; keep it minimal
 // for a fixed-schema extraction.
 export const OPENAI_REASONING_EFFORT = "minimal" as const;
+
+// What the price table below assumes a call is billed at: the standard
+// service tier, and for Claude, global inference routing. Every model call
+// asks for exactly that (providers/requests.ts), so a workspace's or
+// project's default can't bill it at another rate: Anthropic's Priority
+// Tier, or its US-only inference at 1.1x the standard rate (Claude 4.6 and
+// later); OpenAI's priority, flex or scale tiers. An account that doesn't
+// allow what is asked for answers 400, and the call is refused and not
+// billed, rather than billed above the table. OpenAI's regional endpoints
+// (us., eu., ae.api.openai.com) are chosen by the base URL, which
+// providers/clients.ts pins to the global one; no request parameter does.
+export const ANTHROPIC_SERVICE_TIER = "standard_only" as const;
+export const OPENAI_SERVICE_TIER = "default" as const;
+
+// inference_geo for each Anthropic model on file: "global" is the standard
+// price; null sends none, for a model that refuses the parameter (400 before
+// Claude 4.6), whose price has no geography. Every Anthropic model in
+// PRICING must be here (provider-requests.test.ts).
+const ANTHROPIC_INFERENCE_GEO: Record<string, "global" | null> = {
+  "claude-haiku-4-5-20251001": null,
+  "claude-sonnet-5": "global",
+};
+
+export function anthropicInferenceGeo(model: string): "global" | null {
+  const geo = ANTHROPIC_INFERENCE_GEO[model];
+  if (geo === undefined) throw new Error(`no inference_geo decided for ${model}; add it to config.ts`);
+  return geo;
+}
 
 // Prices in USD per million tokens, standard tier, no caching, no batch,
 // read from each provider's own pricing page on checkedOn. The database
@@ -162,8 +272,8 @@ export function priceForModel(model: string): ModelPrice {
 }
 
 // The priced model that makes these token counts cost the most. When
-// close_extraction_run can't price the model a run was served by, the run
-// is closed at this model's price instead of at no cost (failedCloseAttempts
+// finish_extraction_run can't price the model a run was served by, the run
+// is finished at this model's price instead of at no cost (failedCloseAttempts
 // in run.ts): the dearest rate on file for the tokens the provider reported.
 // The app only ever asks for models it prices, so whatever id comes back is
 // one of them under another name, and can't cost more than this.
@@ -177,21 +287,42 @@ export function dearestModelFor(inputTokens: number, outputTokens: number): stri
   return dearest.model;
 }
 
-// What open_extraction_run's reaper charges a run it abandons, for a
-// document of `pages` pages (null: unknown, charged as the most a document
-// can have): at most maxCallsPerRun calls, each sending the prompt plus
-// every page (and no more than a call can take), each capped at
-// maxOutputTokensPerCall out, at abandonedRunPriceModel's price. The same
-// formula as the SQL; the database's number is the one that counts.
+// What a run abandoned while running is charged (reap_extraction_run), and
+// what every run in flight holds against the ceilings
+// (check_extraction_limits), for a document of `pages` pages (null:
+// unknown, charged as the most a document can have): at most
+// maxCallsPerRun calls, each sending the prompt plus every page (and no
+// more than a call can take), one of them the validation retry with its
+// allowance on top, each capped at maxOutputTokensPerCall out, at
+// abandonedRunPriceModel's price. The same formula as
+// private.abandoned_estimate; the database's number is the one that counts.
 export function abandonedRunUsage(pages: number | null): { inputTokens: number; outputTokens: number; pages: number } {
   const limits = EXTRACTION_LIMITS;
   const counted = Math.min(Math.max(1, pages ?? limits.maxPagesPerDocument), limits.maxPagesPerDocument);
-  const perCall = Math.min(limits.promptInputTokens + counted * limits.inputTokensPerPage, limits.maxInputTokensPerCall);
   return {
     pages: counted,
-    inputTokens: Math.min(limits.maxCallsPerRun * perCall, limits.maxInputTokensPerRun),
+    inputTokens: Math.min(
+      limits.maxCallsPerRun * inputTokensPerCall(counted) + limits.retryInputTokens,
+      limits.maxInputTokensPerRun,
+    ),
     outputTokens: Math.min(limits.maxCallsPerRun * limits.maxOutputTokensPerCall, limits.maxOutputTokensPerRun),
   };
+}
+
+// The most one call may read for a document of `pages` pages (null:
+// unknown, counted as the most a document can have): the prompt plus every
+// page, and no more than a call can take; the validation retry
+// (`retry`), which resends the answer it corrects, that plus
+// retryInputTokens. It is what the estimate above assumes each call reads,
+// so the orchestrator measures every call's input with the provider's
+// token counting endpoint before sending it and sends none that reads more
+// (run.ts). The same formula as the input_per_call of
+// private.abandoned_estimate, which adds the retry allowance once.
+export function inputTokensPerCall(pages: number | null, retry = false): number {
+  const limits = EXTRACTION_LIMITS;
+  const counted = Math.min(Math.max(1, pages ?? limits.maxPagesPerDocument), limits.maxPagesPerDocument);
+  const first = Math.min(limits.promptInputTokens + counted * limits.inputTokensPerPage, limits.maxInputTokensPerCall);
+  return retry ? first + limits.retryInputTokens : first;
 }
 
 export function abandonedRunCostUsd(pages: number | null): number {
@@ -199,9 +330,9 @@ export function abandonedRunCostUsd(pages: number | null): number {
   return computeCostUsd(EXTRACTION_LIMITS.abandonedRunPriceModel, inputTokens, outputTokens);
 }
 
-// What close_extraction_run will record for a call: the same clamp and
-// rounding as the SQL, for display and for the drift test. The database's
-// number is the one that counts.
+// What finish_extraction_run will record for a run: the same clamp and
+// rounding as private.extraction_charge, for display and for the drift
+// test. The database's number is the one that counts.
 export function computeCostUsd(model: string, inputTokens: number, outputTokens: number): number {
   if (!Number.isInteger(inputTokens) || inputTokens < 0) {
     throw new Error(`input token count must be a non-negative integer, got ${inputTokens}`);

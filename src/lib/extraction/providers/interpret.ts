@@ -17,7 +17,16 @@
 
 import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
-import { ProviderError, type ProviderResponse, type ProviderUsage } from "./types";
+import { ProviderError, type ProviderName, type ProviderResponse, type ProviderUsage } from "./types";
+
+// A token counting endpoint's answer: the count, if it is one. Anything else
+// fails the count, so no call is sent on a number nobody measured.
+export function interpretTokenCount(provider: ProviderName, count: unknown): number {
+  if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) {
+    throw new ProviderError(provider, "client", "the token count endpoint returned no usable count");
+  }
+  return count;
+}
 
 export function interpretAnthropicMessage(message: Anthropic.Message, maxOutputTokens: number): ProviderResponse {
   const usage: ProviderUsage = {

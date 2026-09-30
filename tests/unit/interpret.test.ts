@@ -252,10 +252,14 @@ describe("through the orchestrator", () => {
     const outcome = await runExtraction({
       bytes: pdfBytes("interpret"),
       mimeType: "application/pdf",
+      pages: 1,
       filename: "interpret.pdf",
       primary: {
         name: "anthropic",
         model: HAIKU,
+        async countInputTokens() {
+          return 1000;
+        },
         async extract(request) {
           return interpretAnthropicMessage(truncated, request.maxOutputTokens);
         },

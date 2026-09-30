@@ -6,8 +6,8 @@
 // overrides that make a reviewer read text in a different order, or
 // zero-width characters and full-width letters that hide a word from a
 // regex. Postgres refuses a U+0000 and an unpaired surrogate in text or
-// jsonb, and a refused close_extraction_run leaves the run running and
-// unmetered.
+// jsonb, and a refused finish_extraction_run leaves the run running until
+// the queue's sweep charges it the estimate.
 //
 // No imports, so every module in the extraction path can use it. Written
 // with escapes only, so no invisible character sits in the source.

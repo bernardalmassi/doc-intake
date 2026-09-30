@@ -10,6 +10,9 @@
 //   live              records missing or stale fixtures from the real
 //                     providers (evals/live.ts), then replays
 //   write-fixtures    regenerates evals/documents/ from the definitions
+//   count             counts the calibration requests with Anthropic's free
+//                     token count endpoint into evals/token-counts.json
+//                     (evals/count.ts)
 
 import { describe, expect, it } from "vitest";
 import type { ProviderName } from "@/lib/extraction/config";
@@ -53,6 +56,18 @@ describe.runIf(MODE === "live")("live recording", () => {
       `live: recorded ${result.recorded.length}, skipped ${result.skipped.length} fresh, ` +
         `${result.calls} calls, ${result.spentUsd.toFixed(6)} USD estimated`,
     );
+  });
+});
+
+describe.runIf(MODE === "count")("token counts", () => {
+  it("counts every calibration request, and nothing else", async () => {
+    // imported here so no other mode loads the counter
+    const { countAll } = await import("./count");
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) throw new Error("counting needs ANTHROPIC_API_KEY in .env.local");
+    const imagePaths = (process.env.EVAL_COUNT_IMAGES ?? "").split(",").filter((path) => path.length > 0);
+    const counts = await countAll({ apiKey, imagePaths, log: console.log });
+    console.log(`count: ${Object.keys(counts.requests).length} requests on ${Object.keys(counts.counts).join(", ")}`);
   });
 });
 

@@ -16,7 +16,7 @@
 // deliberate re-record.
 
 import { createHash } from "node:crypto";
-import { ANTHROPIC_THINKING, DEFAULT_MODELS, OPENAI_REASONING_EFFORT, type ProviderName } from "@/lib/extraction/config";
+import { ANTHROPIC_THINKING, DEFAULT_MODELS, OPENAI_REASONING_EFFORT, type ProviderName, withCountMargin } from "@/lib/extraction/config";
 import {
   type ExtractionProvider,
   type ExtractionRequest,
@@ -182,6 +182,15 @@ export function replayProvider(recording: Recording): ReplayProvider {
     name: recording.provider,
     model,
     problems,
+    // No count was recorded: a call's recorded input stands in for what the
+    // count before it would have said, so replay checks the same per-call
+    // limit a live run does (run.ts). The call's fingerprint is checked when
+    // it is made.
+    async countInputTokens() {
+      const call = recording.calls[next];
+      if (!call) fail(`the run counted call ${next + 1} but only ${recording.calls.length} were recorded`);
+      return call.response?.inputTokens ?? call.error?.usage?.inputTokens ?? 0;
+    },
     async extract(request) {
       const index = next;
       next += 1;
@@ -272,9 +281,12 @@ export type RecordingProvider = ExtractionProvider & { readonly calls: RecordedC
 
 // Wraps a real provider: reserves budget, forwards the request, charges
 // what the provider reports it billed, and keeps the answer or the
-// classified error with the request's fingerprint. Charging happens outside
-// the provider's try, so a pricing failure can't be mistaken for a provider
-// error and recorded at zero cost; it aborts the pass.
+// classified error with the request's fingerprint. A call that was sent and
+// got no answer (an error with no HTTP status and no usage) may have been
+// billed, so it is charged as run.ts charges it: the input its count just
+// measured plus the output cap. Charging happens outside the provider's
+// try, so a pricing failure can't be mistaken for a provider error and
+// recorded at zero cost; it aborts the pass.
 export function recordingProvider(
   inner: ExtractionProvider,
   budget: CallBudget,
@@ -282,6 +294,8 @@ export function recordingProvider(
   now: () => number = Date.now,
 ): RecordingProvider {
   const calls: RecordedCall[] = [];
+  // what the count before the latest call measured (run.ts counts every call)
+  let lastCount: number | null = null;
 
   function charge(usage: ProviderUsage): void {
     let usd: number;
@@ -297,6 +311,11 @@ export function recordingProvider(
     name: inner.name,
     model: inner.model,
     calls,
+    // the provider's own count; no call is made, so nothing is reserved
+    async countInputTokens(request) {
+      lastCount = await inner.countInputTokens(request);
+      return lastCount;
+    },
     async extract(request) {
       const fingerprint = fingerprintRequest(inner.name, inner.model, request);
       budget.reserve(inner.model);
@@ -310,8 +329,14 @@ export function recordingProvider(
             ? { kind: error.kind, status: error.status ?? null, message: error.message, usage: error.usage ?? null }
             : { kind: "client", status: null, message: error instanceof Error ? error.message : String(error), usage: null };
         calls.push({ fingerprint, latencyMs: now() - started, response: null, error: classified });
-        // an unusable answer is billed like any other
+        // an unusable answer is billed like any other, and a call with no
+        // answer at the most it could have cost: its count with the count's
+        // margin (withCountMargin, as run.ts charges it) and the output cap
         if (classified.usage) charge(classified.usage);
+        else if (classified.status === null) {
+          if (lastCount === null) throw budget.abort("a call was sent with no count before it");
+          charge({ model: inner.model, inputTokens: withCountMargin(lastCount), outputTokens: request.maxOutputTokens });
+        }
         throw error;
       }
       const latencyMs = now() - started;

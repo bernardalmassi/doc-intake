@@ -63,20 +63,33 @@ export const LOG_EVENTS = [
   "extraction.providers_selected",
   "extraction.not_configured",
   // extraction/run.ts
+  "extraction.input_counted",
+  "extraction.count_failed",
+  "extraction.call_not_sent",
   "extraction.call_succeeded",
   "extraction.call_failed",
   "extraction.fallback",
   "extraction.validation_retry",
   "extraction.run_finished",
-  // src/app/app/extract-action.ts: one line per step around the RPCs
-  "extraction.run_opened",
-  "extraction.open_refused",
+  // src/app/app/extract-action.ts: the download and its check, then the
+  // enqueue; extraction/delivery.ts: the worker's download timing out
+  "extraction.enqueued",
+  "extraction.enqueue_refused",
   "extraction.download_failed",
-  "extraction.type_mismatch",
-  "extraction.unexpected_error",
-  "extraction.run_closed",
-  "extraction.close_failed",
-  "extraction.close_retried",
+  // src/app/api/extraction-worker/route.ts and extraction/worker.ts,
+  // extraction/delivery.ts: one line per step of a delivery
+  "worker.unauthorized",
+  "worker.not_configured",
+  "worker.idle",
+  "worker.claim_failed",
+  "worker.claimed",
+  "worker.preflight_failed",
+  "worker.unexpected_error",
+  "worker.finished",
+  "worker.finish_failed",
+  "worker.finish_retrying",
+  "worker.finish_unconfirmed",
+  "worker.finish_retried",
   // src/app/auth/actions.ts
   "auth.sign_up_refused",
   "auth.signed_up",
@@ -144,7 +157,7 @@ const provider = oneOf(keysOf(PROVIDERS));
 // A model id as a provider reports it: one priced in config.ts, or one of
 // those followed by a date snapshot (gpt-5-nano-2025-08-07, or -20251001 in
 // Anthropic's style). A reported id that isn't one of these is dropped, and
-// close_extraction_run would refuse to price it anyway.
+// finish_extraction_run would refuse to price it anyway.
 const PRICED_MODELS = Object.keys(PRICING);
 const SNAPSHOT_SUFFIX = /^-20\d{2}(-?)(0[1-9]|1[0-2])\1(0[1-9]|[12]\d|3[01])$/;
 const model: Format<string> = (value) => {
@@ -164,9 +177,14 @@ export const LOG_ERROR_CODES = [
   "invalid_provider_setting",
   "invalid_model_setting",
   "primary_key_missing",
+  // extraction/worker.ts: the worker's own configuration
+  "worker_key_missing",
+  "worker_target_refused",
 ] as const;
 
-export type LogErrorKind = ProviderErrorKind | "validation" | "unexpected";
+// over_limit: a call whose measured input was over the per-call limit, so
+// it wasn't sent (run.ts)
+export type LogErrorKind = ProviderErrorKind | "validation" | "unexpected" | "over_limit";
 const ERROR_KINDS: Record<LogErrorKind, true> = {
   transport: true,
   server: true,
@@ -175,10 +193,11 @@ const ERROR_KINDS: Record<LogErrorKind, true> = {
   truncated: true,
   validation: true,
   unexpected: true,
+  over_limit: true,
 };
 
 // public.extraction_run_status and public.document_status
-const RUN_STATUSES = ["running", "succeeded", "failed"] as const;
+const RUN_STATUSES = ["queued", "running", "succeeded", "failed"] as const;
 const DOCUMENT_STATUSES = ["uploading", "pending", "processing", "extracted", "needs_review", "failed"] as const;
 
 const LOG_FIELDS = {
@@ -202,8 +221,13 @@ const LOG_FIELDS = {
   retry: count(1000),
   input_tokens: count(),
   output_tokens: count(),
+  // the most input one call may read for the run's pages (run.ts)
+  input_limit: count(),
   latency_ms: count(),
   size_bytes: count(),
+  // a document's pages as counted, and as the run was enqueued with
+  page_count: count(1000),
+  expected_page_count: count(1000),
   field_count: count(1000),
   high_count: count(1000),
   medium_count: count(1000),
@@ -215,6 +239,8 @@ const LOG_FIELDS = {
   mime_type: oneOf(SUPPORTED_MIME_TYPES),
   detected_mime_type: oneOf(SUPPORTED_MIME_TYPES),
   fallback_used: flag,
+  // the run's cost is an estimate that errs high (run.ts)
+  cost_estimated: flag,
 
   // errors: what kind, which class, which code; never the message
   error_kind: oneOf(keysOf(ERROR_KINDS)),

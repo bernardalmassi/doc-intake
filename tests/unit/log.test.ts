@@ -38,7 +38,7 @@ import {
 import { runExtraction } from "@/lib/extraction/run";
 import { FIELD_NAMES } from "@/lib/extraction/schema";
 import { ERROR_CODES } from "@/lib/errors";
-import { PRICING } from "@/lib/extraction/config";
+import { inputTokensPerCall, PRICING } from "@/lib/extraction/config";
 import {
   defaultLogSink,
   log,
@@ -104,14 +104,14 @@ function jwt(payload: Record<string, unknown>): string {
 // registered below, as providers/select.ts registers the API keys it reads
 const ANTHROPIC_KEY = `sk-ant-api03-${randomFrom(BASE64URL, 93)}AA`;
 const OPENAI_KEY = `sk-proj-${randomFrom(BASE64URL, 156)}`;
-// a run's close token is a UUID; src/app should register it (see the limit test)
-const CLOSE_TOKEN = uuid();
+// a run's claim token is a UUID; the worker registers it (see the limit test)
+const CLAIM_TOKEN = uuid();
 // no known shape: only its registration catches it
 const HEX_SECRET = randomFrom(HEX, 40);
 // letters only, capital first: fits error_name's shape, so only the
 // redactor stops it there
 const LETTERS_SECRET = `Q${randomFrom(UPPER + LOWER, 29)}`;
-const REGISTERED = [ANTHROPIC_KEY, OPENAI_KEY, CLOSE_TOKEN, HEX_SECRET, LETTERS_SECRET];
+const REGISTERED = [ANTHROPIC_KEY, OPENAI_KEY, CLAIM_TOKEN, HEX_SECRET, LETTERS_SECRET];
 
 // never registered: caught by shape alone
 const OPENAI_LEGACY_KEY = `sk-${randomFrom(ALNUM, 48)}`;
@@ -233,8 +233,11 @@ const VALID: { [K in LogFieldName]-?: NonNullable<LogFields[K]> } = {
   retry: 1,
   input_tokens: 800_000,
   output_tokens: 8_192,
+  input_limit: 304_500,
   latency_ms: 60_000,
   size_bytes: 10_485_760,
+  page_count: 100,
+  expected_page_count: 1,
   field_count: 10,
   high_count: 8,
   medium_count: 1,
@@ -244,6 +247,7 @@ const VALID: { [K in LogFieldName]-?: NonNullable<LogFields[K]> } = {
   mime_type: "application/pdf",
   detected_mime_type: "image/png",
   fallback_used: true,
+  cost_estimated: true,
   error_kind: "transport",
   error_name: "APIConnectionTimeoutError",
   error_code: "primary_key_missing",
@@ -395,8 +399,8 @@ describe("no route gets a secret into a line", () => {
     const line = lastLine();
     expect(line.fields).toEqual({ attempt: 1 });
     expect(line.dropped).toBe(1);
-    // and a registered close token, where it would be a valid id
-    log.info("extraction.run_opened", { run_id: CLOSE_TOKEN, document_id: VALID.document_id });
+    // and a registered claim token, where it would be a valid id
+    log.info("worker.claimed", { run_id: CLAIM_TOKEN, document_id: VALID.document_id });
     expect(lastLine().fields).toEqual({ document_id: VALID.document_id });
   });
 
@@ -412,11 +416,11 @@ describe("no route gets a secret into a line", () => {
       url: SIGNED_URL,
       signed_url: SIGNED_URL,
       headers: { authorization: `Bearer ${SESSION_JWT}` },
-      close_token: CLOSE_TOKEN,
+      close_token: CLAIM_TOKEN,
       api_key: OPENAI_KEY,
       [ANTHROPIC_KEY]: 1,
     };
-    log.error("extraction.close_failed", smuggled as unknown as LogFields);
+    log.error("worker.finish_failed", smuggled as unknown as LogFields);
     const line = lastLine();
     expect(line.fields).toEqual({});
     expect(line.dropped).toBe(Object.keys(smuggled).length);
@@ -433,7 +437,7 @@ describe("no route gets a secret into a line", () => {
       model: { toString: () => ANTHROPIC_KEY, toJSON: () => ANTHROPIC_KEY },
       error_name: [ANTHROPIC_KEY],
       error_code: new String(HEX_SECRET),
-      run_id: { valueOf: () => CLOSE_TOKEN },
+      run_id: { valueOf: () => CLAIM_TOKEN },
       document_id: Object.assign(new Error(ANTHROPIC_KEY), { toJSON: () => ANTHROPIC_KEY }),
     };
     log.info("extraction.call_failed", forced as unknown as LogFields);
@@ -460,12 +464,12 @@ describe("no route gets a secret into a line", () => {
     }
   });
 
-  it("limit: an unregistered close token is indistinguishable from an id", () => {
+  it("limit: an unregistered claim token is indistinguishable from an id", () => {
     // Both are UUIDs, so no shape rule can tell them apart. This is why a
-    // caller holding a close token must register it (registerSecret) and
+    // caller holding a claim token must register it (registerSecret) and
     // must not put it in an id field; the logger has no field named token.
     const unregistered = uuid();
-    log.info("extraction.run_opened", { run_id: unregistered });
+    log.info("worker.claimed", { run_id: unregistered });
     expect(lastLine().fields).toEqual({ run_id: unregistered });
   });
 });
@@ -589,7 +593,7 @@ describe("free text is scrubbed of keys of every shape", () => {
     ["a session JWT", SESSION_JWT],
     ["a registered Anthropic key", ANTHROPIC_KEY],
     ["a registered OpenAI project key", OPENAI_KEY],
-    ["a registered close token", CLOSE_TOKEN],
+    ["a registered close token", CLAIM_TOKEN],
     ["a registered hex secret", HEX_SECRET],
     ["a registered letters-only secret", LETTERS_SECRET],
   ])("%s, alone, spaced or glued to other text", (_name, secret) => {
@@ -919,7 +923,7 @@ describe("logging never throws", () => {
       throw new Error("EPIPE");
     });
     try {
-      expect(() => log.error("extraction.close_failed", { db_code: "42501" })).not.toThrow();
+      expect(() => log.error("worker.finish_failed", { db_code: "42501" })).not.toThrow();
     } finally {
       restore();
     }
@@ -986,6 +990,9 @@ describe("an extraction run logs counts and kinds, never content", () => {
     return {
       name,
       model,
+      async countInputTokens() {
+        return 1000;
+      },
       async extract() {
         const next = answers.shift();
         if (!next) throw new Error("no answer left");
@@ -1009,6 +1016,7 @@ describe("an extraction run logs counts and kinds, never content", () => {
     const outcome = await runExtraction({
       bytes: BYTES,
       mimeType: "application/pdf",
+      pages: 1,
       filename: FILENAME,
       primary: provider("anthropic", "claude-haiku-4-5-20251001", [answer(canaryAnswer(), "claude-haiku-4-5-20251001")]),
       fallback: null,
@@ -1017,8 +1025,17 @@ describe("an extraction run logs counts and kinds, never content", () => {
     expect(outcome.status).toBe("succeeded");
 
     const parsed = lines.map(parse);
-    expect(parsed.map((l) => l.event)).toEqual(["extraction.call_succeeded", "extraction.run_finished"]);
-    expect(parsed[0].fields).toMatchObject({
+    // the count before the call, then the call, then the finish
+    expect(parsed.map((l) => l.event)).toEqual(["extraction.input_counted", "extraction.call_succeeded", "extraction.run_finished"]);
+    expect(parsed[0].fields).toEqual({
+      run_id: RUN_ID,
+      document_id: DOCUMENT_ID,
+      provider: "anthropic",
+      model: "claude-haiku-4-5-20251001",
+      input_tokens: 1000,
+      input_limit: inputTokensPerCall(1),
+    });
+    expect(parsed[1].fields).toMatchObject({
       run_id: RUN_ID,
       document_id: DOCUMENT_ID,
       provider: "anthropic",
@@ -1027,7 +1044,7 @@ describe("an extraction run logs counts and kinds, never content", () => {
       input_tokens: 5036,
       output_tokens: 468,
     });
-    expect(parsed[1]).toMatchObject({
+    expect(parsed[2]).toMatchObject({
       level: "info",
       fields: {
         run_id: RUN_ID,
@@ -1054,6 +1071,7 @@ describe("an extraction run logs counts and kinds, never content", () => {
     const outcome = await runExtraction({
       bytes: BYTES,
       mimeType: "application/pdf",
+      pages: 1,
       filename: FILENAME,
       primary: provider("anthropic", "claude-haiku-4-5-20251001", [
         new ProviderError("anthropic", "server", `overloaded; zebra; key ${ANTHROPIC_KEY}`, 529),
@@ -1068,17 +1086,21 @@ describe("an extraction run logs counts and kinds, never content", () => {
 
     const parsed = lines.map(parse);
     expect(parsed.map((l) => l.event)).toEqual([
+      "extraction.input_counted",
       "extraction.call_failed",
       "extraction.fallback",
+      "extraction.input_counted",
       "extraction.call_succeeded",
       "extraction.validation_retry",
+      "extraction.input_counted",
       "extraction.call_succeeded",
       "extraction.run_finished",
     ]);
-    expect(parsed[0].fields).toMatchObject({ provider: "anthropic", attempt: 1, error_kind: "server", http_status: 529 });
-    expect(parsed[1].fields).toMatchObject({ from_provider: "anthropic", to_provider: "openai", error_kind: "server" });
-    expect(parsed[3].fields).toEqual({ run_id: RUN_ID, provider: "openai", retry: 1, error_kind: "validation" });
-    expect(parsed[5].fields).toMatchObject({ run_status: "succeeded", attempts: 3, fallback_used: true, provider: "openai" });
+    expect(parsed[1].fields).toMatchObject({ provider: "anthropic", attempt: 1, error_kind: "server", http_status: 529 });
+    expect(parsed[2].fields).toMatchObject({ from_provider: "anthropic", to_provider: "openai", error_kind: "server" });
+    expect(parsed[3].fields).toMatchObject({ provider: "openai", input_tokens: 1000, input_limit: inputTokensPerCall(1) });
+    expect(parsed[5].fields).toEqual({ run_id: RUN_ID, provider: "openai", retry: 1, error_kind: "validation" });
+    expect(parsed[8].fields).toMatchObject({ run_status: "succeeded", attempts: 3, fallback_used: true, provider: "openai" });
     expectNoContent();
   });
 
@@ -1086,6 +1108,7 @@ describe("an extraction run logs counts and kinds, never content", () => {
     const outcome = await runExtraction({
       bytes: BYTES,
       mimeType: "application/pdf",
+      pages: 1,
       filename: FILENAME,
       primary: provider("anthropic", "claude-haiku-4-5-20251001", [
         new ProviderError("anthropic", "client", `invalid x-api-key ${ANTHROPIC_KEY} for zebra`, 401),
@@ -1110,11 +1133,13 @@ describe("an extraction run logs counts and kinds, never content", () => {
     await runExtraction({
       bytes: BYTES,
       mimeType: "application/pdf",
+      pages: 1,
       filename: FILENAME,
       primary: provider("anthropic", "claude-haiku-4-5-20251001", [new TypeError(`fetch failed: ${SIGNED_URL} zebra`)]),
       fallback: null,
     });
-    const failed = parse(lines[0]);
+    const failed = parse(lines[1]);
+    expect(failed.event).toBe("extraction.call_failed");
     expect(failed.fields).toMatchObject({ error_kind: "unexpected", error_name: "TypeError" });
     expectNoContent();
     expectNoLeak(lines, [SESSION_JWT]);
@@ -1124,6 +1149,7 @@ describe("an extraction run logs counts and kinds, never content", () => {
     await runExtraction({
       bytes: BYTES,
       mimeType: "application/pdf",
+      pages: 1,
       filename: FILENAME,
       primary: provider("anthropic", "claude-haiku-4-5-20251001", [
         answer("zebra canary, not JSON", "claude-haiku-4-5-20251001"),

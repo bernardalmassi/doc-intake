@@ -1,0 +1,123 @@
+-- Session C of the ceiling-check case (setup.sql): check_extraction_limits
+-- runs for the fixture's organization while a finish (finish-table.sql)
+-- commits the fixture's run in the middle of it.
+--
+-- Inside a subtransaction that is always rolled back, it adds a ledger row
+-- that brings the organization to exactly its ceiling once the fixture's run
+-- is counted at the charge the finish records (10 tokens in and 1 out at
+-- gpt-5-nano's price), and no further. Then it runs the check. Counted once
+-- (at that charge, or at its estimate while still in flight), the run takes
+-- the organization to the ceiling and the check refuses with the tenant's
+-- 53400. Counted in neither sum, the check passes. The row is never
+-- committed: the subtransaction ends in an exception either way.
+--
+-- It reads nothing from extraction_runs before the check, since F's table
+-- lock would make that read wait and F would commit before the check began:
+-- the only thing that can wait on F is the check's read of the runs. So
+-- that F committed while the check ran is read from the ledger, which F's
+-- lock doesn't block: the organization's ledger rows before the check and
+-- after it, F's finish being the one in between.
+--
+-- It holds (20260925, 2) from its start until F's transaction has ended,
+-- and takes (20260925, 3) when it is done. It reports the ledger rows
+-- before and after, the run's status after the check, what the check said,
+-- and whether its own ledger row was left behind (it must not be). That row
+-- is found by the run id it was given, which is reported, not by when it
+-- was written: until 20260925000005's unit this counted rows written after
+-- the check started, which the row, dated its transaction's start, never
+-- was, so the assertion could never fail (the review's V12).
+select pg_advisory_lock(20260925, 2);
+commit;
+
+do $t$
+declare
+  v_deadline timestamptz := clock_timestamp() + interval '60 seconds';
+begin
+  while not exists (select 1 from pg_locks l
+                    where l.locktype = 'advisory' and l.classid = 20260925::oid and l.objid = 1::oid
+                      and l.objsubid = 2 and l.granted and l.pid <> pg_backend_pid()) loop
+    if clock_timestamp() > v_deadline then
+      raise exception 'session F never took its lock';
+    end if;
+    perform pg_sleep(0.05);
+  end loop;
+end $t$;
+commit;
+
+create temp table report (
+  row_id           uuid,
+  ledger_before    integer,
+  ledger_after     integer,
+  run_after_check  text,
+  result           text,
+  check_started    timestamptz,
+  check_returned   timestamptz
+);
+commit;
+
+do $t$
+declare
+  v_tenant   uuid := 'f2f2f2f2-0000-4000-8000-000000000001';
+  v_limits   public.extraction_limits;
+  v_existing numeric;
+  v_charge   numeric;
+  v_rows     integer;
+  v_result   text;
+  v_started  timestamptz;
+  -- the run id of this check's own ledger row, by which rows_left finds it
+  v_row_id   uuid := gen_random_uuid();
+begin
+  select l.* into v_limits from public.extraction_limits l;
+  -- what the finish will charge the fixture's run
+  select c.cost_usd into v_charge from private.extraction_charge('gpt-5-nano', 'openai', 10, 1) c;
+  -- what the organization's ledger already holds this month (earlier runs of
+  -- these cases leave their charges, as every ledger row stays)
+  select coalesce(sum(s.cost_usd), 0), count(*) into v_existing, v_rows from private.extraction_spend s
+  where s.tenant_id = v_tenant and s.created_at >= date_trunc('month', now(), 'UTC');
+
+  v_started := clock_timestamp();
+  begin
+    insert into private.extraction_spend (kind, tenant_id, run_id, cost_usd)
+    values ('charge', v_tenant, v_row_id, v_limits.tenant_monthly_ceiling_usd - v_existing - v_charge);
+    perform private.check_extraction_limits(v_tenant);
+    -- rolls the row back
+    raise exception 'passed' using errcode = 'P0001';
+  exception
+    when sqlstate '53400' then v_result := 'refused: ' || sqlerrm;
+    when sqlstate 'P0001' then v_result := sqlerrm;
+  end;
+
+  insert into report values (
+    v_row_id,
+    v_rows,
+    (select count(*) from private.extraction_spend s
+     where s.tenant_id = v_tenant and s.created_at >= date_trunc('month', now(), 'UTC')),
+    (select r.status::text from public.extraction_runs r where r.document_id = 'f3f3f3f3-0000-4000-8000-000000000001'),
+    v_result,
+    v_started,
+    clock_timestamp());
+end $t$;
+commit;
+
+select pg_advisory_lock(20260925, 3);
+commit;
+
+do $t$
+declare
+  v_deadline timestamptz := clock_timestamp() + interval '60 seconds';
+begin
+  while exists (select 1 from pg_locks l
+                where l.locktype = 'advisory' and l.classid = 20260925::oid and l.objid = 1::oid
+                  and l.objsubid = 2 and l.granted and l.pid <> pg_backend_pid())
+        and clock_timestamp() < v_deadline loop
+    perform pg_sleep(0.05);
+  end loop;
+end $t$;
+commit;
+select pg_advisory_unlock_all();
+commit;
+
+select ledger_before, ledger_after, run_after_check, result,
+       round(extract(epoch from check_returned - check_started) * 1000) as check_ms,
+       (select count(*) from private.extraction_spend s where s.run_id = report.row_id) as rows_left
+from report;

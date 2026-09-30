@@ -5,28 +5,21 @@ import { AccountControls, MAIN_ID, SiteHeader } from "@/app/components/site-head
 import { pageClass } from "@/app/ui";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { buildEntries } from "./entries";
+import { buildEntries, extractionsInFlight } from "./entries";
 import { LiveOperations } from "./live-operations";
 import { OrganizationView } from "./organization-view";
+import { RefreshWhileExtracting } from "./refresh-while-extracting";
 import { type DocumentRow, type FieldRow, type Organization, type Role, type RunRecord, toRunRow } from "./types";
-
-// Seconds this page's function may run, which Next.js applies to every
-// Server Action used on the page, the Extract action included. A run's
-// model calls are bounded at 180 s (three calls of 60 s, config.ts); this
-// leaves a minute for the download and the open and close RPCs, stays under
-// the host's 300 s ceiling, and ends well before the stale-run reaper
-// (10 minutes) could fail a run still in flight. A literal, because Next.js
-// reads it statically; tests/unit/max-duration.test.ts checks the bounds.
-export const maxDuration = 240;
 
 function toRole(value: string | undefined): Role {
   return value === "owner" || value === "admin" ? value : "member";
 }
 
-// The time of the request, to tell a stale extraction from a running one.
-// A Server Component renders once per request, so the clock is read once;
-// react-hooks/purity can't tell that from a client re-render, hence the
-// helper.
+// The time of the request, which tells one render of the page from the
+// next (RefreshWhileExtracting counts renders), and against which a run in
+// flight is judged overdue (buildEntries). A Server Component renders once
+// per request, so the clock is read once; react-hooks/purity can't tell
+// that from a client re-render, hence the helper.
 function requestTime(): number {
   return Date.now();
 }
@@ -79,7 +72,7 @@ export default async function OrganizationPage({ params }: PageProps<"/app/[slug
     supabase
       .from("extraction_runs")
       .select(
-        "id, document_id, status, provider, model, attempts, input_tokens, output_tokens, cost_usd, latency_ms, error, started_at",
+        "id, document_id, status, provider, model, attempts, input_tokens, output_tokens, cost_usd, latency_ms, error, started_at, claimed_at",
       )
       .eq("tenant_id", tenant.id)
       .order("started_at", { ascending: false }),
@@ -96,13 +89,14 @@ export default async function OrganizationPage({ params }: PageProps<"/app/[slug
   // Only decides what to render. The database enforces who can extract
   // and delete.
   const role = toRole(membership.data?.role);
+  const renderedAt = requestTime();
   const entries = buildEntries(
     (documentsResult.data ?? []) as DocumentRow[],
     // Each run's stored error becomes a code here: the text itself never
     // reaches a component, or the browser.
     ((runsResult.data ?? []) as RunRecord[]).map(toRunRow),
     (fieldsResult.data ?? []) as FieldRow[],
-    requestTime(),
+    renderedAt,
   );
 
   return (
@@ -111,6 +105,7 @@ export default async function OrganizationPage({ params }: PageProps<"/app/[slug
         <AccountControls email={user.email} />
       </SiteHeader>
       <main id={MAIN_ID} className={pageClass}>
+        <RefreshWhileExtracting active={extractionsInFlight(entries)} renderedAt={renderedAt} />
         <LiveOperations>
           <OrganizationView organization={tenant} role={role} entries={entries} />
         </LiveOperations>

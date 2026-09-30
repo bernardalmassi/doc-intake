@@ -1,9 +1,10 @@
 // How many pages a document has, on the server: the Extract action counts
-// the file before opening a run, refuses one over max_pages_per_document or
-// one whose pages can't be counted, and sends the count to
-// open_extraction_run, which stores it for the stale-run reaper's estimate
-// (migration 20260918000003). The counting itself is page-count.ts, shared
-// with the upload form.
+// the file before enqueuing a run, refuses one over max_pages_per_document
+// or one whose pages can't be counted, and sends the count to
+// enqueue_extraction_run, which stores it for the run's estimate
+// (20260925000002); the worker counts again before any model call
+// (delivery.ts). The counting itself is page-count.ts, shared with the
+// upload form.
 
 import { inflateSync } from "node:zlib";
 import { countPdfPagesWith } from "./page-count";

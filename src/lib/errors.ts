@@ -21,7 +21,7 @@
 // Classification goes by code first (SQLSTATE, Auth code, Storage code,
 // ProviderError kind), then by what was being attempted, because the same
 // SQLSTATE means different things in different calls (55000 is "files
-// remain" in delete_tenant and "already running" in open_extraction_run).
+// remain" in delete_tenant and "already running" in enqueue_extraction_run).
 // Message text is read in these places only, each a refinement of a code
 // that would otherwise be less specific, never a way to choose one freely:
 //
@@ -46,6 +46,7 @@
 
 import type { WeakPasswordReasons } from "@supabase/supabase-js";
 import { ANTHROPIC_MODEL_ENV_VAR, DEFAULT_MODELS, EXTRACTION_LIMITS, PROVIDER_ENV_VAR, type ProviderName } from "@/lib/extraction/config";
+import { IN_FLIGHT_BOUND_MS } from "@/lib/extraction/deadlines";
 import type { ProviderErrorKind } from "@/lib/extraction/providers/types";
 import { isSupportedMimeType, SUPPORTED_MIME_TYPES, type SupportedMimeType } from "@/lib/extraction/sniff";
 import { MAX_PASSWORD_BYTES, MIN_PASSWORD_LENGTH } from "@/lib/password";
@@ -65,6 +66,8 @@ export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 export const UPLOAD_MIME_TYPES: readonly SupportedMimeType[] = SUPPORTED_MIME_TYPES;
 
 const STALE_MINUTES = EXTRACTION_LIMITS.staleRunMinutes;
+// the longest a run stays in flight, rounded up (src/lib/extraction/deadlines.ts)
+const IN_FLIGHT_BOUND_MINUTES = Math.ceil(IN_FLIGHT_BOUND_MS / 60_000);
 
 // Catalog ----------------------------------------------------------------
 
@@ -171,6 +174,12 @@ const CATALOG = {
     message: "This organization still has documents with files. Delete them first, then delete the organization.",
     retryable: false,
   },
+  // every run in flight has a deadline the queue's sweep enforces: the
+  // stale limit, plus a minute for the sweep's next tick
+  "tenant.delete_extraction_running": {
+    message: `An extraction is still running in this organization. Try again when it finishes; one that is stuck is ended within ${IN_FLIGHT_BOUND_MINUTES} minutes.`,
+    retryable: true,
+  },
   "account.delete_owns_organization": {
     message:
       "You still own an organization. Delete it, or make another member an owner and have them remove you, before deleting your account.",
@@ -230,6 +239,10 @@ const CATALOG = {
       "We couldn't count this PDF's pages, so it can't be extracted. Save it again as a standard PDF (for example with Print to PDF) and upload that.",
     retryable: false,
   },
+  "document.no_pages": {
+    message: "This PDF has no pages, so there is nothing to extract. Upload the complete file.",
+    retryable: false,
+  },
 
   // Uploading and downloading
   "upload.no_file": { message: "Choose a file to upload.", retryable: false },
@@ -270,14 +283,18 @@ const CATALOG = {
     message: `An extraction is already running for this document. Try again when it finishes; one that is stuck is released after ${STALE_MINUTES} minutes.`,
     retryable: true,
   },
+  // The ceilings count every run in flight at its estimate
+  // (check_extraction_limits, 20260925000002), so one can be reached while
+  // an extraction is running and clear again when it finishes.
   "extraction.tenant_budget_reached": {
-    message: "Your organization has used this month's extraction budget. Extraction resumes at the start of next month (UTC).",
-    retryable: false,
+    message:
+      "Your organization has reached this month's extraction budget, counting extractions in progress. Try again when those finish; if none are running, extraction resumes next month (UTC).",
+    retryable: true,
   },
   "extraction.global_budget_reached": {
     message:
-      "Extraction is paused for everyone because this month's overall budget has been used. It resumes at the start of next month (UTC).",
-    retryable: false,
+      "Extraction is paused for everyone: this month's overall budget is reached, counting extractions in progress. Try again when those finish; if none are running, it resumes next month (UTC).",
+    retryable: true,
   },
   "extraction.rate_limited": {
     message: `Your organization has reached its limit of ${EXTRACTION_LIMITS.hourlyRunLimit} extractions per hour. Try again later.`,
@@ -291,6 +308,13 @@ const CATALOG = {
   },
   "extraction.download_failed": {
     message: "The file couldn't be read for extraction. Please try again.",
+    retryable: true,
+  },
+  // the worker recounts a file's pages before any model call, and refuses
+  // one whose count isn't the one Extract was requested with
+  "extraction.page_count_mismatch": {
+    message:
+      "We couldn't confirm this document's page count, so it wasn't sent for extraction. Please try again.",
     retryable: true,
   },
   "extraction.file_type_mismatch": {
@@ -326,13 +350,26 @@ const CATALOG = {
     message: "The extraction service stopped before finishing its answer. Please try again.",
     retryable: true,
   },
+  // A second attempt is made only if it fits the per-call limit, so the
+  // message doesn't promise one.
   "extraction.invalid_answer": {
     message:
-      "The extraction service's answer failed our checks, even after a second attempt. You can try again or review the document yourself.",
+      "The extraction service's answer failed our checks, so nothing was saved from it. You can try again or review the document yourself.",
     retryable: true,
+  },
+  // run.ts measures every call before sending it; a document whose first
+  // call reads more than the per-call limit for its pages is never sent
+  "extraction.too_dense": {
+    message:
+      "This document is too dense to extract within our limits: its pages hold more than one extraction may read, so it wasn't sent and nothing was charged. Split it into smaller files and extract those.",
+    retryable: false,
   },
   "extraction.abandoned": {
     message: "This extraction stopped before it finished and was cancelled. Please try again.",
+    retryable: true,
+  },
+  "extraction.expired": {
+    message: `This extraction didn't start within ${STALE_MINUTES} minutes, so it was cancelled at no cost. Please try again.`,
     retryable: true,
   },
   "extraction.result_not_saved": {
@@ -373,12 +410,15 @@ export function userFacingError(code: ErrorCode): UserFacingError {
 export const DATABASE_PHRASES = {
   // create_tenant raises it without an errcode (P0001); the others as 42501
   authenticationRequired: "authentication required",
-  // open_extraction_run, 55000
+  // enqueue_extraction_run, 55000
   documentHasNoFile: "the document has no file yet",
   extractionAlreadyRunning: "an extraction is already running for this document",
-  // open_extraction_run, 53400
+  // check_extraction_limits (called by enqueue_extraction_run), 53400
   tenantCeilingReached: "this organization has reached its monthly extraction spend ceiling",
   globalCeilingReached: "the monthly extraction spend ceiling across all organizations has been reached",
+  // delete_tenant, 55000
+  tenantExtractionInProgress: "an extraction is in progress for this tenant",
+  tenantFilesRemain: "remove the tenant's files from storage before deleting it",
   // complete_document_upload, 55000
   notWaitingForUpload: "document is not waiting for an upload",
   noFileUploaded: "no file has been uploaded for this document",
@@ -393,16 +433,23 @@ export const CHECK_CONSTRAINTS = {
 } as const;
 
 // The pieces of a failed run's error, as extraction_runs.error stores it.
-// downloadFailed and typeMismatch start errors written by the Extract Server
-// Action; the next five are the orchestrator's (src/lib/extraction/run.ts);
+// downloadFailed to pageCountMismatch start errors written by the worker's
+// preflight (src/lib/extraction/delivery.ts); the next five are the
+// orchestrator's (src/lib/extraction/run.ts);
 // notConfigured, providerNotSelected and modelNotSelected come from selectProviders; abandoned
-// from open_extraction_run's stale-run reaper; and resultNotRecorded from
+// and expired from reap_extraction_run (20260925000002), which the reapers
+// and the queue's sweep call; and resultNotRecorded from
 // failedCloseAttempts in run.ts, for a run whose close was refused. The test checks
 // each against its source, and drives the real orchestrator with fake
 // providers to classify what it actually stores.
 export const RUN_ERROR_MARKERS = {
   downloadFailed: "could not download the file",
   typeMismatch: "file content (",
+  // the worker's preflight (extraction/delivery.ts), after the type check
+  pagesUnreadable: "pages unreadable: ",
+  tooManyPages: "too many pages: ",
+  noPages: "no pages: ",
+  pageCountMismatch: "page count mismatch: ",
   invalidAfterRetry: "response failed validation after",
   retryFailed: "retry after invalid response (",
   retryFailedSeparator: ") failed: ",
@@ -411,19 +458,34 @@ export const RUN_ERROR_MARKERS = {
   fallbackFailed: "; fallback ",
   // appended when a timeout or 5xx had no fallback to switch to
   noFallback: "; no fallback provider is configured",
+  // run.ts measures every call's input before sending it. A first call over
+  // the per-call limit: "too dense: its input (<n> tokens) is over ...".
+  tooDense: "too dense: ",
+  // a count that failed, so no call was sent: "input not measured: <the
+  // count's error, as describeError renders it>"
+  inputNotMeasured: "input not measured: ",
+  // "<primary's error>; the fallback provider was not used: <why>": the
+  // fallback's input couldn't be measured, or was over the limit
+  fallbackNotUsed: "; the fallback provider was not used: ",
   notConfigured: "extraction is not configured",
   providerNotSelected: `${PROVIDER_ENV_VAR} must be`,
   modelNotSelected: `${ANTHROPIC_MODEL_ENV_VAR} must be`,
-  abandoned: "abandoned: still running after",
-  // failedCloseAttempts (run.ts), when close_extraction_run refused a
-  // successful run and the Extract action closed it as failed instead
+  // a run ended while it may have called a model, charged the estimate:
+  // "abandoned: still running after 10 minutes; ...", "abandoned: claimed
+  // but not finished within 300 seconds", ...
+  abandoned: "abandoned: ",
+  // a run ended before any delivery claimed it, at no cost
+  expired: "expired: ",
+  // failedCloseAttempts (run.ts), when the database refused to record a
+  // successful run and the worker finished it as failed instead
   resultNotRecorded: "the result could not be recorded",
   // A run charged an estimate rather than its recorded usage: by
   // failedCloseAttempts (run.ts) when the close with the run's own model was
   // refused too, "<this> the dearest price on file (<SQLSTATE>; served by
   // <model id>): <the run's error>"; and by the stale-run reaper
-  // (20260918000003), "<this> <model> prices (abandoned; ...): abandoned:
-  // ...". Not a failure of its own; what follows it decides the code.
+  // (20260918000003, and reap_extraction_run since 20260925000002),
+  // "<this> <model> prices (abandoned; ...): abandoned: ...". Not a failure
+  // of its own; what follows it decides the code.
   costEstimated: "cost estimated at",
 } as const;
 
@@ -478,12 +540,13 @@ export function checkUploadFile(file: { type: string; size: number } | null | un
 }
 
 // A document may have at most EXTRACTION_LIMITS.maxPagesPerDocument pages,
-// and a PDF's pages must be countable (src/lib/extraction/page-count.ts),
+// and at least one, and a PDF's pages must be countable (src/lib/extraction/page-count.ts),
 // so that no run can read more than the stale-run reaper's estimate
 // assumes. Images are one page. `pages` is the count, null when it couldn't
 // be read.
 export function checkPageCount(pages: number | null): ErrorCode | null {
   if (pages === null) return "document.pages_unreadable";
+  if (pages < 1) return "document.no_pages";
   if (pages > EXTRACTION_LIMITS.maxPagesPerDocument) return "document.too_many_pages";
   return null;
 }
@@ -505,8 +568,9 @@ export type DatabaseOperation =
   | "update_document"
   | "delete_document"
   | "complete_document_upload"
-  | "open_extraction_run"
-  | "close_extraction_run"
+  | "enqueue_extraction_run"
+  // the worker recording a run's outcome (finish_extraction_run)
+  | "record_run"
   | "select";
 
 // A PostgrestError, or the plain { code, message, details, hint } object
@@ -524,8 +588,9 @@ const JWT_REJECTED = new Set(["PGRST301", "PGRST302", "PGRST303"]);
 
 // Worth repeating unchanged: serialization failure, deadlock, out of
 // resources, lock not available, statement timeout, shutdowns. Not the
-// whole of class 53: 53400 is our spend ceiling.
-const TRANSIENT_SQLSTATES = new Set([
+// whole of class 53: 53400 is our spend ceiling. The worker also repeats a
+// finish refused with one of these (delivery.ts).
+export const TRANSIENT_SQLSTATES: ReadonlySet<string> = new Set([
   "40001",
   "40P01",
   "53000",
@@ -547,10 +612,10 @@ export function classifyDatabaseError(
 
 function databaseCode(error: DatabaseErrorLike | null | undefined, operation: DatabaseOperation): ErrorCode {
   if (!isRecord(error)) return "unknown";
-  // Whatever stopped the close (lost connection, expired session, a price
-  // missing for the model), the outcome for the user is the same: the run
-  // stays open until the reaper releases the document.
-  if (operation === "close_extraction_run") return "extraction.record_failed";
+  // Whatever stopped the worker's finish (lost connection, a price missing
+  // for the model), the outcome for the user is the same: the run stays
+  // open until the queue's sweep releases the document.
+  if (operation === "record_run") return "extraction.record_failed";
 
   const code = stringField(error, "code");
   const message = stringField(error, "message") ?? "";
@@ -594,7 +659,10 @@ function byOperation(operation: DatabaseOperation, code: string, message: string
 
     case "delete_tenant":
       if (code === "42501") return "tenant.delete_not_owner";
-      if (code === "55000") return "tenant.delete_has_files";
+      if (code === "55000") {
+        if (message.startsWith(DATABASE_PHRASES.tenantExtractionInProgress)) return "tenant.delete_extraction_running";
+        if (message.startsWith(DATABASE_PHRASES.tenantFilesRemain)) return "tenant.delete_has_files";
+      }
       if (code === "22P02") return "tenant.not_found";
       return undefined;
 
@@ -652,7 +720,7 @@ function byOperation(operation: DatabaseOperation, code: string, message: string
       }
       return undefined;
 
-    case "open_extraction_run":
+    case "enqueue_extraction_run":
       // missing and not-admin are one 42501 on purpose
       if (code === "42501" || code === "22P02") return "extraction.not_allowed";
       if (code === "54000") return "extraction.rate_limited";
@@ -666,7 +734,7 @@ function byOperation(operation: DatabaseOperation, code: string, message: string
       }
       return undefined;
 
-    case "close_extraction_run":
+    case "record_run":
     case "select":
       return undefined;
   }
@@ -966,7 +1034,7 @@ export function classifyRunError(error: string | null | undefined): ErrorCode {
 }
 
 // "cost estimated at the dearest price on file (22023; served by x): ..." or
-// "cost estimated at claude-haiku-4-5-20251001 prices (abandoned; ...): ..."
+// "cost estimated at claude-sonnet-5 prices (abandoned; ...): ..."
 const COST_ESTIMATED = new RegExp(`^${escapeRegExp(RUN_ERROR_MARKERS.costEstimated)} [^()\\n]{1,120} \\([^()]*\\): `);
 
 // Whether a run's cost is an estimate: failedCloseAttempts charged it at the
@@ -984,9 +1052,15 @@ function runCode(error: string | null | undefined): ErrorCode {
   if (estimated) return runCode(error.slice(estimated[0].length));
 
   if (error.startsWith(RUN_ERROR_MARKERS.abandoned)) return "extraction.abandoned";
+  if (error.startsWith(RUN_ERROR_MARKERS.expired)) return "extraction.expired";
   if (error.startsWith(RUN_ERROR_MARKERS.downloadFailed)) return "extraction.download_failed";
   if (error.startsWith(RUN_ERROR_MARKERS.resultNotRecorded)) return "extraction.result_not_saved";
   if (error.startsWith(RUN_ERROR_MARKERS.typeMismatch)) return "extraction.file_type_mismatch";
+  if (error.startsWith(RUN_ERROR_MARKERS.pagesUnreadable)) return "document.pages_unreadable";
+  if (error.startsWith(RUN_ERROR_MARKERS.tooManyPages)) return "document.too_many_pages";
+  if (error.startsWith(RUN_ERROR_MARKERS.noPages)) return "document.no_pages";
+  if (error.startsWith(RUN_ERROR_MARKERS.pageCountMismatch)) return "extraction.page_count_mismatch";
+  if (error.startsWith(RUN_ERROR_MARKERS.tooDense)) return "extraction.too_dense";
   // The validation error is built from the validator's own wording, but a
   // stored error can come from anywhere (an admin can close a run with any
   // text), and a document can steer the model. So nothing past these
@@ -1016,8 +1090,12 @@ function runCode(error: string | null | undefined): ErrorCode {
 }
 
 // Provider errors as describeError renders them, possibly two joined by
-// run.ts after a fallback, or one with the no-fallback note appended.
+// run.ts after a fallback, or one with the no-fallback note appended. A
+// count that failed reads as the failure it was: no call was sent after it.
 function classifyProviderText(text: string): ErrorCode {
+  if (text.startsWith(RUN_ERROR_MARKERS.inputNotMeasured)) {
+    return classifyProviderText(text.slice(RUN_ERROR_MARKERS.inputNotMeasured.length));
+  }
   if (FALLBACK_FAILED.test(text)) return "extraction.all_providers_failed";
   const match = DESCRIPTOR_AT_START.exec(text);
   if (!match) return "unknown";

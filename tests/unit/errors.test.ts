@@ -28,7 +28,8 @@ import {
 import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
 import { describe, expect, it } from "vitest";
-import { ANTHROPIC_MODEL_ENV_VAR, EXTRACTION_LIMITS, PROVIDER_ENV_VAR } from "@/lib/extraction/config";
+import { ANTHROPIC_MODEL_ENV_VAR, EXTRACTION_LIMITS, inputTokensPerCall, largestCountWithin, PROVIDER_ENV_VAR, withCountMargin } from "@/lib/extraction/config";
+import { IN_FLIGHT_BOUND_MS } from "@/lib/extraction/deadlines";
 import { describeError, ProviderError, type ProviderResponse } from "@/lib/extraction/providers/types";
 import { interpretAnthropicMessage, interpretOpenAIResponse } from "@/lib/extraction/providers/interpret";
 import { runExtraction } from "@/lib/extraction/run";
@@ -105,8 +106,19 @@ const FUNCTION_OPERATIONS: Record<string, DatabaseOperation[]> = {
   enforce_tenant_has_owner: ["update_membership", "delete_membership"],
   refuse_document_delete_while_file_exists: ["delete_document"],
   complete_document_upload: ["complete_document_upload"],
-  open_extraction_run: ["open_extraction_run"],
-  close_extraction_run: ["close_extraction_run"],
+  enqueue_extraction_run: ["enqueue_extraction_run"],
+  finish_extraction_run: ["record_run"],
+  // The pre-queue RPCs, live until a later migration drops them. The app
+  // no longer calls them (tests/unit/worker-boundary.test.ts); their errors
+  // read as their queue counterparts' would.
+  open_extraction_run: ["enqueue_extraction_run"],
+  close_extraction_run: ["record_run"],
+  // helpers, surfacing through the RPCs that call them
+  check_extraction_limits: ["enqueue_extraction_run"],
+  extraction_charge: ["record_run"],
+  // the ledger's append-only trigger: only the definer functions that end a
+  // run write the ledger, and they only insert
+  refuse_spend_change: ["record_run"],
 };
 
 // The reviewed code for every raise. A new or reworded raise fails the test
@@ -114,6 +126,7 @@ const FUNCTION_OPERATIONS: Record<string, DatabaseOperation[]> = {
 const RAISE_CODES: Record<string, ErrorCode> = {
   "create_tenant: authentication required": "auth.not_signed_in",
   "delete_tenant: only an owner can delete a tenant": "tenant.delete_not_owner",
+  "delete_tenant: an extraction is in progress for this tenant": "tenant.delete_extraction_running",
   "delete_tenant: remove the tenant's files from storage before deleting it": "tenant.delete_has_files",
   "delete_own_account: authentication required": "auth.not_signed_in",
   "delete_own_account: delete your tenants or transfer ownership first": "account.delete_owns_organization",
@@ -129,11 +142,15 @@ const RAISE_CODES: Record<string, ErrorCode> = {
   "open_extraction_run: document not found or you are not an admin of its organization": "extraction.not_allowed",
   "open_extraction_run: the document has no file yet": "extraction.no_file",
   "open_extraction_run: an extraction is already running for this document": "extraction.already_running",
-  "open_extraction_run: this organization has reached its monthly extraction spend ceiling (% USD)":
+  "enqueue_extraction_run: authentication required": "auth.not_signed_in",
+  "enqueue_extraction_run: document not found or you are not an admin of its organization": "extraction.not_allowed",
+  "enqueue_extraction_run: the document has no file yet": "extraction.no_file",
+  "enqueue_extraction_run: an extraction is already running for this document": "extraction.already_running",
+  "check_extraction_limits: this organization has reached its monthly extraction spend ceiling (% USD), counting extractions in progress":
     "extraction.tenant_budget_reached",
-  "open_extraction_run: the monthly extraction spend ceiling across all organizations has been reached (% USD)":
+  "check_extraction_limits: the monthly extraction spend ceiling across all organizations has been reached (% USD), counting extractions in progress":
     "extraction.global_budget_reached",
-  "open_extraction_run: this organization has reached its limit of % extraction runs per hour":
+  "check_extraction_limits: this organization has reached its limit of % extraction runs per hour":
     "extraction.rate_limited",
   // A failed close leaves the run open whatever the reason, and that is
   // what the user needs to know.
@@ -146,10 +163,22 @@ const RAISE_CODES: Record<string, ErrorCode> = {
   "close_extraction_run: a failed run needs an error": "extraction.record_failed",
   "close_extraction_run: a successful run must name its model": "extraction.record_failed",
   "close_extraction_run: token counts without a model": "extraction.record_failed",
-  "close_extraction_run: no price on file for model %": "extraction.record_failed",
-  "close_extraction_run: model % belongs to provider %": "extraction.record_failed",
   "close_extraction_run: fields must be a JSON array": "extraction.record_failed",
   "close_extraction_run: malformed field: %": "extraction.record_failed",
+  // The worker's finish: whatever refused it, the run stays running until
+  // the sweep, and the worker only logs the code.
+  "finish_extraction_run: status must be succeeded or failed": "extraction.record_failed",
+  "finish_extraction_run: run not found or claim token invalid": "extraction.record_failed",
+  "finish_extraction_run: run is not running": "extraction.record_failed",
+  "finish_extraction_run: a failed run cannot carry fields": "extraction.record_failed",
+  "finish_extraction_run: a failed run needs an error": "extraction.record_failed",
+  "finish_extraction_run: a successful run must name its model": "extraction.record_failed",
+  "finish_extraction_run: token counts without a model": "extraction.record_failed",
+  "finish_extraction_run: fields must be a JSON array": "extraction.record_failed",
+  "finish_extraction_run: malformed field: %": "extraction.record_failed",
+  "extraction_charge: no price on file for model %": "extraction.record_failed",
+  "extraction_charge: model % belongs to provider %": "extraction.record_failed",
+  "refuse_spend_change: extraction spend is append-only": "extraction.record_failed",
 };
 
 // Postgres substitutes each % with an argument
@@ -177,6 +206,7 @@ const DATABASE_CASES: DbCase[] = [
   ["anonymous create_tenant", pgError("42501", "permission denied for function create_tenant"), "create_tenant", "auth.not_signed_in"],
   ["tenant update by a non-admin", pgError("42501", "permission denied for table tenants"), "update_tenant", "tenant.update_not_allowed"],
   ["malformed tenant id", pgError("22P02", 'invalid input syntax for type uuid: "acme"'), "delete_tenant", "tenant.not_found"],
+  ["a 55000 on delete in words no migration raises", pgError("55000", SECRET), "delete_tenant", "unknown"],
   // memberships
   ["non-admin adds a member", pgError("42501", 'new row violates row-level security policy for table "memberships"'), "insert_membership", "membership.not_allowed"],
   ["already a member", pgError("23505", 'duplicate key value violates unique constraint "memberships_tenant_id_user_id_key"'), "insert_membership", "membership.already_member"],
@@ -196,19 +226,19 @@ const DATABASE_CASES: DbCase[] = [
   ["malformed document id on delete", pgError("22P02", 'invalid input syntax for type uuid: "x"'), "delete_document", "document.not_found"],
   ["anonymous completion", pgError("42501", "permission denied for function complete_document_upload"), "complete_document_upload", "upload.not_allowed"],
   // extraction
-  ["anonymous open", pgError("42501", "permission denied for function open_extraction_run"), "open_extraction_run", "extraction.not_allowed"],
-  ["malformed id on open", pgError("22P02", 'invalid input syntax for type uuid: "x"'), "open_extraction_run", "extraction.not_allowed"],
-  ["a 53400 in words no migration raises", pgError("53400", SECRET), "open_extraction_run", "unknown"],
-  ["a 55000 in words no migration raises", pgError("55000", SECRET), "open_extraction_run", "unknown"],
-  ["a lost connection on close", { code: "", message: "TypeError: fetch failed" }, "close_extraction_run", "extraction.record_failed"],
+  ["anonymous enqueue", pgError("42501", "permission denied for function enqueue_extraction_run"), "enqueue_extraction_run", "extraction.not_allowed"],
+  ["malformed id on enqueue", pgError("22P02", 'invalid input syntax for type uuid: "x"'), "enqueue_extraction_run", "extraction.not_allowed"],
+  ["a 53400 on enqueue in words no migration raises", pgError("53400", SECRET), "enqueue_extraction_run", "unknown"],
+  ["a 55000 in words no migration raises", pgError("55000", SECRET), "enqueue_extraction_run", "unknown"],
+  ["a lost connection on the worker's finish", { code: "", message: "TypeError: fetch failed" }, "record_run", "extraction.record_failed"],
   // anywhere
   ["no response", { code: "", message: "TypeError: fetch failed", details: "Caused by: ...", hint: "" } as PostgrestError, "select", "network.unavailable"],
   ["aborted", { code: "", message: "AbortError: This operation was aborted", details: "", hint: "Request was aborted (timeout or manual cancellation)" } as PostgrestError, "insert_document", "network.unavailable"],
   ["expired JWT", pgError("PGRST303", "JWT expired"), "select", "auth.session_expired"],
-  ["undecodable JWT", pgError("PGRST301", "No suitable key or wrong key type"), "open_extraction_run", "auth.session_expired"],
+  ["undecodable JWT", pgError("PGRST301", "No suitable key or wrong key type"), "enqueue_extraction_run", "auth.session_expired"],
   ["HTTP 401 without a code", { message: "Unauthorized", status: 401 }, "select", "auth.session_expired"],
   ["PostgREST can't reach Postgres", pgError("PGRST001", "Database client error. Retrying the connection."), "select", "service.unavailable"],
-  ["statement timeout", pgError("57014", "canceling statement due to statement timeout"), "open_extraction_run", "service.unavailable"],
+  ["statement timeout", pgError("57014", "canceling statement due to statement timeout"), "enqueue_extraction_run", "service.unavailable"],
   ["serialization failure", pgError("40001", "could not serialize access due to concurrent update"), "update_membership", "service.unavailable"],
   ["connection exception", pgError("08006", "connection failure"), "select", "service.unavailable"],
   ["a gateway's HTML 502", { message: "<html><body>502 Bad Gateway</body></html>", status: 502 }, "select", "service.unavailable"],
@@ -374,11 +404,22 @@ const RUN_STRING_CASES: [label: string, error: string | null, ErrorCode][] = [
   ["close refused, closed as failed", "the result could not be recorded: 22023", "extraction.result_not_saved"],
   ["magic bytes", "file content (unrecognized) does not match its declared type (application/pdf)", "extraction.file_type_mismatch"],
   ["magic bytes, other type", "file content (image/png) does not match its declared type (image/jpeg)", "extraction.file_type_mismatch"],
+  ["pages the worker can't count", "pages unreadable: the file's pages could not be counted", "document.pages_unreadable"],
+  ["more pages than the limit", `too many pages: the file has 101, the limit is ${EXTRACTION_LIMITS.maxPagesPerDocument}`, "document.too_many_pages"],
+  ["no pages", "no pages: the file has none", "document.no_pages"],
+  ["a page count other than the enqueued one", "page count mismatch: the file has 3, the run was enqueued with 1", "extraction.page_count_mismatch"],
+  ["a page count the enqueue didn't have", "page count mismatch: the file has 3, the run was enqueued with none", "extraction.page_count_mismatch"],
   ["no key", describeError(new Error("extraction is not configured: ANTHROPIC_API_KEY is not set")), "extraction.not_configured"],
   ["bad provider setting", describeError(new Error(`${PROVIDER_ENV_VAR} must be "anthropic" or "openai"`)), "extraction.not_configured"],
   ["bad Anthropic model setting", describeError(new Error(`${ANTHROPIC_MODEL_ENV_VAR} must be one of claude-haiku-4-5-20251001, claude-sonnet-5`)), "extraction.not_configured"],
   ["no key, unwrapped", "extraction is not configured: OPENAI_API_KEY is not set", "extraction.not_configured"],
   ["reaped", `abandoned: still running after ${EXTRACTION_LIMITS.staleRunMinutes} minutes; failed by a later open`, "extraction.abandoned"],
+  [
+    "reaped by the queue's sweep, at the estimate",
+    "cost estimated at claude-sonnet-5 prices (abandoned; at most 3 calls of 7500 tokens in and 2048 out, for 1 page): abandoned: claimed but not finished within 300 seconds",
+    "extraction.abandoned",
+  ],
+  ["expired before any claim", `expired: not claimed within ${EXTRACTION_LIMITS.staleRunMinutes} minutes; cancelled at no cost`, "extraction.expired"],
   ["both failed", "anthropic transport: request timed out; fallback openai server 503: Service Unavailable", "extraction.all_providers_failed"],
   ["both failed, fallback refused", "openai server 502: bad gateway; fallback anthropic refusal: the model declined to process this document", "extraction.all_providers_failed"],
   // One provider's error that merely mentions another is one failure.
@@ -391,6 +432,10 @@ const RUN_STRING_CASES: [label: string, error: string | null, ErrorCode][] = [
   ["an OpenAI response that failed", "openai server: the response did not complete (failed)", "extraction.provider_unavailable"],
   ["an OpenAI response cancelled", "openai client: the response did not complete (cancelled)", "extraction.answer_incomplete"],
   ["cut off at the context window", "anthropic truncated: the answer was cut off at the model's context window", "extraction.truncated"],
+  ["too dense", "too dense: its input (310000 tokens) is over the 304500 a call may read for 100 pages", "extraction.too_dense"],
+  ["a count rejected", "input not measured: anthropic client 400: Could not process PDF", "extraction.provider_rejected"],
+  ["a count that got no answer", "input not measured: openai transport: connection failed", "extraction.provider_unavailable"],
+  ["a count behind a marker that isn't one", "input not measured: nothing a provider wrote", "unknown"],
   ["an exception from the action", describeError(new TypeError(SECRET)), "unknown"],
   ["empty", "", "unknown"],
   ["blank", "   ", "unknown"],
@@ -404,6 +449,10 @@ type RunCase = {
   label: string;
   primary: (ProviderResponse | ProviderError)[];
   fallback?: (ProviderResponse | ProviderError)[];
+  // what each fake's token count says before each call, if not the default
+  // (run.ts measures every call first)
+  primaryCounts?: (number | ProviderError)[];
+  fallbackCounts?: (number | ProviderError)[];
   // what run.ts stores, where the exact text matters
   stored?: string | RegExp;
   expected: ErrorCode;
@@ -501,15 +550,72 @@ const RUN_CASES: RunCase[] = [
   { label: "invalid, then the retry times out", primary: [notJson(), new ProviderError("anthropic", "transport", PROVIDER_MESSAGES.timeout)], expected: "extraction.provider_timeout" },
   { label: "impersonating keys, then the retry times out", primary: [spoofed, new ProviderError("anthropic", "transport", PROVIDER_MESSAGES.timeout)], expected: "extraction.provider_timeout" },
   { label: "invalid, then the retry is refused", primary: [notJson(), new ProviderError("anthropic", "refusal", "declined")], expected: "extraction.refused" },
+  // what the count before each call can stop (run.ts)
+  {
+    label: "the first call measures over the limit: nothing sent",
+    primary: [],
+    primaryCounts: [largestCountWithin(inputTokensPerCall(1)) + 1],
+    stored: `too dense: its input (${largestCountWithin(inputTokensPerCall(1)) + 1} tokens, ${withCountMargin(largestCountWithin(inputTokensPerCall(1)) + 1)} with the count's 5% margin) is over the ${inputTokensPerCall(1)} a call may read for 1 page`,
+    expected: "extraction.too_dense",
+  },
+  {
+    label: "the count times out, no fallback",
+    primary: [],
+    primaryCounts: [new ProviderError("anthropic", "transport", PROVIDER_MESSAGES.timeout)],
+    stored: "input not measured: anthropic transport: request timed out; no fallback provider is configured",
+    expected: "extraction.provider_timeout",
+  },
+  {
+    label: "the count is rejected",
+    primary: [],
+    primaryCounts: [new ProviderError("anthropic", "client", "Could not process PDF", 400)],
+    fallback: [],
+    stored: "input not measured: anthropic client 400: Could not process PDF",
+    expected: "extraction.provider_rejected",
+  },
+  {
+    label: "primary times out, the fallback's count fails: the fallback isn't used",
+    primary: [new ProviderError("anthropic", "transport", PROVIDER_MESSAGES.timeout)],
+    fallback: [],
+    fallbackCounts: [new ProviderError("openai", "server", "Service Unavailable", 503)],
+    stored:
+      "anthropic transport: request timed out; the fallback provider was not used: its input could not be measured (openai server 503: Service Unavailable)",
+    expected: "extraction.provider_timeout",
+  },
+  {
+    label: "primary 5xx, the fallback measures over the limit: the fallback isn't used",
+    primary: [new ProviderError("anthropic", "server", "Overloaded", 529)],
+    fallback: [],
+    fallbackCounts: [20_000],
+    stored: `anthropic server 529: Overloaded; the fallback provider was not used: its input (20000 tokens, 21000 with the count's 5% margin) is over the ${inputTokensPerCall(1)} a call may read for 1 page`,
+    expected: "extraction.provider_unavailable",
+  },
+  {
+    label: "invalid, then the retry measures over the limit: not sent",
+    primary: [notJson()],
+    primaryCounts: [1000, 20_000],
+    stored: new RegExp(
+      `^retry after invalid response \\([\\s\\S]*\\) failed: the retry was not sent: its input \\(20000 tokens, 21000 with the count's 5% margin\\) is over the ${inputTokensPerCall(1, true)} a call may read for 1 page$`,
+    ),
+    expected: "extraction.invalid_answer",
+  },
+  {
+    label: "invalid, then the retry's count times out",
+    primary: [notJson()],
+    primaryCounts: [1000, new ProviderError("anthropic", "transport", PROVIDER_MESSAGES.timeout)],
+    stored: /\) failed: input not measured: anthropic transport: request timed out$/,
+    expected: "extraction.provider_timeout",
+  },
 ];
 
-async function storedError(primary: (ProviderResponse | ProviderError)[], fallback?: (ProviderResponse | ProviderError)[]) {
+async function storedError({ primary, fallback, primaryCounts, fallbackCounts }: RunCase) {
   const outcome = await runExtraction({
     bytes: new TextEncoder().encode("%PDF-1.4 fake"),
     mimeType: "application/pdf",
+    pages: 1,
     filename: "fake.pdf",
-    primary: fakeProvider("anthropic", "claude-haiku-4-5-20251001", primary),
-    fallback: fallback ? fakeProvider("openai", "gpt-5-nano", fallback) : null,
+    primary: fakeProvider("anthropic", "claude-haiku-4-5-20251001", primary, primaryCounts),
+    fallback: fallback ? fakeProvider("openai", "gpt-5-nano", fallback, fallbackCounts) : null,
   });
   if (outcome.status !== "failed") throw new Error("expected the fake run to fail");
   return outcome.error;
@@ -533,6 +639,7 @@ const CHECK_CASES: CheckCase[] = [
   ["exactly the page limit", () => checkPageCount(EXTRACTION_LIMITS.maxPagesPerDocument), null],
   ["one page over the limit", () => checkPageCount(EXTRACTION_LIMITS.maxPagesPerDocument + 1), "document.too_many_pages"],
   ["pages that can't be counted", () => checkPageCount(null), "document.pages_unreadable"],
+  ["no pages at all", () => checkPageCount(0), "document.no_pages"],
   ["organization ok", () => checkTenantInput("Acme", "acme-1"), null],
   ["organization name blank", () => checkTenantInput("  ", "acme"), "tenant.name_required"],
   ["slug too short", () => checkTenantInput("Acme", "ab"), "tenant.slug_invalid"],
@@ -632,6 +739,10 @@ describe("the catalog", () => {
     expect(ERROR_CATALOG["extraction.rate_limited"].message).toContain(String(EXTRACTION_LIMITS.hourlyRunLimit));
     expect(ERROR_CATALOG["extraction.already_running"].message).toContain(`${EXTRACTION_LIMITS.staleRunMinutes} minutes`);
     expect(ERROR_CATALOG["extraction.record_failed"].message).toContain(`${EXTRACTION_LIMITS.staleRunMinutes} minutes`);
+    expect(ERROR_CATALOG["extraction.expired"].message).toContain(`${EXTRACTION_LIMITS.staleRunMinutes} minutes`);
+    // the longest a run stays in flight, rounded up (deadlines.ts): 16 min 10 s
+    expect(ERROR_CATALOG["tenant.delete_extraction_running"].message).toContain(`${Math.ceil(IN_FLIGHT_BOUND_MS / 60_000)} minutes`);
+    expect(ERROR_CATALOG["tenant.delete_extraction_running"].message).toContain("within 17 minutes");
   });
 
   it("can't be changed at runtime", () => {
@@ -733,12 +844,14 @@ describe("the migrations", () => {
   });
 
   it("uses one SQLSTATE for two outcomes only where the module reads the phrase", () => {
-    // If open_extraction_run or complete_document_upload gains a third
-    // message under one of these SQLSTATEs, the phrases above won't cover it.
+    // If one of these functions gains a third message under one of these
+    // SQLSTATEs, the phrases above won't cover it.
     const phrased: Record<string, string[]> = {
-      "open_extraction_run 53400": [DATABASE_PHRASES.tenantCeilingReached, DATABASE_PHRASES.globalCeilingReached],
+      "check_extraction_limits 53400": [DATABASE_PHRASES.tenantCeilingReached, DATABASE_PHRASES.globalCeilingReached],
+      "enqueue_extraction_run 55000": [DATABASE_PHRASES.documentHasNoFile, DATABASE_PHRASES.extractionAlreadyRunning],
       "open_extraction_run 55000": [DATABASE_PHRASES.documentHasNoFile, DATABASE_PHRASES.extractionAlreadyRunning],
       "complete_document_upload 55000": [DATABASE_PHRASES.notWaitingForUpload, DATABASE_PHRASES.noFileUploaded],
+      "delete_tenant 55000": [DATABASE_PHRASES.tenantExtractionInProgress, DATABASE_PHRASES.tenantFilesRemain],
     };
     for (const [key, phrases] of Object.entries(phrased)) {
       const [fn, sqlstate] = key.split(" ");
@@ -759,8 +872,11 @@ describe("the migrations", () => {
     expect(allSql).not.toMatch(/drop constraint (if exists )?tenants_(name|slug)_check/i);
   });
 
-  it("still has the reaper's message, in the live open_extraction_run", () => {
-    expect(parsed.liveBodies.get("open_extraction_run")).toContain(RUN_ERROR_MARKERS.abandoned);
+  it("still has the reaper's messages, in the live reap_extraction_run", () => {
+    const reap = parsed.liveBodies.get("reap_extraction_run") ?? "";
+    expect(reap).toContain(`'cost estimated at %s prices (abandoned; `);
+    expect(reap).toContain(`): ${RUN_ERROR_MARKERS.abandoned}%s'`);
+    expect(reap).toContain(`'${RUN_ERROR_MARKERS.expired}%s'`);
   });
 
   it("enforces the rules the local checks mirror", () => {
@@ -778,10 +894,13 @@ describe("the migrations", () => {
 
 describe("the sources that write run errors", () => {
   it("still write the markers the module reads", () => {
-    const action = read("src/app/app/extract-action.ts");
-    expect(action).toContain(RUN_ERROR_MARKERS.downloadFailed);
-    expect(action).toContain(RUN_ERROR_MARKERS.typeMismatch);
-    expect(action).toContain("does not match its declared type");
+    const delivery = read("src/lib/extraction/delivery.ts");
+    expect(delivery).toContain(RUN_ERROR_MARKERS.downloadFailed);
+    expect(delivery).toContain(RUN_ERROR_MARKERS.typeMismatch);
+    expect(delivery).toContain("does not match its declared type");
+    expect(delivery).toContain("RUN_ERROR_MARKERS.pagesUnreadable");
+    expect(delivery).toContain("RUN_ERROR_MARKERS.tooManyPages");
+    expect(delivery).toContain("RUN_ERROR_MARKERS.pageCountMismatch");
 
     const run = read("src/lib/extraction/run.ts");
     expect(run).toContain(RUN_ERROR_MARKERS.invalidAfterRetry);
@@ -848,8 +967,9 @@ describe("classifyRunError", () => {
     expect(classifyRunError(error)).toBe(expected);
   });
 
-  it.each(RUN_CASES)("what the orchestrator stores: $label", async ({ primary, fallback, stored, expected }) => {
-    const error = await storedError(primary, fallback);
+  it.each(RUN_CASES)("what the orchestrator stores: $label", async (runCase) => {
+    const { stored, expected } = runCase;
+    const error = await storedError(runCase);
     if (typeof stored === "string") expect(error).toBe(stored);
     else if (stored) expect(error).toMatch(stored);
     expect(classifyRunError(error)).toBe(expected);
@@ -902,7 +1022,7 @@ describe("what the user sees", () => {
     const secretParts = ["sk-ant-api03", "7c9e6679", "<script>", "orders"];
     for (const input of garbage) {
       const codes = [
-        classifyDatabaseError(input as never, "open_extraction_run"),
+        classifyDatabaseError(input as never, "enqueue_extraction_run"),
         classifyAuthError(input as never, "signUp"),
         classifyStorageError(input as never, "createSignedUrl"),
         classifyProviderError(input as never),
@@ -924,7 +1044,7 @@ describe("what the user sees", () => {
     };
     const fields = ["code", "message", "name", "status", "statusCode", "kind", "reasons"];
     const classifyAll = (input: unknown) => [
-      classifyDatabaseError(input as never, "open_extraction_run"),
+      classifyDatabaseError(input as never, "enqueue_extraction_run"),
       classifyAuthError(input as never, "signUp"),
       classifyStorageError(input as never, "upload"),
       classifyProviderError(input as never),

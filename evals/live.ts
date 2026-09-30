@@ -95,6 +95,7 @@ export async function recordLive(
       bytes: committedPdf(fixture),
       mimeType: "application/pdf",
       filename: `${fixture.id}.pdf`,
+      pages: fixture.pages.length,
       primary: recorder,
       // one provider per recording
       fallback: null,

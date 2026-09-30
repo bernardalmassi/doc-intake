@@ -1,12 +1,23 @@
 // The Supabase project the two database suites run against, checked to be
 // a different project from the app's (scripts/supabase-test-target.mjs).
 // Importing this throws before any test runs if SUPABASE_TEST_URL is the
-// app's project, so a misconfigured .env.test can't spend the app's budget.
+// app's project, or if SUPABASE_TEST_SECRET_KEY is missing, isn't a secret
+// key or is the app's, so a misconfigured .env.test can't spend the app's
+// budget or run the worker against the app.
 
 import { fileURLToPath } from "node:url";
 import { supabaseTestTarget } from "../../scripts/supabase-test-target.mjs";
 
-const { url, publishableKey } = supabaseTestTarget(fileURLToPath(new URL("../..", import.meta.url)));
+// Inside the Vitest "supabase" project, NEXT_PUBLIC_SUPABASE_URL and
+// SUPABASE_SECRET_KEY are the test project's, mapped there for the local
+// worker runner (vitest.config.mts), so they are left out here: the app's
+// project is read from its .env files and SUPABASE_APP_URL.
+const env = Object.fromEntries(
+  Object.entries(process.env).filter(([name]) => name !== "NEXT_PUBLIC_SUPABASE_URL" && name !== "SUPABASE_SECRET_KEY"),
+);
+const { url, publishableKey } = supabaseTestTarget(fileURLToPath(new URL("../..", import.meta.url)), env, {
+  requireSecretKey: true,
+});
 
 export const SUPABASE_TEST_URL = url;
 export const SUPABASE_TEST_PUBLISHABLE_KEY = publishableKey;

@@ -107,6 +107,9 @@ async function runSynthetic(fixture: Fixture, text: string) {
   const inner: ExtractionProvider = {
     name: "openai",
     model: "gpt-5-nano",
+    async countInputTokens() {
+      return 1000;
+    },
     async extract(): Promise<ProviderResponse> {
       return { text, inputTokens: 2000, outputTokens: 400, model: "gpt-5-nano-2025-08-07" };
     },
@@ -116,6 +119,7 @@ async function runSynthetic(fixture: Fixture, text: string) {
   const outcome = await runExtraction({
     bytes: committedPdf(fixture),
     mimeType: "application/pdf",
+    pages: 1,
     filename: `${fixture.id}.pdf`,
     primary: recorder,
     fallback: null,

@@ -4,7 +4,7 @@
 // made. No model, no database, no files written.
 
 import { describe, expect, it } from "vitest";
-import { computeCostUsd, DEFAULT_MODELS, MAX_OUTPUT_TOKENS } from "@/lib/extraction/config";
+import { computeCostUsd, DEFAULT_MODELS, MAX_OUTPUT_TOKENS, withCountMargin } from "@/lib/extraction/config";
 import {
   type ExtractionProvider,
   type ExtractionRequest,
@@ -46,6 +46,9 @@ function fake(answers: (string | ProviderError)[]): ExtractionProvider & { reque
     name: "anthropic",
     model: DEFAULT_MODELS.anthropic,
     requests,
+    async countInputTokens() {
+      return 1000;
+    },
     async extract(request): Promise<ProviderResponse> {
       requests.push(request);
       const next = answers.shift();
@@ -64,14 +67,14 @@ const cost = (u: ProviderUsage) => computeCostUsd(u.model, u.inputTokens, u.outp
 
 async function record(answers: (string | ProviderError)[], bytes = pdf) {
   const recorder = recordingProvider(fake(answers), budget(), cost, () => 0);
-  const outcome = await runExtraction({ bytes, mimeType: "application/pdf", filename: "x.pdf", primary: recorder, fallback: null });
+  const outcome = await runExtraction({ bytes, mimeType: "application/pdf", pages: 1, filename: "x.pdf", primary: recorder, fallback: null });
   const recording = parseRecording(serializeRecording(toRecording("unit", recorder, new Date(0))), "unit");
   return { outcome, recording };
 }
 
 async function replay(recording: ReturnType<typeof parseRecording>, bytes = pdf) {
   const provider = replayProvider(recording);
-  const outcome = await runExtraction({ bytes, mimeType: "application/pdf", filename: "x.pdf", primary: provider, fallback: null });
+  const outcome = await runExtraction({ bytes, mimeType: "application/pdf", pages: 1, filename: "x.pdf", primary: provider, fallback: null });
   return { outcome, provider };
 }
 
@@ -221,18 +224,40 @@ describe("the live budget", () => {
     expect(tight.calls).toBe(2);
   });
 
+  it("charges a call that got no answer at its measured input with the count's margin and the output cap, and one refused with a status at 0", async () => {
+    const b = budget();
+    const recorder = recordingProvider(
+      fake([new ProviderError("anthropic", "transport", "request timed out")]),
+      b,
+      cost,
+      () => 0,
+    );
+    await runExtraction({ bytes: pdf, mimeType: "application/pdf", pages: 1, primary: recorder, fallback: null });
+    // the fake's count is 1000 (the object literal above), 1050 with the margin
+    expect(b.spentUsd).toBe(computeCostUsd(DEFAULT_MODELS.anthropic, withCountMargin(1000), MAX_OUTPUT_TOKENS));
+    expect(recorder.calls).toHaveLength(1);
+
+    const refused = budget();
+    const rejecting = recordingProvider(fake([new ProviderError("anthropic", "client", "invalid request", 400)]), refused, cost, () => 0);
+    await runExtraction({ bytes: pdf, mimeType: "application/pdf", pages: 1, primary: rejecting, fallback: null });
+    expect(refused.spentUsd).toBe(0);
+  });
+
   it("fails closed when the served model can't be priced: the pass aborts, nothing is free", async () => {
     // the provider answers, but reports a model the price table doesn't know
     const inner: ExtractionProvider = {
       name: "anthropic",
       model: DEFAULT_MODELS.anthropic,
+      async countInputTokens() {
+        return 1000;
+      },
       async extract() {
         return { text: answer(), inputTokens: 5000, outputTokens: 400, model: "claude-unpriced-9" };
       },
     };
     const b = budget();
     const recorder = recordingProvider(inner, b, cost);
-    const outcome = await runExtraction({ bytes: pdf, mimeType: "application/pdf", filename: "x.pdf", primary: recorder, fallback: null });
+    const outcome = await runExtraction({ bytes: pdf, mimeType: "application/pdf", pages: 1, filename: "x.pdf", primary: recorder, fallback: null });
     // runExtraction reports it as a failed run; the live runner checks the
     // budget after every run and stops on this
     expect(outcome.status).toBe("failed");

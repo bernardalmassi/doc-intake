@@ -39,6 +39,34 @@ describe("the Supabase test target", () => {
     expect(() => checkTestTarget({ testUrl: "not a url", testKey: "k", appUrls: [APP], appKeys: [] })).toThrow(/not a URL/);
   });
 
+  it("accepts the test project's secret key for the local runner, and requires it when asked", () => {
+    const base = { testUrl: TEST, testKey: "sb_publishable_test", appUrls: [APP], appKeys: ["sb_publishable_app"] };
+    expect(checkTestTarget({ ...base, testSecretKey: "sb_secret_test", appSecretKeys: ["sb_secret_app"] }).secretKey).toBe("sb_secret_test");
+    // test:db needs none
+    expect(checkTestTarget(base).secretKey).toBeUndefined();
+    expect(() => checkTestTarget({ ...base, requireSecretKey: true })).toThrow(/Set SUPABASE_TEST_SECRET_KEY/);
+  });
+
+  it("refuses a test secret key that isn't a secret key, or is the app's", () => {
+    const base = { testUrl: TEST, testKey: "sb_publishable_test", appUrls: [APP], appKeys: [] };
+    for (const testSecretKey of ["sb_publishable_test", "eyJhbGciOiJIUzI1NiJ9.service_role", "secret"]) {
+      expect(() => checkTestTarget({ ...base, testSecretKey }), testSecretKey).toThrow(/must be one of the test project's secret keys/);
+    }
+    expect(() => checkTestTarget({ ...base, testSecretKey: "sb_secret_app", appSecretKeys: ["sb_secret_app"] })).toThrow(/app's secret key/);
+  });
+
+  it("finds the app's secret key in its .env files, not in the environment the suites map", () => {
+    const root = mkdtempSync(join(tmpdir(), "target-secret-"));
+    writeFileSync(join(root, ".env.local"), `NEXT_PUBLIC_SUPABASE_URL=${APP}\nSUPABASE_SECRET_KEY=sb_secret_app\n`);
+    writeFileSync(join(root, ".env.test"), `SUPABASE_TEST_URL=${TEST}\nSUPABASE_TEST_PUBLISHABLE_KEY=test\nSUPABASE_TEST_SECRET_KEY=sb_secret_app\n`);
+    expect(() => supabaseTestTarget(root, {})).toThrow(/app's secret key/);
+    // inside Vitest, SUPABASE_SECRET_KEY is the test key: it isn't an app key
+    expect(
+      supabaseTestTarget(root, { SUPABASE_TEST_SECRET_KEY: "sb_secret_test", SUPABASE_SECRET_KEY: "sb_secret_test" }, { requireSecretKey: true })
+        .secretKey,
+    ).toBe("sb_secret_test");
+  });
+
   it("reads .env files the way dotenv does, the last of a repeated key winning", () => {
     expect(parseEnv("# c\nA=1\nexport B='two'\nA=3\nC=\"x # y\"\nD=v # note\n")).toEqual({ A: "3", B: "two", C: "x # y", D: "v" });
     expect(projectRef("http://127.0.0.1:54321")).toBe("127.0.0.1:54321");

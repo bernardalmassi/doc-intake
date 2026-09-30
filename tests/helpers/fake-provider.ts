@@ -6,28 +6,54 @@
 // A plain module, not a test file: Vitest doesn't collect it, and it
 // imports nothing that needs a secret, a database or "server-only".
 
-import type { ProviderName } from "@/lib/extraction/config";
+import { type ProviderName, withCountMargin } from "@/lib/extraction/config";
 import type { ExtractionProvider, ExtractionRequest, ProviderResponse } from "@/lib/extraction/providers/types";
 import { FIELD_NAMES } from "@/lib/extraction/schema";
 
-export type FakeProvider = ExtractionProvider & { requests: ExtractionRequest[] };
+export type FakeProvider = ExtractionProvider & { requests: ExtractionRequest[]; counted: ExtractionRequest[] };
+
+// What a fake's token count says when nothing else does: well under the
+// per-call limit for one page (11 927), as real one-page fixtures are.
+export const FAKE_COUNT = 1000;
+
+// What a call counted at FAKE_COUNT is charged when it gets no answer: the
+// count with its margin (withCountMargin in config.ts), plus the output cap.
+export const FAKE_CHARGE = withCountMargin(FAKE_COUNT);
 
 // Answers from a script, one entry per call, in order: a response is
 // returned, an error is thrown (a ProviderError to act as the real provider
 // would, anything else to act as a bug). Every request is recorded. Running
 // out of script throws too, so a test that expected fewer calls fails on
 // its request count.
+//
+// Its token count (run.ts measures every call first) answers from `counts`
+// in order if given (a number, or an error to throw), otherwise FAKE_COUNT.
+// Every counted request is recorded too.
 export function fakeProvider(
   name: ProviderName,
   model: string,
   answers: (ProviderResponse | Error)[],
+  counts?: (number | Error)[],
 ): FakeProvider {
   const script = [...answers];
+  const countScript = counts ? [...counts] : null;
   const requests: ExtractionRequest[] = [];
+  const counted: ExtractionRequest[] = [];
   return {
     name,
     model,
     requests,
+    counted,
+    async countInputTokens(request) {
+      counted.push(request);
+      if (countScript) {
+        const next = countScript.shift();
+        if (next === undefined) throw new Error(`fake ${name} provider has no count left`);
+        if (next instanceof Error) throw next;
+        return next;
+      }
+      return FAKE_COUNT;
+    },
     async extract(request) {
       requests.push(request);
       const next = script.shift();

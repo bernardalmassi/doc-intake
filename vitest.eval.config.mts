@@ -16,15 +16,23 @@ import { defineConfig } from "vitest/config";
 //                  from .env.local or the default, "anthropic". It only
 //                  decides which provider selectProviders calls primary;
 //                  live recording records both.
+//   count mode     ANTHROPIC_API_KEY from .env.local only, OPENAI_API_KEY
+//                  empty; and EVAL_COUNT_IMAGES, the two image paths
+//                  evals/count.ts counts. The counter can reach nothing but
+//                  Anthropic's free token count endpoint.
 //   other modes    both keys empty, so a replay can't reach a provider even
 //                  if a key is exported in the shell.
 //
 // "server-only" is aliased to its empty module so the provider modules can
 // be loaded for live recording outside a React server bundle.
 
-function liveEnv(): Record<string, string> {
+function localEnv(): Record<string, string | undefined> {
   const path = fileURLToPath(new URL("./.env.local", import.meta.url));
-  const file = existsSync(path) ? parseEnv(readFileSync(path, "utf8")) : {};
+  return existsSync(path) ? parseEnv(readFileSync(path, "utf8")) : {};
+}
+
+function liveEnv(): Record<string, string> {
+  const file = localEnv();
   return {
     ANTHROPIC_API_KEY: file.ANTHROPIC_API_KEY ?? "",
     OPENAI_API_KEY: file.OPENAI_API_KEY ?? "",
@@ -32,9 +40,23 @@ function liveEnv(): Record<string, string> {
   };
 }
 
+function countEnv(): Record<string, string> {
+  return {
+    ANTHROPIC_API_KEY: localEnv().ANTHROPIC_API_KEY ?? "",
+    OPENAI_API_KEY: "",
+    EXTRACTION_PROVIDER: "anthropic",
+    EVAL_COUNT_IMAGES: process.env.EVAL_COUNT_IMAGES ?? "",
+  };
+}
+
 export default defineConfig(() => {
   const live = process.env.EVAL_MODE === "live";
-  const env = live ? liveEnv() : { ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "", EXTRACTION_PROVIDER: "anthropic" };
+  const count = process.env.EVAL_MODE === "count";
+  const env = live
+    ? liveEnv()
+    : count
+      ? countEnv()
+      : { ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "", EXTRACTION_PROVIDER: "anthropic" };
   return {
     resolve: {
       alias: {
@@ -50,7 +72,7 @@ export default defineConfig(() => {
       env,
       reporters: ["verbose"],
       // live calls take seconds each; replay takes milliseconds
-      testTimeout: live ? 15 * 60_000 : 60_000,
+      testTimeout: live || count ? 15 * 60_000 : 60_000,
     },
   };
 });
