@@ -51,19 +51,22 @@ export function DocumentList({ entries, slug, canManage }: ListProps) {
             <ul className="border-t border-ink">
               {/* The order the page arrived with, kept while it polls: a
                   line never moves under the reader (StableOrder). */}
-              <StableOrder ids={stated.map(({ entry }) => entry.document.id)}>
-                {stated.map(({ entry, state }) => (
-                  <li key={entry.document.id}>
-                    <DocumentLine
-                      entry={entry}
-                      state={state}
-                      slug={slug}
-                      canManage={canManage}
-                      explainExtract={canManage && entry === firstReady?.entry}
-                    />
-                  </li>
-                ))}
-              </StableOrder>
+              <StableOrder
+                lines={stated.map(({ entry, state }) => ({
+                  id: entry.document.id,
+                  line: (
+                    <li>
+                      <DocumentLine
+                        entry={entry}
+                        state={state}
+                        slug={slug}
+                        canManage={canManage}
+                        explainExtract={canManage && entry === firstReady?.entry}
+                      />
+                    </li>
+                  ),
+                }))}
+              />
             </ul>
           )}
         </div>

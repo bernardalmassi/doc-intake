@@ -1,8 +1,8 @@
 "use client";
 
 import {
-  Children,
   createContext,
+  Fragment,
   useCallback,
   useContext,
   useEffect,
@@ -125,17 +125,28 @@ export function keepOrder(previous: readonly string[], current: readonly string[
   return order;
 }
 
-// The register's lines, in the order kept above. ids and children are in
-// the server's order, one child per id.
-export function StableOrder({ ids, children }: { ids: string[]; children: React.ReactNode }) {
+// The register's lines, in the order kept above; `lines` comes in the
+// server's order. Each line is keyed here by its document's id, on a
+// wrapper, and never by the key on what the server rendered: a refresh's
+// payload can deliver a line as a lazy chunk, which the Children helpers
+// key by position, and a line keyed by position takes another line's
+// state (an open line, an armed Delete, focus) when the server's order
+// changes.
+export function StableOrder({ lines }: { lines: { id: string; line: React.ReactNode }[] }) {
+  const ids = lines.map(({ id }) => id);
   const [order, setOrder] = useState<string[]>(ids);
   const next = keepOrder(order, ids);
   // Stored during render, as React's docs do for state that follows a
   // prop: the next render reads it at once, and nothing is drawn twice.
   if (next.length !== order.length || next.some((id, index) => id !== order[index])) setOrder(next);
-  const items = Children.toArray(children);
-  const byId = new Map(ids.map((id, index) => [id, items[index]]));
-  return <>{next.map((id) => byId.get(id))}</>;
+  const byId = new Map(lines.map(({ id, line }) => [id, line]));
+  return (
+    <>
+      {next.map((id) => (
+        <Fragment key={id}>{byId.get(id)}</Fragment>
+      ))}
+    </>
+  );
 }
 
 // For DocumentActions: stable, and null outside a register.
