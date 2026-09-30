@@ -79,6 +79,16 @@ export function runFailureSentence(code: ErrorCode | null): string {
   return userFacingError(code).message;
 }
 
+// ---------------------------------------------------------------- delete
+
+// The question an armed Delete asks. A document whose extraction is queued
+// or running may still be charged for it: deleting the document doesn't
+// stop a worker that has already sent its file to a model.
+export function deleteQuestion(extractionUnderWay: boolean): string {
+  const question = "Delete this document and everything extracted from it? This can't be undone.";
+  return extractionUnderWay ? `${question} An extraction under way may still be charged.` : question;
+}
+
 // A sentence for the notice beside a document's buttons.
 export type Explained = { text: string };
 

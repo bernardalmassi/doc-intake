@@ -143,6 +143,11 @@ export function useSetExtracting() {
   return useContext(SetExtractingContext);
 }
 
+// Whether this document's Extract request is in flight.
+export function useExtractRequested(id: string): boolean {
+  return useContext(ExtractingContext).has(id);
+}
+
 // A line's state mark: the data's, or EXTRACT_REQUESTED while the line's
 // Extract request is in flight. It reports what it shows to the register,
 // which says it when it changes: "credit-note-4390.pdf: Running."

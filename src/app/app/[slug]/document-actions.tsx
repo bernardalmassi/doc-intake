@@ -13,8 +13,8 @@ import {
   textTargetClass,
 } from "@/app/ui";
 import { classifyThrown, type ErrorCode, userFacingError } from "@/lib/errors";
-import { QUEUING, useSetExtracting } from "./ledger";
-import { DOCUMENTS_HEADING_ID, describeExtractResult, type Explained } from "./messages";
+import { QUEUING, useExtractRequested, useSetExtracting } from "./ledger";
+import { deleteQuestion, DOCUMENTS_HEADING_ID, describeExtractResult, type Explained } from "./messages";
 import { useOperations } from "./operations";
 
 // first: never extracted. again: there are earlier runs. running: an
@@ -32,6 +32,9 @@ type Props = {
   // null: no Extract button (a member, or no file). primary: the accent
   // fill, for when extracting is this document's next step.
   extract: { mode: ExtractMode; primary: boolean } | null;
+  // the line reads queued or running: its Delete says a run may still be
+  // charged
+  extractionUnderWay?: boolean;
 };
 
 // quiet: said to screen readers only, because the button beside it
@@ -46,7 +49,16 @@ type Notice = (Explained & { tone: "progress" | "done" | "error"; quiet?: boolea
 // confirmation), are placed by the row that holds them: the register line
 // puts the buttons in its action column and the message on a line of its
 // own under the detail (globals.css, "The register").
-export function DocumentActions({ id, slug, filename, storagePath, canDownload, canDelete, extract }: Props) {
+export function DocumentActions({
+  id,
+  slug,
+  filename,
+  storagePath,
+  canDownload,
+  canDelete,
+  extract,
+  extractionUnderWay = false,
+}: Props) {
   const operations = useOperations();
   const questionId = useId();
   // The message shown is the one for the last thing the user did.
@@ -90,6 +102,7 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
   // before the click. Cleared when the answer comes back, or if this
   // button goes away first.
   const setExtracting = useSetExtracting();
+  const requested = useExtractRequested(id);
   useEffect(() => {
     if (!setExtracting || !extracting) return;
     setExtracting(id, true);
@@ -228,9 +241,7 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
           <div aria-live="polite">
             {confirming ? (
               <p className="mt-2">
-                <span id={questionId}>
-                  Delete this document and everything extracted from it? This can&apos;t be undone.
-                </span>{" "}
+                <span id={questionId}>{deleteQuestion(extractionUnderWay || requested)}</span>{" "}
                 <button
                   ref={cancelButton}
                   type="button"

@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import { DocumentList } from "@/app/app/[slug]/document-list";
 import { buildEntries, extractionsInFlight } from "@/app/app/[slug]/entries";
 import { EXTRACT_REQUESTED, keepOrder, noteShown } from "@/app/app/[slug]/ledger";
+import { deleteQuestion } from "@/app/app/[slug]/messages";
 import { type DocumentOperations, OperationsProvider } from "@/app/app/[slug]/operations";
 import type { DocumentEntry, DocumentRow, FieldRow, RunRow } from "@/app/app/[slug]/types";
 import type { ErrorCode } from "@/lib/errors";
@@ -230,5 +231,13 @@ describe("the fields line", () => {
   it("says nothing of it when the fields are from the latest run", () => {
     const { text } = lines(at([doc("extracted")], [read], T0, fields));
     expect(text).not.toContain("The fields below are from");
+  });
+});
+
+describe("Delete's question", () => {
+  it("adds that a run may still be charged on a queued or running line, and only there", () => {
+    const plain = "Delete this document and everything extracted from it? This can't be undone.";
+    expect(deleteQuestion(false)).toBe(plain);
+    expect(deleteQuestion(true)).toBe(`${plain} An extraction under way may still be charged.`);
   });
 });

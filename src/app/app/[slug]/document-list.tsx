@@ -254,6 +254,7 @@ function DocumentLine({
           actions={actions}
           canDownload={hasFile && !downloadOnLine}
           canDelete={canManage && !deleteOnLine}
+          extractionUnderWay={state === "queued" || state === "running"}
         />
       </LedgerLine>
     </article>
@@ -280,11 +281,13 @@ function FileRow({
   actions,
   canDownload,
   canDelete,
+  extractionUnderWay,
 }: {
   entry: DocumentEntry;
   actions: { id: string; slug: string; filename: string; storagePath: string };
   canDownload: boolean;
   canDelete: boolean;
+  extractionUnderWay: boolean;
 }) {
   const { document } = entry;
   const kind = fileKind(document.mime_type);
@@ -301,7 +304,13 @@ function FileRow({
         <time dateTime={document.created_at}>{formatUtc(document.created_at)}</time>
       </p>
       {(canDownload || canDelete) && (
-        <DocumentActions {...actions} canDownload={canDownload} canDelete={canDelete} extract={null} />
+        <DocumentActions
+          {...actions}
+          canDownload={canDownload}
+          canDelete={canDelete}
+          extract={null}
+          extractionUnderWay={extractionUnderWay}
+        />
       )}
     </div>
   );
