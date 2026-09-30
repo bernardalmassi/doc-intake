@@ -46,10 +46,14 @@ next-env.d.ts
 .claude/
 .codex/
 
-# session notes kept on disk, not published
+# session notes, kept on disk and no longer tracked; the versions committed
+# earlier stay in the public history
 /HANDOVER-session4.md
 /BACKEND-CHECKLIST.md
 /FRONTEND-CHECKLIST.md
+
+# design tournament working files (research, captures, scores)
+.design-work/
 
 # editor
 .vscode/
