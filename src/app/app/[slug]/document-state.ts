@@ -16,8 +16,8 @@
 //                 database ended it as abandoned or expired, it is
 //                 overdue, or the upload never finished
 
-import type { ErrorCode } from "@/lib/errors";
-import type { DocumentEntry } from "./types";
+import { ERROR_CATALOG, type ErrorCode, type RunNext } from "@/lib/errors";
+import type { DocumentEntry, RunRow } from "./types";
 
 export const DOCUMENT_STATES = ["uploading", "ready", "queued", "running", "done", "needs-review", "failed"] as const;
 
@@ -68,23 +68,30 @@ export function documentState({
   }
 }
 
-// What a failed line offers, from what its failure says to do:
-//   extract   retrying can work (the catalog calls it retryable), or it
-//             is overdue, or nothing says why
-//   delete    there is nothing to extract: the upload never finished, or
-//             the file isn't what its type says ("Upload it again")
-//   download  the service can't or won't read it ("Review it yourself")
-// A failure that is the server's (not configured) is retried too, once
-// it is set up.
+// What a failed line offers, from what its failure says to do: the
+// catalog's `next` for the latest run's code (src/lib/errors.ts).
+//   extract   retry: retrying can work, or the failure is the server's to
+//             fix (not configured); also a run that is overdue, and a
+//             failure nothing says anything about
+//   delete    upload: the file itself has to change ("Upload it again",
+//             "Split it"), so there is nothing to extract; also an upload
+//             that never finished
+//   download  review: the service can't or won't read it ("Review it
+//             yourself")
 export type FailedExit = "extract" | "delete" | "download";
 
-const REVIEW_YOURSELF = new Set<ErrorCode>(["extraction.provider_rejected", "extraction.refused", "extraction.truncated"]);
+const EXITS: Record<RunNext, FailedExit> = { retry: "extract", upload: "delete", review: "download" };
+
+// The catalog's next step for a run's failure; null for a run that didn't
+// fail, and retry for a failure with no code.
+export function runNext(run: Pick<RunRow, "status" | "error_code"> | undefined): RunNext | null {
+  if (run?.status !== "failed") return null;
+  const code: ErrorCode = run.error_code ?? "unknown";
+  return ERROR_CATALOG[code].next ?? "retry";
+}
 
 export function failedExit({ document, runs, overdue }: Pick<DocumentEntry, "document" | "runs" | "overdue">): FailedExit {
   if (document.status === "uploading") return "delete";
   if (overdue) return "extract";
-  const code = runs[0]?.status === "failed" ? runs[0].error_code : null;
-  if (code === "extraction.file_type_mismatch") return "delete";
-  if (code !== null && REVIEW_YOURSELF.has(code)) return "download";
-  return "extract";
+  return EXITS[runNext(runs[0]) ?? "retry"];
 }

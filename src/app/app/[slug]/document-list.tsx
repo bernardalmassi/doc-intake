@@ -1,7 +1,7 @@
 import { errorInkRuleClass } from "@/app/ui";
 import { userFacingError } from "@/lib/errors";
 import { DocumentActions, type ExtractMode } from "./document-actions";
-import { type DocumentState, documentState, failedExit } from "./document-state";
+import { type DocumentState, documentState, failedExit, runNext } from "./document-state";
 import { extractMode } from "./entries";
 import { ExtractionPanel } from "./extraction-panel";
 import { extractReads, fieldSummary } from "./fields";
@@ -157,11 +157,19 @@ function DocumentLine({
   // so a failure that says retrying won't help never leaves a dead end.
   // Not while a run is in flight, until it is past its hard bound
   // (extractMode): until then Extract would only be refused. Past it, the
-  // line's exit is Extract again, so it isn't offered twice.
+  // line's exit is Extract again, so it isn't offered twice. And never
+  // when the latest run failed because the file itself has to change
+  // (the catalog's next is upload: too dense, not what its type says, its
+  // pages): extracting the same file again can't work.
   const deleteOnLine = canManage && failed === "delete";
   const downloadOnLine = failed === "download";
   const extractInRuns =
-    canManage && hasFile && extractMode(entry) !== "running" && failed !== "extract" && (hasFields || failed !== null);
+    canManage &&
+    hasFile &&
+    extractMode(entry) !== "running" &&
+    runNext(runs[0]) !== "upload" &&
+    failed !== "extract" &&
+    (hasFields || failed !== null);
   const latest = runs[0];
   // Fields come from the last run that succeeded. When a later run failed,
   // or one is in flight, the line says which run they are from.

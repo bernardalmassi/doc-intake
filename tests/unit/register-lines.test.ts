@@ -241,3 +241,25 @@ describe("Delete's question", () => {
     expect(deleteQuestion(true)).toBe(`${plain} An extraction under way may still be charged.`);
   });
 });
+
+describe("a run too dense to extract", () => {
+  const dense = run("failed", { id: "r-dense", cost_usd: "0", input_tokens: 0, output_tokens: 0, error_code: "extraction.too_dense" });
+
+  it("never offers Extract again: the line's exit is Delete, and the runs row has no Extract", () => {
+    const { html, text } = lines(at([doc("pending")], [dense], T0));
+    expect(html).toContain('data-doc-state="failed"');
+    expect(text).toContain("This document is too dense to extract within our limits");
+    expect(html).not.toContain('data-action="extract"');
+    expect(html).toContain('data-action="delete"');
+  });
+
+  it("never offers it beside fields from an earlier run either", () => {
+    const read = run("succeeded", { id: "r-read", started_at: iso(T0 - 600_000), attempts: 1, cost_usd: "0.01" });
+    const denseLater = { ...dense, started_at: iso(T0) };
+    const fields: FieldRow[] = [
+      { document_id: "d1", run_id: "r-read", name: "title", value: "Invoice", confidence: "0.950", band: "high", source_text: "INVOICE", clarifying_question: null },
+    ];
+    const { html } = lines(at([doc("extracted")], [denseLater, read], T0, fields));
+    expect(html).not.toContain('data-action="extract"');
+  });
+});

@@ -80,10 +80,18 @@ export type ErrorInfo = {
   // or the calendar month. Every retryable message says "try again" and no
   // other message does (the test checks both directions).
   retryable: boolean;
+  // For a code a run can end with: what the document's line offers next.
+  // retry: extract again (the run's failure can pass, or is the server's
+  // to fix); upload: the file itself has to change, so extracting it again
+  // can't help; review: the service won't read it, so the reader reviews
+  // the document themselves. src/app/app/[slug]/document-state.ts reads it.
+  next?: RunNext;
 };
 
+export type RunNext = "retry" | "upload" | "review";
+
 const CATALOG = {
-  unknown: { message: "Something went wrong. Please try again.", retryable: true },
+  unknown: { message: "Something went wrong. Please try again.", retryable: true, next: "retry" },
 
   "network.unavailable": {
     message: "We couldn't reach the server. Check your internet connection and try again.",
@@ -233,15 +241,18 @@ const CATALOG = {
   "document.too_many_pages": {
     message: `Documents can have at most ${EXTRACTION_LIMITS.maxPagesPerDocument} pages. Split this one into parts of ${EXTRACTION_LIMITS.maxPagesPerDocument} pages or fewer and upload them separately.`,
     retryable: false,
+    next: "upload",
   },
   "document.pages_unreadable": {
     message:
       "We couldn't count this PDF's pages, so it can't be extracted. Save it again as a standard PDF (for example with Print to PDF) and upload that.",
     retryable: false,
+    next: "upload",
   },
   "document.no_pages": {
     message: "This PDF has no pages, so there is nothing to extract. Upload the complete file.",
     retryable: false,
+    next: "upload",
   },
 
   // Uploading and downloading
@@ -305,10 +316,12 @@ const CATALOG = {
   "extraction.not_configured": {
     message: "Extraction isn't set up on this server. Ask whoever runs this service to configure it.",
     retryable: false,
+    next: "retry",
   },
   "extraction.download_failed": {
     message: "The file couldn't be read for extraction. Please try again.",
     retryable: true,
+    next: "retry",
   },
   // the worker recounts a file's pages before any model call, and refuses
   // one whose count isn't the one Extract was requested with
@@ -316,39 +329,48 @@ const CATALOG = {
     message:
       "We couldn't confirm this document's page count, so it wasn't sent for extraction. Please try again.",
     retryable: true,
+    next: "retry",
   },
   "extraction.file_type_mismatch": {
     message:
       "This file's contents don't match its file type, so it wasn't sent for extraction. Upload it again as a genuine PDF, PNG or JPEG file.",
     retryable: false,
+    next: "upload",
   },
   "extraction.provider_timeout": {
     message: "The extraction service took too long to respond. Try again in a few minutes.",
     retryable: true,
+    next: "retry",
   },
   "extraction.provider_unavailable": {
     message: "The extraction service is unavailable or busy right now. Try again in a few minutes.",
     retryable: true,
+    next: "retry",
   },
   "extraction.all_providers_failed": {
     message: "Both extraction services we use failed on this document. Try again in a few minutes.",
     retryable: true,
+    next: "retry",
   },
   "extraction.provider_rejected": {
     message: "The extraction service couldn't process this document. It may be damaged, password-protected or too long.",
     retryable: false,
+    next: "review",
   },
   "extraction.refused": {
     message: "The extraction service declined to process this document. Review it yourself instead.",
     retryable: false,
+    next: "review",
   },
   "extraction.truncated": {
     message: "This document has more content than one extraction can return. Review it yourself instead.",
     retryable: false,
+    next: "review",
   },
   "extraction.answer_incomplete": {
     message: "The extraction service stopped before finishing its answer. Please try again.",
     retryable: true,
+    next: "retry",
   },
   // A second attempt is made only if it fits the per-call limit, so the
   // message doesn't promise one.
@@ -356,6 +378,7 @@ const CATALOG = {
     message:
       "The extraction service's answer failed our checks, so nothing was saved from it. You can try again or review the document yourself.",
     retryable: true,
+    next: "retry",
   },
   // run.ts measures every call before sending it; a document whose first
   // call reads more than the per-call limit for its pages is never sent
@@ -363,22 +386,27 @@ const CATALOG = {
     message:
       "This document is too dense to extract within our limits: its pages hold more than one extraction may read, so it wasn't sent and nothing was charged. Split it into smaller files and extract those.",
     retryable: false,
+    next: "upload",
   },
   "extraction.abandoned": {
     message: "This extraction stopped before it finished and was cancelled. Please try again.",
     retryable: true,
+    next: "retry",
   },
   "extraction.expired": {
     message: `This extraction didn't start within ${STALE_MINUTES} minutes, so it was cancelled at no cost. Please try again.`,
     retryable: true,
+    next: "retry",
   },
   "extraction.result_not_saved": {
     message: "The extraction ran, but its result couldn't be saved. Please try again.",
     retryable: true,
+    next: "retry",
   },
   "extraction.record_failed": {
     message: `The extraction ran, but its result couldn't be saved. You can try again in about ${STALE_MINUTES} minutes.`,
     retryable: true,
+    next: "retry",
   },
 } satisfies Record<string, ErrorInfo>;
 
