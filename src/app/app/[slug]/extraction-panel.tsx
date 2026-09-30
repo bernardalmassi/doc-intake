@@ -8,9 +8,10 @@ import type { FieldRow } from "./types";
 // name. What needs a person comes first: the Low fields, numbered, under
 // "To check · 2", each with its value, the words it was read from (plain,
 // with only the characters that decide the value underlined in signal, the
-// landing's mark) and the question, all printed. When every field to check
-// asks the same question (gateFields asks one question about both dates),
-// it is printed once, after them, and each field says where it is.
+// landing's mark) and the question, all printed. A question two or more
+// fields to check ask word for word (gateFields asks one question about
+// both dates) is printed once, after them, and each of them says where it
+// is; a field with a question of its own keeps it under its value.
 // Everything else follows under "Read · 9", Medium first (with its
 // question), then High, each group in schema order; when there is
 // something to check, that group is folded to one line.
@@ -22,6 +23,27 @@ import type { FieldRow } from "./types";
 
 const columns = "md:grid md:grid-cols-[11rem_minmax(0,1fr)] md:gap-x-4";
 
+// The questions two or more of the fields to check share word for word,
+// in the order their first field comes, each with the numbers (1-based) of
+// the fields that ask it.
+export function sharedQuestions(low: FieldRow[]): { question: string; numbers: number[] }[] {
+  const groups = new Map<string, number[]>();
+  low.forEach((field, index) => {
+    const question = field.clarifying_question;
+    if (question === null) return;
+    groups.set(question, [...(groups.get(question) ?? []), index + 1]);
+  });
+  return [...groups].filter(([, numbers]) => numbers.length > 1).map(([question, numbers]) => ({ question, numbers }));
+}
+
+// "1 and 2", "all 3", "2 and 3", "1, 3 and 4": which of `of` fields a
+// shared question is for.
+function whichOf(numbers: number[], of: number): string {
+  if (numbers.length === of && of > 2) return `all\u00a0${of}`;
+  const head = numbers.slice(0, -1).join(", ");
+  return `${head}\u00a0and\u00a0${numbers[numbers.length - 1]}`;
+}
+
 export function ExtractionPanel({ fields }: { fields: FieldRow[] }) {
   const low = fields.filter((field) => field.band === "low");
   const rest = [
@@ -29,10 +51,14 @@ export function ExtractionPanel({ fields }: { fields: FieldRow[] }) {
     ...fields.filter((field) => field.band !== "low" && field.band !== "medium"),
   ];
 
-  const first = low[0]?.clarifying_question ?? null;
-  const shared =
-    low.length > 1 && first !== null && low.every((field) => field.clarifying_question === first) ? first : null;
-  const sharedId = `shared-question-${low[0]?.document_id ?? "none"}`;
+  const shared = sharedQuestions(low).map((group, index) => ({
+    ...group,
+    id: `shared-question-${low[0]?.document_id ?? "none"}-${index + 1}`,
+  }));
+  const sharedFor = (number: number) => {
+    const index = shared.findIndex((group) => group.numbers.includes(number));
+    return index < 0 ? null : { ...shared[index], first: index === 0 };
+  };
 
   return (
     <section aria-label="Extracted fields">
@@ -44,26 +70,20 @@ export function ExtractionPanel({ fields }: { fields: FieldRow[] }) {
           </div>
           <ol className="mt-3">
             {low.map((field, index) => (
-              <LowField
-                key={field.name}
-                field={field}
-                number={index + 1}
-                of={low.length}
-                sharedQuestionId={shared ? sharedId : null}
-              />
+              <LowField key={field.name} field={field} number={index + 1} of={low.length} shared={sharedFor(index + 1)} />
             ))}
           </ol>
-          {shared && (
+          {shared.map((group) => (
             // After the fields it is about, so the values and their quotes
             // come first, and in the same two columns as a field.
-            <p id={sharedId} className={`${columns} border-t border-ink py-4 text-small`}>
+            <p key={group.id} id={group.id} className={`${columns} border-t border-ink py-4 text-small`}>
               <span className="flex flex-wrap gap-x-3 md:flex-col md:gap-y-2">
                 <span className="label">To confirm</span>
-                <span className="label">{low.length === 2 ? "1 and 2" : `All ${low.length}`}</span>
+                <span className="label">{whichOf(group.numbers, low.length)}</span>
               </span>
-              <span className="mt-2 block max-w-prose md:mt-0">{shared}</span>
+              <span className="mt-2 block max-w-prose md:mt-0">{group.question}</span>
             </p>
-          )}
+          ))}
         </div>
       )}
 
@@ -117,17 +137,18 @@ function displayValue(field: FieldRow): string | null {
 // document's line, and the next Tab reaches the next one; its name says
 // what it is and where it sits in the set.
 // With a shared question, the row says so in a line and is described by
-// it, so the question is still read out with the field.
+// it, so the question is still read out with the field. The shared
+// questions follow the last field to check, the first of them directly.
 function LowField({
   field,
   number,
   of,
-  sharedQuestionId,
+  shared,
 }: {
   field: FieldRow;
   number: number;
   of: number;
-  sharedQuestionId: string | null;
+  shared: { id: string; numbers: number[]; first: boolean } | null;
 }) {
   const label = fieldLabel(field.name);
   const percent = percentOf(field);
@@ -138,7 +159,7 @@ function LowField({
       data-field-band={field.band}
       tabIndex={0}
       aria-label={`${label}, low confidence ${percent}%, ${number} of ${of} to check`}
-      aria-describedby={sharedQuestionId ?? undefined}
+      aria-describedby={shared?.id}
       className={`${columns} border-t border-ink py-4`}
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 md:flex-col md:items-start">
@@ -171,13 +192,13 @@ function LowField({
         ) : (
           <NoQuote field={field} className="mt-2" />
         )}
-        {sharedQuestionId ? (
+        {shared ? (
           <p className="mt-2 text-small">
             <span className="label mr-2">To confirm</span>
             {/* Says where the question is, so the reader of 1 of 2
                 doesn't look for it under this field. */}
-            One question for {of === 2 ? "1\u00a0and\u00a02" : `all\u00a0${of}`},{" "}
-            {number === of ? "directly below." : `after ${of}\u00a0of\u00a0${of}.`}
+            One question for {whichOf(shared.numbers, of)},{" "}
+            {number === of && shared.first ? "directly below." : `after ${of}\u00a0of\u00a0${of}.`}
           </p>
         ) : (
           field.clarifying_question && (
