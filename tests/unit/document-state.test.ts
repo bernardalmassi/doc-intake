@@ -1,9 +1,10 @@
 // The document card shows one of seven states, worked out from what the
-// page reads today. These pin the mapping, so the worker that adds a queued
-// status adds one line to it and one case here, and every card follows.
+// page reads: the document's status, its latest run (queued until a worker
+// claims it, running after), whether that run is past its hard bound, and
+// the upload's age. These pin the mapping, and every card follows.
 
 import { describe, expect, it } from "vitest";
-import { DOCUMENT_STATES, documentState, failedExit, stateOf, UPLOAD_STALE_MINUTES } from "@/app/app/[slug]/document-state";
+import { DOCUMENT_STATES, documentState, failedExit, UPLOAD_STALE_MINUTES } from "@/app/app/[slug]/document-state";
 import { buildEntries } from "@/app/app/[slug]/entries";
 import type { ErrorCode } from "@/lib/errors";
 import type { DocumentEntry, RunRow } from "@/app/app/[slug]/types";
@@ -43,7 +44,8 @@ function entry(status: string, runs: string[] = [], overdue = false, staleUpload
     staleUpload,
     stalled: false,
     overdue,
-    extraction: null,
+    // as buildEntries has it: the latest run, while the document is processing
+    extraction: status === "processing" && (runs[0] === "queued" || runs[0] === "running") ? runs[0] : null,
   };
 }
 
@@ -93,16 +95,19 @@ describe("documentState", () => {
     expect(documentState(entry("archived"))).toBe("ready");
   });
 
-  it("never returns queued: nothing in the data says it yet", () => {
-    const statuses = ["uploading", "pending", "processing", "extracted", "needs_review", "failed", "queued"];
-    const runSets = [[], ["running"], ["failed"], ["succeeded"]];
+  it("reads a run no worker has claimed yet as queued, and past its hard bound as failed", () => {
+    expect(documentState(entry("processing", ["queued"]))).toBe("queued");
+    expect(documentState(entry("processing", ["queued", "succeeded"]))).toBe("queued");
+    expect(documentState(entry("processing", ["queued"], true))).toBe("failed");
+    expect(failedExit(entry("processing", ["queued"], true))).toBe("extract");
+  });
+
+  it("reads queued only while the document is processing and its latest run is queued", () => {
+    const statuses = ["uploading", "pending", "extracted", "needs_review", "failed"];
     for (const status of statuses) {
-      for (const runs of runSets) {
-        for (const stale of [false, true]) {
-          expect(documentState(entry(status, runs, stale, stale))).not.toBe("queued");
-        }
-      }
+      expect(documentState(entry(status, ["queued"]))).not.toBe("queued");
     }
+    expect(documentState(entry("processing", ["running", "queued"]))).toBe("running");
   });
 
   it("returns only the seven states", () => {
@@ -136,16 +141,6 @@ describe("an upload's age", () => {
   it("only ever applies to a row that is uploading", () => {
     expect(at(UPLOAD_STALE_MINUTES * 6, "pending").staleUpload).toBe(false);
     expect(documentState(at(UPLOAD_STALE_MINUTES * 6, "pending"))).toBe("ready");
-  });
-});
-
-describe("stateOf", () => {
-  it("prefers an explicit state, which only /dev/states sets", () => {
-    expect(stateOf({ ...entry("pending"), state: "queued" })).toBe("queued");
-  });
-
-  it("falls back to the mapping", () => {
-    expect(stateOf(entry("needs_review", ["succeeded"]))).toBe("needs-review");
   });
 });
 

@@ -13,7 +13,7 @@ import {
   textTargetClass,
 } from "@/app/ui";
 import { classifyThrown, type ErrorCode, userFacingError } from "@/lib/errors";
-import { useSetExtracting } from "./ledger";
+import { QUEUING, useSetExtracting } from "./ledger";
 import { DOCUMENTS_HEADING_ID, describeExtractResult, type Explained } from "./messages";
 import { useOperations } from "./operations";
 
@@ -149,7 +149,7 @@ export function DocumentActions({ id, slug, filename, storagePath, canDownload, 
     const result = describeExtractResult(extractState);
     // In the register the line's detail prints this; the notice still
     // says it to a screen reader.
-    if (extracting) notice = { tone: "progress", text: "Extracting. This can take up to a minute.", quiet: setExtracting !== null };
+    if (extracting) notice = { tone: "progress", text: QUEUING, quiet: setExtracting !== null };
     else if (result) notice = { tone: result.ok ? "done" : "error", text: result.text };
   } else if (last === "delete") {
     if (deleting) notice = { tone: "progress", text: "Deleting…", quiet: true };

@@ -1,7 +1,7 @@
 import { errorInkRuleClass } from "@/app/ui";
 import { userFacingError } from "@/lib/errors";
 import { DocumentActions, type ExtractMode } from "./document-actions";
-import { type DocumentState, failedExit, type StatedEntry, stateOf } from "./document-state";
+import { type DocumentState, documentState, failedExit } from "./document-state";
 import { extractMode } from "./entries";
 import { ExtractionPanel } from "./extraction-panel";
 import { extractReads, fieldSummary } from "./fields";
@@ -13,7 +13,7 @@ import { StateMark } from "./state-glyph";
 import type { DocumentEntry } from "./types";
 
 type ListProps = {
-  entries: StatedEntry[];
+  entries: DocumentEntry[];
   slug: string;
   canManage: boolean;
 };
@@ -28,7 +28,7 @@ type ListProps = {
 // key in the first three columns, the register in the next eight, the
 // last empty. Each state is worked out once, here, and passed down.
 export function DocumentList({ entries, slug, canManage }: ListProps) {
-  const stated = entries.map((entry) => ({ entry, state: stateOf(entry) }));
+  const stated = entries.map((entry) => ({ entry, state: documentState(entry) }));
   // What Extract reads is said once, beside the first Extract on the page.
   const firstReady = stated.find(({ entry, state }) => state === "ready" && entry.document.status !== "uploading");
 
@@ -318,17 +318,29 @@ function Detail({
       );
 
     case "queued":
-      return <p>Waiting to start.</p>;
-
-    case "running":
-      // The start time always; elapsed time once the browser has a clock.
-      if (latest?.status !== "running") return <p>Extracting.</p>;
+      // When Extract queued it, and how long it has waited, once the
+      // browser has a clock.
+      if (latest?.status !== "queued") return <p>Waiting to start.</p>;
       return (
         <p>
-          Started <time dateTime={latest.started_at}>{formatClock(latest.started_at)}</time>
-          <Elapsed since={latest.started_at} />
+          Queued <time dateTime={latest.started_at}>{formatClock(latest.started_at)}</time>
+          <Elapsed since={latest.started_at} spoken="queued for" />
         </p>
       );
+
+    case "running": {
+      // From the claim, when a worker started it (a run from before the
+      // queue has none: from when it was opened); elapsed time once the
+      // browser has a clock.
+      if (latest?.status !== "running") return <p>Extracting.</p>;
+      const started = latest.claimed_at ?? latest.started_at;
+      return (
+        <p>
+          Started <time dateTime={started}>{formatClock(started)}</time>
+          <Elapsed since={started} />
+        </p>
+      );
+    }
 
     case "done": {
       const summary = fieldSummary(fields);

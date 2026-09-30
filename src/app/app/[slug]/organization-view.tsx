@@ -3,8 +3,7 @@ import { OpeningHint } from "@/app/components/pending";
 import { linkClass, pageTitleClass } from "@/app/ui";
 import { DocumentList } from "./document-list";
 import { canManage, DOCUMENTS_HEADING_ID, roleAbilities } from "./messages";
-import type { StatedEntry } from "./document-state";
-import type { Organization, Role } from "./types";
+import type { DocumentEntry, Organization, Role } from "./types";
 import { UploadForm, type UploadState } from "./upload-form";
 
 // Everything inside <main> on /app/[slug]. Takes data only, so the design
@@ -24,7 +23,7 @@ export function OrganizationView({
 }: {
   organization: Organization;
   role: Role;
-  entries: StatedEntry[];
+  entries: DocumentEntry[];
   uploadState?: UploadState;
 }) {
   const manage = canManage(role);

@@ -7,7 +7,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DocumentList } from "@/app/app/[slug]/document-list";
-import { buildEntries } from "@/app/app/[slug]/entries";
+import { buildEntries, extractionsInFlight } from "@/app/app/[slug]/entries";
+import { EXTRACT_REQUESTED } from "@/app/app/[slug]/ledger";
 import { type DocumentOperations, OperationsProvider } from "@/app/app/[slug]/operations";
 import type { DocumentEntry, DocumentRow, FieldRow, RunRow } from "@/app/app/[slug]/types";
 import type { ErrorCode } from "@/lib/errors";
@@ -100,5 +101,34 @@ describe("a line whose extraction is past its hard bound", () => {
   it("tells a member who can end it", () => {
     const { text } = lines(at([doc("processing")], [claimed], due), false);
     expect(text).toContain("This extraction should have finished by now and hasn't. Only an admin can extract it again.");
+  });
+});
+
+describe("a line's extraction states", () => {
+  it("reads queued from the data: its enqueue time, and no Extract", () => {
+    const queued = run("queued");
+    const { html, text } = lines(at([doc("processing")], [queued], T0 + 12_000));
+    expect(html).toContain('data-doc-state="queued"');
+    expect(text).toContain("Queued 09:29:10 UTC");
+    expect(html).not.toContain('data-action="extract"');
+  });
+
+  it("reads running from the claim, not the enqueue", () => {
+    const claimed = run("running", { claimed_at: iso(T0 + 12_000) });
+    const { html, text } = lines(at([doc("processing")], [claimed], T0 + 52_000));
+    expect(html).toContain('data-doc-state="running"');
+    expect(text).toContain("Started 09:29:22 UTC");
+    expect(text).not.toContain("09:29:10");
+  });
+
+  it("reads a click on Extract as queued until the data that comes back takes over", () => {
+    expect(EXTRACT_REQUESTED).toBe("queued");
+  });
+
+  it("stops polling once the only run in flight is past its bound", () => {
+    const queued = run("queued");
+    expect(extractionsInFlight(at([doc("processing")], [queued], overdueAt(queued)! - 1))).toBe(true);
+    expect(extractionsInFlight(at([doc("processing")], [queued], overdueAt(queued)!))).toBe(false);
+    expect(lines(at([doc("processing")], [queued], overdueAt(queued)!)).html).toContain('data-doc-state="failed"');
   });
 });

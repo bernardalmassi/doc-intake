@@ -6,17 +6,16 @@
 // design-landing), so /app and the landing tell the same story. Everything
 // else is invented for the fixture and says nothing about a real run.
 
-import type { StatedEntry } from "@/app/app/[slug]/document-state";
 import { buildEntries } from "@/app/app/[slug]/entries";
-import type { DocumentRow, FieldRow, Organization as OrgRow, RunRow } from "@/app/app/[slug]/types";
+import type { DocumentEntry, DocumentRow, FieldRow, Organization as OrgRow, RunRow } from "@/app/app/[slug]/types";
 import type { Organization } from "@/app/app/organizations";
 import type { ErrorCode } from "@/lib/errors";
 import { abandonedRunCostUsd } from "@/lib/extraction/config";
 
-// Documents and finished runs are dated around 24 Sep 2026. Runs still
-// running are dated from the time of the request (entriesFor), so their
-// start time, their elapsed time and the stale check all read true
-// against the browser's clock.
+// Documents and finished runs are dated around 24 Sep 2026. Runs still in
+// flight are dated from the time of the request (entriesFor), so their
+// times, their elapsed time and the hard bound all read true against the
+// browser's clock.
 
 export const EMAIL = "accounts@bramhall.example";
 
@@ -93,7 +92,7 @@ const documents: Record<string, DocumentRow> = {
   [NEEDS_REVIEW_ID]: doc(NEEDS_REVIEW_ID, "test-invoice-messy-scan.pdf", "needs_review", 478_223, "application/pdf", at("2026-09-19T14:02:10Z")),
   [DONE_ID]: doc(DONE_ID, "trade-counter-receipt-tc-118204.pdf", "extracted", 212_480, "application/pdf", at("2026-09-23T16:04:00Z")),
   [READY_ID]: doc(READY_ID, "purchase-order-po-22-0417.pdf", "pending", 96_512, "application/pdf", at("2026-09-24T09:12:00Z")),
-  [QUEUED_ID]: doc(QUEUED_ID, "delivery-note-88231.jpg", "pending", 1_204_736, "image/jpeg", at("2026-09-24T09:20:00Z")),
+  [QUEUED_ID]: doc(QUEUED_ID, "delivery-note-88231.jpg", "processing", 1_204_736, "image/jpeg", at("2026-09-24T09:20:00Z")),
   [RUNNING_ID]: doc(RUNNING_ID, "credit-note-4390.pdf", "processing", 184_320, "application/pdf", at("2026-09-24T09:26:00Z")),
   [FAILED_ID]: doc(FAILED_ID, "carver-street-lease-renewal.pdf", "pending", 2_871_296, "application/pdf", at("2026-09-22T11:05:00Z")),
   [STALE_ID]: doc(STALE_ID, "bank-mandate-letter.png", "processing", 702_400, "image/png", at("2026-09-24T09:02:00Z")),
@@ -373,20 +372,22 @@ function inProgressDocuments(now: number): Record<string, DocumentRow> {
   return { [UPLOADING_ID]: doc(UPLOADING_ID, "meter-reading-unit-4.jpg", "uploading", null, null, ago(130)) };
 }
 
-// Runs in progress at the time of the request: one 40 seconds in, one
-// claimed 25 minutes ago and still running, past its hard bound
-// (overdueAt, src/lib/extraction/deadlines.ts).
+// Runs in flight at the time of the request: one queued 12 seconds ago,
+// one claimed 40 seconds ago after 12 in the queue, and one claimed 25
+// minutes ago and still running, past its hard bound (overdueAt,
+// src/lib/extraction/deadlines.ts).
 function runningRuns(now: number): RunRow[] {
   const ago = (seconds: number) => new Date(now - seconds * 1000).toISOString();
   return [
-    run({ id: "run-4390", document_id: RUNNING_ID, status: "running", started_at: ago(40), claimed_at: ago(40) }),
+    run({ id: "run-88231", document_id: QUEUED_ID, status: "queued", started_at: ago(12) }),
+    run({ id: "run-4390", document_id: RUNNING_ID, status: "running", started_at: ago(52), claimed_at: ago(40) }),
     run({ id: "run-mandate", document_id: STALE_ID, status: "running", started_at: ago(25 * 60 + 12), claimed_at: ago(25 * 60) }),
   ];
 }
 
-// Grouped and sorted by the page's own buildEntries, then given an
-// explicit state where the data can't say it yet (queued).
-export function entriesFor(ids: string[], states: Partial<Record<string, StatedEntry["state"]>> = SIX_STATE_OVERRIDES): StatedEntry[] {
+// Grouped and sorted by the page's own buildEntries, at the time of the
+// request, as page.tsx does.
+export function entriesFor(ids: string[]): DocumentEntry[] {
   const now = Date.now();
   const inProgress = inProgressDocuments(now);
   const chosen = ids.map((id) => inProgress[id] ?? documents[id]);
@@ -397,17 +398,12 @@ export function entriesFor(ids: string[], states: Partial<Record<string, StatedE
     all.filter((r) => r.document_id !== null && set.has(r.document_id)),
     fields.filter((f) => set.has(f.document_id)),
     now,
-  ).map((entry) => {
-    const state = states[entry.document.id];
-    return state ? { ...entry, state } : entry;
-  });
+  );
 }
 
 // One document per state: ready, queued, running, done, needs review,
-// failed. Queued has no source value yet, so its document is given the
-// state explicitly.
+// failed.
 export const SIX_STATE_IDS = [NEEDS_REVIEW_ID, DONE_ID, READY_ID, QUEUED_ID, RUNNING_ID, FAILED_ID];
-export const SIX_STATE_OVERRIDES: Partial<Record<string, StatedEntry["state"]>> = { [QUEUED_ID]: "queued" };
 
 // Every document status today's page can show.
-export const ALL_IDS = [...SIX_STATE_IDS.filter((id) => id !== QUEUED_ID), STALE_ID, UPLOADING_ID, UNFINISHED_ID, MISMATCH_ID];
+export const ALL_IDS = [...SIX_STATE_IDS, STALE_ID, UPLOADING_ID, UNFINISHED_ID, MISMATCH_ID];

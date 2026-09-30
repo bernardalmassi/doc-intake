@@ -13,16 +13,15 @@ import { STATE_GLYPHS, STATE_WORDS, StateGlyph, StateMark } from "./state-glyph"
 
 // ------------------------------------------------------ extract in flight
 
-// The state a line shows while its Extract request is in flight. The
-// request runs the whole extraction today, so the document is running;
-// once Extract only enqueues a run (the worker), this is queued.
-export const EXTRACT_REQUESTED: DocumentState = "running";
+// The state a line shows while its Extract request is in flight: the
+// request queues a run for the worker, so the document is queued.
+export const EXTRACT_REQUESTED: DocumentState = "queued";
 
 // Which documents have an Extract request in flight. The page's data
 // still holds each one's state from before the click, so without this its
 // line would say Ready or Failed beside "Extracting…". The line's mark and
 // detail and the key's counts read it; the refreshed data that comes back
-// with the answer takes over.
+// with the answer takes over: queued, with its time.
 const ExtractingContext = createContext<ReadonlySet<string>>(new Set());
 const SetExtractingContext = createContext<((id: string, on: boolean) => void) | null>(null);
 
@@ -68,13 +67,14 @@ export function LineStateMark({
   );
 }
 
-// A line's one sentence, or what happens next while its Extract request
-// is in flight: the sentence the Extract button's notice would otherwise
-// print under it.
+// A line's one sentence, or what is happening while its Extract request
+// is in flight: the run is being queued, and has no time of its own yet.
 export function LineDetail({ id, children }: { id: string; children: React.ReactNode }) {
   const requested = useContext(ExtractingContext).has(id);
-  return requested ? <p>Extracting. This can take up to a minute.</p> : children;
+  return requested ? <p>{QUEUING}</p> : children;
 }
+
+export const QUEUING = "Queuing…";
 
 // The register's key: every state's mark and word, and how many lines are
 // in it, zeros included, counting a line with an Extract in flight as

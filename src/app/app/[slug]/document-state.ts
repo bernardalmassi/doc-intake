@@ -2,17 +2,14 @@
 // page reads today: the document's status, its latest run, whether that
 // run is overdue (still in flight past the hard bound its own timestamps
 // give it, src/lib/extraction/deadlines.ts) and whether an upload has gone
-// stale. Pure, and presentation only: the
-// database keeps its own statuses, and nothing here decides what anyone
-// may do.
+// stale. Pure, and presentation only: the database keeps its own
+// statuses, and nothing here decides what anyone may do.
 //
 //   uploading     the row exists and its file is still on its way, for up
 //                 to UPLOAD_STALE_MINUTES
 //   ready         there is a file and nothing has been extracted: Extract
-//   queued        waiting for a worker to pick it up. Nothing in the data
-//                 says this yet, so documentState never returns it; when the
-//                 worker adds a status for it, it adds one line below
-//   running       an extraction is in progress
+//   queued        Extract queued a run and no worker has claimed it yet
+//   running       a worker claimed the run and is extracting
 //   done          extracted, every field read with enough confidence
 //   needs-review  extracted, and at least one field is Low
 //   failed        no usable result: the latest extraction failed, the
@@ -32,17 +29,13 @@ export const UPLOAD_STALE_MINUTES = 10;
 
 export type DocumentState = (typeof DOCUMENT_STATES)[number];
 
-// An entry that may carry its state explicitly. Only /dev/states sets it,
-// to show queued before the data can say it; the page's entries never do,
-// so documentState decides.
-export type StatedEntry = DocumentEntry & { state?: DocumentState };
-
 export function documentState({
   document,
   runs,
   overdue,
+  extraction,
   staleUpload,
-}: Pick<DocumentEntry, "document" | "runs" | "overdue" | "staleUpload">): DocumentState {
+}: Pick<DocumentEntry, "document" | "runs" | "overdue" | "extraction" | "staleUpload">): DocumentState {
   const latest = runs[0];
   switch (document.status) {
     // The row exists and its file hasn't arrived. Another member's page, or
@@ -59,7 +52,9 @@ export function documentState({
       // In flight past its hard bound: the database should have ended it
       // by now, and the next Extract click ends it and starts again
       // (extractMode in entries.ts), so it reads as failed, with that exit.
-      return overdue ? "failed" : "running";
+      // Before that, queued until a worker claims the run, then running.
+      if (overdue) return "failed";
+      return extraction === "queued" ? "queued" : "running";
     case "extracted":
       return "done";
     case "needs_review":
@@ -71,12 +66,6 @@ export function documentState({
     default:
       return "ready";
   }
-}
-
-// The state a card shows: the explicit one when a fixture gives it,
-// otherwise the mapping.
-export function stateOf(entry: StatedEntry): DocumentState {
-  return entry.state ?? documentState(entry);
 }
 
 // What a failed line offers, from what its failure says to do:

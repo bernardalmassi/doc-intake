@@ -492,7 +492,7 @@ export const SCREENS: Screen[] = [
   {
     id: "org-documents",
     group: "Organization page",
-    title: "Owner, every document status: needs review, extracted, pending, processing, stalled, uploading, unfinished upload, failed",
+    title: "Owner, every document status: needs review, extracted, pending, queued, running, overdue, uploading, unfinished upload, failed",
     render: () => <OrgPage ids={ALL_IDS} />,
   },
   {
