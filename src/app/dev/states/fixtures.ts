@@ -278,9 +278,10 @@ FAILURES.forEach(([code, filename, calledModel], index) => {
 
 type FieldInput = [name: string, value: string | null, confidence: number, band: string, source: string | null, question?: string];
 
-function fieldsFor(documentId: string, rows: FieldInput[]): FieldRow[] {
+function fieldsFor(documentId: string, runId: string, rows: FieldInput[]): FieldRow[] {
   return rows.map(([name, value, confidence, band, source, question]) => ({
     document_id: documentId,
+    run_id: runId,
     name,
     value,
     // numeric(4, 3) arrives as a string from PostgREST
@@ -296,7 +297,7 @@ const DATES_QUESTION =
   "The payment terms are 30 days, but the due date is 91 days after the document date. Check both dates against the document: a date written in numbers may have been read with the day and month swapped.";
 
 const fields: FieldRow[] = [
-  ...fieldsFor(NEEDS_REVIEW_ID, [
+  ...fieldsFor(NEEDS_REVIEW_ID, "run-4471b", [
     ["document_type", "invoice", 0.98, "high", "INVOICE"],
     ["title", "INVOICE", 0.95, "high", "INVOICE"],
     ["sender_name", "Northgate Fixings & Supply Co.", 0.97, "high", "NORTHGATE FIXINGS & SUPPLY CO."],
@@ -335,7 +336,7 @@ const fields: FieldRow[] = [
       null,
     ],
   ]),
-  ...fieldsFor(DONE_ID, [
+  ...fieldsFor(DONE_ID, "run-118204-3", [
     ["document_type", "receipt", 0.97, "high", "RECEIPT"],
     ["title", "Trade counter receipt", 0.91, "high", "TRADE COUNTER RECEIPT"],
     ["sender_name", "Northgate Trade Counter", 0.94, "high", "t/a Northgate Trade Counter"],
@@ -418,14 +419,14 @@ export function pollFrames(): DocumentEntry[][] {
   const replaceRun = (list: RunRow[], id: string, patch: Partial<RunRow>) =>
     list.map((r) => (r.id === id ? { ...r, ...patch } : r));
   // what the running credit note's run finds: one Low field, the rest High
-  const creditFields = fieldsFor(RUNNING_ID, [
+  const creditFields = fieldsFor(RUNNING_ID, "run-4390", [
     ["document_type", "credit note", 0.95, "high", "CREDIT NOTE"],
     ["sender_name", "Northgate Fixings & Supply Co.", 0.93, "high", "NORTHGATE FIXINGS & SUPPLY CO."],
     ["reference_number", "CN-4390", 0.52, "low", "Ref CN-4390 / INV 4471-B", "Two references are printed together. Is CN-4390 this credit note's own?"],
     ["total_amount", "112.80", 0.91, "high", "CREDIT TOTAL 112.80"],
     ["currency", "GBP", 0.95, "high", "GBP"],
   ]);
-  const deliveryFields = fieldsFor(QUEUED_ID, [
+  const deliveryFields = fieldsFor(QUEUED_ID, "run-88231", [
     ["document_type", "delivery note", 0.94, "high", "DELIVERY NOTE"],
     ["reference_number", "88231", 0.92, "high", "No. 88231"],
   ]);

@@ -78,7 +78,7 @@ export default async function OrganizationPage({ params }: PageProps<"/app/[slug
       .order("started_at", { ascending: false }),
     supabase
       .from("extracted_fields")
-      .select("document_id, name, value, confidence, band, source_text, clarifying_question")
+      .select("document_id, run_id, name, value, confidence, band, source_text, clarifying_question")
       .eq("tenant_id", tenant.id),
   ]);
   if (membership.error) throw membership.error;

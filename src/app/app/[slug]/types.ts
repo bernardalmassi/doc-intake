@@ -73,6 +73,10 @@ export function isStalled(run: Pick<RunRow, "status" | "error_code">): boolean {
 
 export type FieldRow = {
   document_id: string;
+  // the run that wrote the field: a document's fields are all from its
+  // last successful run. Optional so rows built without it (the design
+  // preview's fixtures, tests) still type.
+  run_id?: string | null;
   name: string;
   value: string | null;
   // numeric(4, 3): may arrive as a string

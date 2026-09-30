@@ -10,7 +10,7 @@ import { Elapsed, LedgerLine, LineDetail, LineStateMark, Register, RegisterKey, 
 import { DOCUMENTS_HEADING_ID, runFailureSentence, UNKNOWN_RUN_FAILURE } from "./messages";
 import { RunHistory, runHistoryMeta } from "./run-history";
 import { StateMark } from "./state-glyph";
-import type { DocumentEntry } from "./types";
+import type { DocumentEntry, RunRow } from "./types";
 
 type ListProps = {
   entries: DocumentEntry[];
@@ -163,6 +163,10 @@ function DocumentLine({
   const extractInRuns =
     canManage && hasFile && extractMode(entry) !== "running" && failed !== "extract" && (hasFields || failed !== null);
   const latest = runs[0];
+  // Fields come from the last run that succeeded. When a later run failed,
+  // or one is in flight, the line says which run they are from.
+  const fieldsRun = hasFields ? runs.find((run) => run.id === fields[0].run_id) : undefined;
+  const fieldsFromEarlier = hasFields && latest !== undefined && latest !== fieldsRun && latest.status !== "succeeded";
 
   return (
     <article
@@ -200,12 +204,17 @@ function DocumentLine({
         }
         exit={exit}
       >
-        {hasFields && latest?.status === "failed" && (
+        {fieldsFromEarlier && latest.status === "failed" && (
           <p className={`mb-4 max-w-prose text-small md:ml-48 ${errorInkRuleClass}`}>
             {latest.error_code && latest.error_code !== "unknown"
               ? `The latest run failed. ${userFacingError(latest.error_code).message}`
               : "The latest run failed, and this page can't say why."}{" "}
-            The fields below are from an earlier run.
+            <FieldsFrom run={fieldsRun} />
+          </p>
+        )}
+        {fieldsFromEarlier && latest.status !== "failed" && (
+          <p className="mb-4 max-w-prose text-small md:ml-48">
+            <FieldsFrom run={fieldsRun} />
           </p>
         )}
 
@@ -248,6 +257,19 @@ function DocumentLine({
         />
       </LedgerLine>
     </article>
+  );
+}
+
+// Which run the fields shown are from, by when it started (its claim, as
+// the run table dates it): "The fields below are from the run started 19
+// Sep 2026, 09:31 UTC."
+function FieldsFrom({ run }: { run: RunRow | undefined }) {
+  if (!run) return <>The fields below are from an earlier run.</>;
+  const started = run.claimed_at ?? run.started_at;
+  return (
+    <>
+      The fields below are from the run started <time dateTime={started}>{formatUtc(started)}</time>.
+    </>
   );
 }
 

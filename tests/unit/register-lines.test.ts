@@ -71,7 +71,9 @@ function lines(entries: DocumentEntry[], canManage = true): { html: string; text
     .replace(/&#x27;/g, "'")
     .replace(/&quot;/g, '"')
     .replace(/&amp;/g, "&")
-    .replace(/\s+/g, " ");
+    .replace(/\s+/g, " ")
+    // a tag closed just before a full stop
+    .replace(/ \./g, ".");
   return { html, text };
 }
 
@@ -190,5 +192,43 @@ describe("Extract again in the runs row", () => {
     expect(late.html).toContain('data-doc-state="failed"');
     // once, as the line's exit
     expect(late.html.match(/data-action="extract"/g)).toHaveLength(1);
+  });
+});
+
+describe("the fields line", () => {
+  const read = run("succeeded", {
+    id: "r-read",
+    started_at: iso(Date.parse("2026-09-19T09:30:40Z")),
+    claimed_at: iso(Date.parse("2026-09-19T09:31:02Z")),
+    attempts: 1,
+    cost_usd: "0.02",
+  });
+  const fields: FieldRow[] = [
+    { document_id: "d1", run_id: "r-read", name: "title", value: "Invoice", confidence: "0.950", band: "high", source_text: "INVOICE", clarifying_question: null },
+  ];
+  const failedLater = run("failed", {
+    id: "r-later",
+    started_at: iso(T0 + 600_000),
+    claimed_at: iso(T0 + 605_000),
+    attempts: 1,
+    cost_usd: "0.01",
+    error_code: "extraction.provider_timeout",
+  });
+
+  it("names the run the fields are from, by when it started, once a later run failed", () => {
+    const { text } = lines(at([doc("extracted")], [failedLater, read], T0 + 700_000, fields));
+    expect(text).toContain(
+      "The latest run failed. The extraction service took too long to respond. Try again in a few minutes. The fields below are from the run started 19 Sep 2026, 09:31 UTC.",
+    );
+  });
+
+  it("names it while a new run is in flight", () => {
+    const { text } = lines(at([doc("processing")], [run("queued", { started_at: iso(T0 + 600_000) }), read], T0 + 610_000, fields));
+    expect(text).toContain("The fields below are from the run started 19 Sep 2026, 09:31 UTC.");
+  });
+
+  it("says nothing of it when the fields are from the latest run", () => {
+    const { text } = lines(at([doc("extracted")], [read], T0, fields));
+    expect(text).not.toContain("The fields below are from");
   });
 });
