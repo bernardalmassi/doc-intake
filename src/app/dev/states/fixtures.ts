@@ -11,6 +11,7 @@ import type { DocumentEntry, DocumentRow, FieldRow, Organization as OrgRow, RunR
 import type { Organization } from "@/app/app/organizations";
 import type { ErrorCode } from "@/lib/errors";
 import { abandonedRunCostUsd } from "@/lib/extraction/config";
+import { IN_FLIGHT_BOUND_MS } from "@/lib/extraction/deadlines";
 
 // Documents and finished runs are dated around 24 Sep 2026. Runs still in
 // flight are dated from the time of the request (entriesFor), so their
@@ -87,6 +88,16 @@ export const STALE_ID = "doc-bank-mandate";
 export const UNFINISHED_ID = "doc-site-photos";
 export const UPLOADING_ID = "doc-meter-reading";
 export const MISMATCH_ID = "doc-scan-0007";
+// queued and never claimed, past its hard bound
+export const QUEUED_OVERDUE_ID = "doc-delivery-88240";
+// the database expired it: never claimed, charged nothing
+export const EXPIRED_ID = "doc-remittance-0921";
+// the worker's checks stopped it before any model call, at 0 USD
+export const PREFLIGHT_ID = "doc-statement-sep";
+// too dense for its pages: never sent, at 0 USD
+export const TOO_DENSE_ID = "doc-tender-pack-3";
+// needs review: the dates' shared question beside a Low total with its own
+export const SHARED_QUESTION_ID = "doc-northgate-4502";
 
 const documents: Record<string, DocumentRow> = {
   [NEEDS_REVIEW_ID]: doc(NEEDS_REVIEW_ID, "test-invoice-messy-scan.pdf", "needs_review", 478_223, "application/pdf", at("2026-09-19T14:02:10Z")),
@@ -105,6 +116,11 @@ const documents: Record<string, DocumentRow> = {
     at("2026-09-23T08:15:00Z"),
   ),
   [MISMATCH_ID]: doc(MISMATCH_ID, "scan_0007.pdf", "failed", 5_600_000, "application/pdf", at("2026-09-21T10:00:00Z")),
+  [QUEUED_OVERDUE_ID]: doc(QUEUED_OVERDUE_ID, "delivery-note-88240.jpg", "processing", 1_188_864, "image/jpeg", at("2026-09-24T08:40:00Z")),
+  [EXPIRED_ID]: doc(EXPIRED_ID, "remittance-advice-0921.png", "pending", 402_112, "image/png", at("2026-09-21T15:10:00Z")),
+  [PREFLIGHT_ID]: doc(PREFLIGHT_ID, "supplier-statement-sep.pdf", "pending", 311_296, "application/pdf", at("2026-09-23T10:02:00Z")),
+  [TOO_DENSE_ID]: doc(TOO_DENSE_ID, "tender-pack-volume-3.pdf", "pending", 9_437_184, "application/pdf", at("2026-09-22T09:44:00Z")),
+  [SHARED_QUESTION_ID]: doc(SHARED_QUESTION_ID, "invoice-northgate-4502.pdf", "needs_review", 512_000, "application/pdf", at("2026-09-24T07:58:00Z")),
 };
 
 // ------------------------------------------------------------------ runs
@@ -208,6 +224,61 @@ const runs: RunRow[] = [
     error_code: "extraction.file_type_mismatch",
     started_at: at("2026-09-21T10:01:02Z"),
   }),
+
+  // Expired: queued, never claimed, and ended by the database at no cost.
+  run({
+    id: "run-0921",
+    document_id: EXPIRED_ID,
+    status: "failed",
+    cost_usd: "0.00000000",
+    error_code: "extraction.expired",
+    started_at: at("2026-09-21T15:11:20Z"),
+  }),
+
+  // Stopped by the worker's checks before any model call (its page count
+  // wasn't the one Extract sent): stored at 0 USD with 0 tokens.
+  run({
+    id: "run-statement-sep",
+    document_id: PREFLIGHT_ID,
+    status: "failed",
+    input_tokens: 0,
+    output_tokens: 0,
+    cost_usd: "0.00000000",
+    latency_ms: 684,
+    error_code: "extraction.page_count_mismatch",
+    started_at: at("2026-09-23T10:03:10Z"),
+    claimed_at: at("2026-09-23T10:03:11Z"),
+  }),
+
+  // Too dense: counted, over the limit for its pages, never sent.
+  run({
+    id: "run-tender-3",
+    document_id: TOO_DENSE_ID,
+    status: "failed",
+    input_tokens: 0,
+    output_tokens: 0,
+    cost_usd: "0.00000000",
+    latency_ms: 1_912,
+    error_code: "extraction.too_dense",
+    started_at: at("2026-09-22T09:45:02Z"),
+    claimed_at: at("2026-09-22T09:45:03Z"),
+  }),
+
+  // The shared-question invoice's run.
+  run({
+    id: "run-4502",
+    document_id: SHARED_QUESTION_ID,
+    status: "succeeded",
+    provider: "anthropic",
+    model: "claude-sonnet-5",
+    attempts: 1,
+    input_tokens: 7_804,
+    output_tokens: 851,
+    cost_usd: "0.02411800",
+    latency_ms: 9_210,
+    started_at: at("2026-09-24T07:58:40Z"),
+    claimed_at: at("2026-09-24T07:58:42Z"),
+  }),
 ];
 
 // Every way a run can end in failure, one document each, for the
@@ -218,6 +289,12 @@ const FAILURES: [code: ErrorCode, filename: string, calledModel: boolean][] = [
   ["extraction.not_configured", "supplier-statement-aug.pdf", false],
   ["extraction.download_failed", "hire-agreement-scaffold.pdf", false],
   ["extraction.file_type_mismatch", "scan_0012.pdf", false],
+  ["extraction.page_count_mismatch", "delivery-schedule-wk40.pdf", false],
+  ["document.pages_unreadable", "brochure-print-proof.pdf", false],
+  ["document.too_many_pages", "operations-manual-full.pdf", false],
+  ["document.no_pages", "blank-export.pdf", false],
+  ["extraction.too_dense", "tender-pack-volume-4.pdf", false],
+  ["extraction.expired", "petty-cash-slip-0917.jpg", false],
   ["extraction.provider_timeout", "quote-joinery-q-5531.pdf", true],
   ["extraction.provider_unavailable", "remittance-advice-0918.png", true],
   ["extraction.all_providers_failed", "insurance-schedule-2026.pdf", true],
@@ -254,7 +331,11 @@ FAILURES.forEach(([code, filename, calledModel], index) => {
             cost_usd: (0.0186 + index * 0.0011).toFixed(8),
             latency_ms: code === "extraction.provider_timeout" ? 60_000 : 9_400 + index * 530,
           }
-        : { latency_ms: 380 + index * 20 }),
+        : // The worker stores 0 USD and 0 tokens for a run it never sent;
+          // an expired run was never claimed, so it has no time either.
+          code === "extraction.expired"
+          ? { cost_usd: "0.00000000" }
+          : { latency_ms: 380 + index * 20, input_tokens: 0, output_tokens: 0, cost_usd: "0.00000000" }),
       // An abandoned run records nothing but the estimate it was charged.
       ...(code === "extraction.abandoned"
         ? {
@@ -296,6 +377,10 @@ function fieldsFor(documentId: string, runId: string, rows: FieldInput[]): Field
 const DATES_QUESTION =
   "The payment terms are 30 days, but the due date is 91 days after the document date. Check both dates against the document: a date written in numbers may have been read with the day and month swapped.";
 
+// The same question for another invoice's dates, as gateFields words it.
+const DATES_QUESTION_4502 =
+  "The payment terms are 30 days, but the due date is 61 days after the document date. Check both dates against the document: a date written in numbers may have been read with the day and month swapped.";
+
 const fields: FieldRow[] = [
   ...fieldsFor(NEEDS_REVIEW_ID, "run-4471b", [
     ["document_type", "invoice", 0.98, "high", "INVOICE"],
@@ -336,6 +421,28 @@ const fields: FieldRow[] = [
       null,
     ],
   ]),
+  // The dates' question, shared, beside a Low total with a question of its
+  // own: the question is printed once, after the three.
+  ...fieldsFor(SHARED_QUESTION_ID, "run-4502", [
+    ["document_type", "invoice", 0.97, "high", "INVOICE"],
+    ["title", "INVOICE", 0.95, "high", "INVOICE"],
+    ["sender_name", "Northgate Fixings & Supply Co.", 0.96, "high", "NORTHGATE FIXINGS & SUPPLY CO."],
+    ["recipient_name", "Bramhall Interiors Ltd", 0.95, "high", "INVOICE TO Bramhall Interiors Ltd"],
+    ["document_date", "2026-08-07", 0.58, "low", "Date 07/08/2026", DATES_QUESTION_4502],
+    ["due_date", "2026-10-07", 0.58, "low", "Due 07/10/2026", DATES_QUESTION_4502],
+    ["payment_terms_days", "30", 0.9, "high", "Terms 30 days net"],
+    ["reference_number", "4502", 0.9, "high", "Inv 4502"],
+    [
+      "total_amount",
+      "1318.40",
+      0.55,
+      "low",
+      "SUBTOTAL 1,098.67 VAT 219.73 TOTAL 1,318.40",
+      "A handwritten 1,381.40 is written beside the printed total. Is 1,318.40 the amount due?",
+    ],
+    ["currency", "GBP", 0.95, "high", "GBP"],
+    ["summary", "An invoice from Northgate Fixings & Supply Co. to Bramhall Interiors Ltd totalling GBP 1,318.40.", 0.9, "high", null],
+  ]),
   ...fieldsFor(DONE_ID, "run-118204-3", [
     ["document_type", "receipt", 0.97, "high", "RECEIPT"],
     ["title", "Trade counter receipt", 0.91, "high", "TRADE COUNTER RECEIPT"],
@@ -374,15 +481,17 @@ function inProgressDocuments(now: number): Record<string, DocumentRow> {
 }
 
 // Runs in flight at the time of the request: one queued 12 seconds ago,
-// one claimed 40 seconds ago after 12 in the queue, and one claimed 25
-// minutes ago and still running, past its hard bound (overdueAt,
-// src/lib/extraction/deadlines.ts).
+// one claimed 40 seconds ago after 12 in the queue, and two past their
+// hard bound (overdueAt, src/lib/extraction/deadlines.ts), each a whole
+// in-flight bound old: one claimed, one never claimed.
 function runningRuns(now: number): RunRow[] {
   const ago = (seconds: number) => new Date(now - seconds * 1000).toISOString();
+  const bound = IN_FLIGHT_BOUND_MS / 1000;
   return [
     run({ id: "run-88231", document_id: QUEUED_ID, status: "queued", started_at: ago(12) }),
     run({ id: "run-4390", document_id: RUNNING_ID, status: "running", started_at: ago(52), claimed_at: ago(40) }),
-    run({ id: "run-mandate", document_id: STALE_ID, status: "running", started_at: ago(25 * 60 + 12), claimed_at: ago(25 * 60) }),
+    run({ id: "run-mandate", document_id: STALE_ID, status: "running", started_at: ago(bound + 12), claimed_at: ago(bound) }),
+    run({ id: "run-88240", document_id: QUEUED_OVERDUE_ID, status: "queued", started_at: ago(bound) }),
   ];
 }
 
@@ -470,4 +579,14 @@ export function pollFrames(): DocumentEntry[][] {
 export const SIX_STATE_IDS = [NEEDS_REVIEW_ID, DONE_ID, READY_ID, QUEUED_ID, RUNNING_ID, FAILED_ID];
 
 // Every document status today's page can show.
-export const ALL_IDS = [...SIX_STATE_IDS, STALE_ID, UPLOADING_ID, UNFINISHED_ID, MISMATCH_ID];
+export const ALL_IDS = [
+  ...SIX_STATE_IDS,
+  STALE_ID,
+  QUEUED_OVERDUE_ID,
+  EXPIRED_ID,
+  PREFLIGHT_ID,
+  TOO_DENSE_ID,
+  UPLOADING_ID,
+  UNFINISHED_ID,
+  MISMATCH_ID,
+];

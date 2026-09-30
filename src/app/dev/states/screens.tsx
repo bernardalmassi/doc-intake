@@ -30,6 +30,7 @@ import {
   DONE_ID,
   EMAIL,
   entriesFor,
+  EXPIRED_ID,
   FAILED_ID,
   FAILURE_IDS,
   longOrganization,
@@ -37,10 +38,15 @@ import {
   organization,
   organizations,
   pollFrames,
+  PREFLIGHT_ID,
+  QUEUED_ID,
+  QUEUED_OVERDUE_ID,
   READY_ID,
   RUNNING_ID,
+  SHARED_QUESTION_ID,
   SIX_STATE_IDS,
   STALE_ID,
+  TOO_DENSE_ID,
   UNFINISHED_ID,
   UPLOADING_ID,
 } from "./fixtures";
@@ -512,7 +518,8 @@ export const SCREENS: Screen[] = [
   {
     id: "org-documents",
     group: "Organization page",
-    title: "Owner, every document status: needs review, extracted, pending, queued, running, overdue, uploading, unfinished upload, failed",
+    title:
+      "Owner, every document status: needs review, extracted, pending, queued, running, overdue (claimed and never claimed), expired, a 0 USD preflight failure, too dense, uploading, unfinished upload, failed",
     render: () => <OrgPage ids={ALL_IDS} />,
   },
   {
@@ -545,8 +552,44 @@ export const SCREENS: Screen[] = [
     title: "The failed document alone (no usable answer, an abandoned run before it); the plan opens run history",
     render: () => <OrgPage ids={[FAILED_ID]} />,
   },
-  { id: "org-doc-running", group: "Document", title: "Running, 40 seconds in", render: () => <OrgPage ids={[RUNNING_ID]} /> },
-  { id: "org-doc-stale", group: "Document", title: "Running for 25 minutes: stalled", render: () => <OrgPage ids={[STALE_ID]} /> },
+  {
+    id: "org-doc-shared-question",
+    group: "Document",
+    title: "Needs review: the dates' shared question, printed once, beside a Low total with a question of its own, fields open",
+    render: () => <OrgPage ids={[SHARED_QUESTION_ID]} />,
+  },
+  { id: "org-doc-queued", group: "Document", title: "Queued 12 seconds ago, no worker has claimed it yet", render: () => <OrgPage ids={[QUEUED_ID]} /> },
+  { id: "org-doc-running", group: "Document", title: "Running, claimed 40 seconds ago", render: () => <OrgPage ids={[RUNNING_ID]} /> },
+  {
+    id: "org-doc-stale",
+    group: "Document",
+    title: "Overdue: claimed a whole in-flight bound ago and still running; reads failed with Extract again (the plan opens run history)",
+    render: () => <OrgPage ids={[STALE_ID]} />,
+  },
+  {
+    id: "org-doc-overdue-queued",
+    group: "Document",
+    title: "Overdue: queued a whole in-flight bound ago and never claimed; reads failed with Extract again (the plan opens run history)",
+    render: () => <OrgPage ids={[QUEUED_OVERDUE_ID]} />,
+  },
+  {
+    id: "org-doc-expired",
+    group: "Document",
+    title: "Expired: never claimed, ended by the database at no cost; Extract again (the plan opens run history)",
+    render: () => <OrgPage ids={[EXPIRED_ID]} />,
+  },
+  {
+    id: "org-doc-preflight",
+    group: "Document",
+    title: "Stopped by the worker's checks before any model call, stored at 0 USD: Nothing spent (the plan opens run history)",
+    render: () => <OrgPage ids={[PREFLIGHT_ID]} />,
+  },
+  {
+    id: "org-doc-too-dense",
+    group: "Document",
+    title: "Too dense to extract, 0 USD: Delete, and no Extract again anywhere (the plan opens run history)",
+    render: () => <OrgPage ids={[TOO_DENSE_ID]} />,
+  },
   { id: "org-doc-uploading", group: "Document", title: "An upload 2 minutes in, seen from another page", render: () => <OrgPage ids={[UPLOADING_ID]} /> },
   { id: "org-doc-unfinished", group: "Document", title: "An upload that never finished (its row is over 10 minutes old)", render: () => <OrgPage ids={[UNFINISHED_ID]} /> },
   {
@@ -634,6 +677,12 @@ export const SCREENS: Screen[] = [
     group: "Document actions",
     title: "Click Delete, wait 600 ms, click again: the action never answers",
     render: () => <OrgPage ids={[READY_ID]} remove="hang" />,
+  },
+  {
+    id: "org-delete-running",
+    group: "Document actions",
+    title: "The running document open; click its File row's Delete once: armed, saying an extraction under way may still be charged",
+    render: () => <OrgPage ids={[RUNNING_ID]} />,
   },
   {
     id: "org-delete-confirm-open",
