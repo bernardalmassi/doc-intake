@@ -20,7 +20,7 @@ Before any UI code, write a design brief (palette as named tokens with hex, type
 - Bento grids without real data.
 - Fake charts, toggles, dashboards, cursors.
 - Tilted or 3D screenshots.
-- Shadows blurred over 24px. Inside /app, shadows of any size.
+- Shadows of any size, in any state, anywhere: box, text or drop.
 - Glowing borders.
 - Testimonials, logo bars, star ratings, "trusted by" counts.
 - Stock photos of people.
@@ -30,7 +30,7 @@ Before any UI code, write a design brief (palette as named tokens with hex, type
 - Inter, Roboto, Open Sans or the system font as the display face, fine for body.
 - Looping or pulsing animation.
 - Marquees.
-- More than one radius.
+- Rounded corners of any size, anywhere (a border-radius other than 0): no pills, no rounded-full. Circles and arcs inside an icon are drawing, not corners.
 
 ## Required
 
@@ -39,7 +39,7 @@ Before any UI code, write a design brief (palette as named tokens with hex, type
 - Tabular numbers wherever a number appears.
 - Whitespace is a feature, one thing per screen deserves attention.
 - Asymmetry somewhere, on purpose.
-- The headline says what this does and what it does when it is unsure.
+- The landing's headline says what this does and what it does when it is unsure. Other pages have a title, not a headline: the display size, once.
 - Motion: one idea, ease-out under 400ms, only on arrival or input.
 - Product imagery is a real capture or a real recorded result.
 
@@ -79,8 +79,8 @@ Two faces, four sizes, nothing under 12px, tabular figures on the whole body.
 
 - Seven states: uploading, ready, queued, running, done, needs review, failed. Each is a word, a glyph and one line saying what happens next. Word first, shape second, colour last.
 - The glyph is one 12px square in ink: lower half filled for uploading, empty for ready, dashed for queued, left half filled for running, filled for done, filled signal for needs review, crossed for failed. Where a count of needs review is 0, its square is signal in outline only: the fill is for something a person has to do. With the word covered, uploading, queued, running and done still read apart in greyscale.
-- The state is a prop, mapped once from the data. A view never works it out again from `status`. The one exception is the click: while an Extract request is in flight, its line and the key read running (queued, once Extract only enqueues), and the data that comes back with the answer takes over.
-- Uploading and running show their start time and the elapsed m:ss. No spinner, no dots, no bar, no percentage: there is no progress data. Queued says it is waiting, in words. An upload is uploading until its row is 10 minutes old; after that it never finished, and it is failed.
+- The state is a prop, mapped once from the data. A view never works it out again from `status`. The one exception is the click: while an Extract request is in flight, its line and the key read queued, and the data that comes back with the answer takes over.
+- Uploading, queued and running show a time and the elapsed m:ss: an upload from its row's creation, queued from the enqueue ("Queued 09:29:10 UTC · 0:12"), running from the worker's claim. No spinner, no dots, no bar, no percentage: there is no progress data. An upload is uploading until its row is 10 minutes old; after that it never finished, and it is failed. A run still queued or running past the hard bound its own timestamps give it (`src/lib/extraction/deadlines.ts`) is failed, with Extract again, and the page stops polling for it.
 - One exit per state, named by its verb: Extract; nothing while uploading, queued or running; open the fields; go to the fields to check; one retry. A failure's exit follows its reason: Extract again where a retry can work, Delete where there is nothing to extract, Download where the reader is told to review it themselves.
 - Failed says why, in the error catalogue's sentence. Never a code, raw text, or "Something went wrong" alone.
 - Needs review carries its count beside the word ("Needs review · 2"), and the count matches the fields.
@@ -119,7 +119,7 @@ Two faces, four sizes, nothing under 12px, tabular figures on the whole body.
 ### Motion and focus
 
 - One motion, the landing's: when a line opens, its contents arrive, fading in where they stand, 120ms, ease-out, once per opening. Opacity only. Nothing moves under reduced motion. No transition on `all`, no hover lift, no colour transition.
-- One focus ring: 2px signal, 2px out, on every control. Tab order is reading order, with no positive tabindex. Every target is at least 24px.
+- One focus ring: 2px signal, 2px out, on every control. Tab order is reading order, with no positive tabindex. Every target is at least 24px. Signal on the light paper is the lowest pair, 3.22:1. It holds while L(paper)+0.05 ≥ 3×(L(signal)+0.05). Any change to either colour re-measures every signal pair on / and /app, text on signal included.
 
 ### Never ship
 
@@ -141,8 +141,8 @@ Beyond the banned list, these mark an interface as generated rather than designe
 
 ## Self-review
 
-Go through the page and list every element that is on the banned list, could be deleted with no loss of information, would sit unchanged on a generic SaaS template, makes a claim not on the true list, or uses a colour, radius or shadow not in the brief. Fix all of it, then show me the page and the list of what you changed.
+Go through the page and list every element that is on the banned list, could be deleted with no loss of information, would sit unchanged on a generic SaaS template, makes a claim not on the true list, or uses a colour, radius or shadow not in the brief. Check shadows in every form and state: box-shadow, text-shadow (on hover too) and `drop-shadow()` in a filter. Fix all of it, then show me the page and the list of what you changed.
 
-In /app, measure rather than assert, in both themes at 375 and 1440: text at 4.5:1 or more, focus visible on every control, nothing moving under reduced motion, no horizontal scroll, and the six states told apart in greyscale.
+In /app, measure rather than assert, in both themes at 375 and 1440: text at 4.5:1 or more, focus visible on every control, nothing moving under reduced motion, no horizontal scroll, and the seven states told apart in greyscale.
 
 The true list is what can be verified in this repo, plus the live run shown in Fig. 1 (the deployed app, 19 Sep 2026). Nothing else goes on the page.
