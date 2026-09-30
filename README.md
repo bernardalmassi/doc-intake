@@ -148,4 +148,4 @@ A second workflow, [`keep-alive.yml`](.github/workflows/keep-alive.yml), is set 
 
 ## Status
 
-The queue worker on the [`worker`](https://github.com/bernardalmassi/doc-intake/tree/worker) branch (pgmq, a worker route and a spend ledger) is built and in review, not live; production runs extraction inside the request, as described above.
+The queue worker (pgmq, a worker route and a spend ledger; [docs/worker-design.md](docs/worker-design.md)) is live: Extract queues a run, the worker runs it, and every run in flight ends within 16 min 10 s of its enqueue. The sections above still describe extraction inside the request, as it ran before the worker.
